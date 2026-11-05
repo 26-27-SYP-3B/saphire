@@ -50,9 +50,12 @@ class AuthPage extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // Die Linien im Logo sind dünn; unter ~90 px werden sie sub-pixel
+                    // und sehen brei aus. Wenn das Logo klein bleiben soll, müsste die
+                    // Linienbreite in der SVG proportional höher sein.
                     SvgPicture.asset(
                       'assets/saphire_logo.svg',
-                      height: 44,
+                      height: 96,
                       semanticsLabel: 'Saphire',
                     ),
                     const SizedBox(height: 28),
