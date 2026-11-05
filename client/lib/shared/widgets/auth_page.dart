@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 
 /// Gemeinsames Layout für Anmeldung und Registrierung: dunkle Fläche, schmale Spalte,
@@ -49,12 +50,10 @@ class AuthPage extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'saphire',
-                      style: theme.textTheme.labelLarge?.copyWith(
-                        color: muted,
-                        letterSpacing: 1.2,
-                      ),
+                    SvgPicture.asset(
+                      'assets/saphire_logo.svg',
+                      height: 44,
+                      semanticsLabel: 'Saphire',
                     ),
                     const SizedBox(height: 28),
                     Text(title, style: theme.textTheme.displaySmall),
