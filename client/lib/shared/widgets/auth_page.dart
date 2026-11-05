@@ -53,10 +53,14 @@ class AuthPage extends StatelessWidget {
                     // Die Linien im Logo sind dünn; unter ~120 px werden sie sub-pixel
                     // und sehen brei aus. Wenn das Logo klein bleiben soll, müsste die
                     // Linienbreite in der SVG proportional höher sein.
-                    SvgPicture.asset(
-                      'assets/saphire_logo.svg',
-                      height: 120,
-                      semanticsLabel: 'Saphire',
+                    // Der Radius ist derselbe wie der der Felder in app/theme.dart.
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: SvgPicture.asset(
+                        'assets/saphire_logo.svg',
+                        height: 120,
+                        semanticsLabel: 'Saphire',
+                      ),
                     ),
                     const SizedBox(height: 28),
                     Text(title, style: theme.textTheme.displaySmall),
