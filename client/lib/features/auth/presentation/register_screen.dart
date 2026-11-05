@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../../../shared/widgets/auth_page.dart';
 import '../data/auth_repository.dart';
-import '../domain/user.dart';
 
-/// Registration form: name and email are sent to POST /api/register.
-/// The fields are only checked roughly, the server decides whether an address is valid.
+/// Registrierungsformular: Name und E-Mail werden an POST /api/register gesendet.
+/// Die Felder werden nur grob geprüft, ob eine E-Mail gültig ist entscheidet der Server.
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key, required this.repository});
 
@@ -20,8 +20,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _emailController = TextEditingController();
 
   bool _isSending = false;
-  String? _errorMessage;
-  User? _registeredUser;
+  String? _note;
 
   @override
   void dispose() {
@@ -35,7 +34,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     setState(() {
       _isSending = true;
-      _errorMessage = null;
+      _note = null;
     });
 
     try {
@@ -43,9 +42,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
         name: _nameController.text.trim(),
         email: _emailController.text.trim(),
       );
-      if (mounted) setState(() => _registeredUser = user);
+      if (mounted) setState(() => _note = 'Konto erstellt: ${user.name} (#${user.id})');
     } on AuthException catch (error) {
-      if (mounted) setState(() => _errorMessage = error.message);
+      if (mounted) setState(() => _note = error.message);
     } finally {
       if (mounted) setState(() => _isSending = false);
     }
@@ -53,50 +52,31 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final errorMessage = _errorMessage;
-    final registeredUser = _registeredUser;
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('Register')),
-      body: Form(
-        key: _formKey,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              TextFormField(
-                controller: _nameController,
-                decoration: const InputDecoration(labelText: 'Name'),
-                textInputAction: TextInputAction.next,
-                validator: (value) =>
-                    value == null || value.trim().isEmpty ? 'Fill in your name' : null,
-              ),
-              TextFormField(
-                controller: _emailController,
-                decoration: const InputDecoration(labelText: 'Email'),
-                keyboardType: TextInputType.emailAddress,
-                validator: (value) =>
-                    value == null || !value.contains('@') ? 'Fill in an email address' : null,
-              ),
-              const SizedBox(height: 16),
-              if (errorMessage != null) ...[
-                Text(errorMessage, style: TextStyle(color: theme.colorScheme.error)),
-                const SizedBox(height: 8),
-              ],
-              FilledButton(
-                onPressed: _isSending ? null : _register,
-                child: Text(_isSending ? 'Sending…' : 'Register'),
-              ),
-              if (registeredUser != null) ...[
-                const SizedBox(height: 16),
-                Text('Account created: ${registeredUser.name} (#${registeredUser.id})'),
-              ],
-            ],
-          ),
+    return AuthPage(
+      title: 'Registrieren',
+      formKey: _formKey,
+      fields: [
+        TextFormField(
+          controller: _nameController,
+          decoration: const InputDecoration(labelText: 'Name'),
+          textInputAction: TextInputAction.next,
+          validator: (value) => value == null || value.trim().isEmpty ? 'Name ausfüllen' : null,
         ),
-      ),
+        const SizedBox(height: 16),
+        TextFormField(
+          controller: _emailController,
+          decoration: const InputDecoration(labelText: 'E-Mail'),
+          keyboardType: TextInputType.emailAddress,
+          validator: (value) =>
+              value == null || !value.contains('@') ? 'E-Mail ausfüllen' : null,
+        ),
+      ],
+      buttonLabel: _isSending ? 'Wird gesendet…' : 'Registrieren',
+      onSubmitted: _isSending ? null : _register,
+      note: _note,
+      linkQuestion: 'Schon ein Konto?',
+      linkLabel: 'Anmelden',
+      linkTo: '/login',
     );
   }
 }

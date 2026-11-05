@@ -47,6 +47,13 @@ class FakeRepository extends AuthRepository {
   }
 }
 
+Future<void> openRegister(WidgetTester tester, AuthRepository repository) async {
+  await tester.pumpWidget(SaphireApp(repository: repository));
+
+  await tester.tap(find.widgetWithText(TextButton, 'Registrieren'));
+  await tester.pumpAndSettle();
+}
+
 void main() {
   test('reads the answer of the server as a user', () async {
     final dio = Dio()
@@ -78,27 +85,39 @@ void main() {
     );
   });
 
-  testWidgets('shows the server error below the form', (tester) async {
-    await tester.pumpWidget(
-      SaphireApp(repository: FakeRepository('Server is not reachable at http://localhost:8080.')),
-    );
-
-    await tester.enterText(find.byType(TextFormField).first, 'Lukas');
-    await tester.enterText(find.byType(TextFormField).last, 'lukas@example.at');
-    await tester.tap(find.widgetWithText(FilledButton, 'Register'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Server is not reachable at http://localhost:8080.'), findsOneWidget);
-  });
-
-  testWidgets('shows the created account', (tester) async {
+  testWidgets('the login form says that login is not implemented yet', (tester) async {
     await tester.pumpWidget(SaphireApp(repository: FakeRepository(null)));
 
     await tester.enterText(find.byType(TextFormField).first, 'Lukas');
     await tester.enterText(find.byType(TextFormField).last, 'lukas@example.at');
-    await tester.tap(find.widgetWithText(FilledButton, 'Register'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Anmelden'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Account created: Lukas (#7)'), findsOneWidget);
+    expect(
+      find.text('Anmelden geht noch nicht: der Server hat keinen Login-Endpunkt.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('registering shows the created account', (tester) async {
+    await openRegister(tester, FakeRepository(null));
+
+    await tester.enterText(find.byType(TextFormField).first, 'Lukas');
+    await tester.enterText(find.byType(TextFormField).last, 'lukas@example.at');
+    await tester.tap(find.widgetWithText(FilledButton, 'Registrieren'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Konto erstellt: Lukas (#7)'), findsOneWidget);
+  });
+
+  testWidgets('an error from the server shows below the fields', (tester) async {
+    await openRegister(tester, FakeRepository('Server ist nicht erreichbar.'));
+
+    await tester.enterText(find.byType(TextFormField).first, 'Lukas');
+    await tester.enterText(find.byType(TextFormField).last, 'lukas@example.at');
+    await tester.tap(find.widgetWithText(FilledButton, 'Registrieren'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Server ist nicht erreichbar.'), findsOneWidget);
   });
 }

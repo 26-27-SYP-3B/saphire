@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../features/auth/data/auth_repository.dart';
-import '../features/auth/presentation/register_screen.dart';
+import 'router.dart';
+import 'theme.dart';
 
-/// Root of the app. The router will come with the login screen; until then the
-/// app shows the registration form directly.
+/// Root of the app: the theme and the two auth routes.
 class SaphireApp extends StatelessWidget {
   const SaphireApp({super.key, required this.repository});
 
@@ -12,9 +12,10 @@ class SaphireApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return MaterialApp.router(
       title: 'Saphire',
-      home: RegisterScreen(repository: repository),
+      theme: buildTheme(),
+      routerConfig: buildRouter(repository),
     );
   }
 }
