@@ -1,13 +1,13 @@
 default: run
 
 run:
-    cargo run
+    go run .
 
 run-release:
-    cargo run --release
+    go run .
 
 build:
-    cargo build --release
+    go build -o build/saphire-server .
 
 clean:
-    rm -rf target
+    rm -rf build

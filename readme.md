@@ -3,10 +3,10 @@
 
 Compile the server for your Arch. / OS
 ```bash
-cargo build --release
+go build -o build/saphire-server .
 ```
 Run the server
 
 ```bash
-./target/release/saphire-server
+./build/saphire-server
 ```
