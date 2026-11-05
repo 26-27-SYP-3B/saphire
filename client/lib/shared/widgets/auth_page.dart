@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
+
+import '../../shared/widgets/saphire_logo.dart';
 
 /// Gemeinsames Layout für Anmeldung und Registrierung: dunkle Fläche, schmale Spalte,
 /// Markenname oben, dann Überschrift, Felder, Knopf und der Link zur anderen Seite.
@@ -50,18 +51,7 @@ class AuthPage extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Die Linien im Logo sind dünn; unter ~120 px werden sie sub-pixel
-                    // und sehen brei aus. Wenn das Logo klein bleiben soll, müsste die
-                    // Linienbreite in der SVG proportional höher sein.
-                    // Der Radius ist derselbe wie der der Felder in app/theme.dart.
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: SvgPicture.asset(
-                        'assets/saphire_logo.svg',
-                        height: 120,
-                        semanticsLabel: 'Saphire',
-                      ),
-                    ),
+                    SaphireLogo(size: 120),
                     const SizedBox(height: 28),
                     Text(title, style: theme.textTheme.displaySmall),
                     const SizedBox(height: 28),

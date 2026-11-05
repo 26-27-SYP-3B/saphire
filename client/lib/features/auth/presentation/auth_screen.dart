@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../shared/widgets/auth_page.dart';
 import '../../../shared/widgets/credential_fields.dart';
@@ -47,18 +48,13 @@ class _AuthScreenState extends State<AuthScreen> {
     final password = _password.text;
 
     try {
-      final user = widget.mode == AuthMode.register
-          ? await widget.repository.register(
-              username: identity,
-              email: _email.text.trim(),
-              password: password,
-            )
-          : await widget.repository.login(login: identity, password: password);
-
-      if (mounted) {
-        final action = widget.mode == AuthMode.register ? 'Konto erstellt' : 'Angemeldet';
-        setState(() => _note = '$action als ${user.username} (#${user.id})');
+      if (widget.mode == AuthMode.register) {
+        await widget.repository.register(username: identity, email: _email.text.trim(), password: password);
+      } else {
+        await widget.repository.login(login: identity, password: password);
       }
+
+      if (mounted) context.go('/home');
     } on AuthException catch (error) {
       if (mounted) setState(() => _note = error.message);
     } finally {
