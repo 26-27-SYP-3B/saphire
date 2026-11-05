@@ -41,30 +41,30 @@ class FakeRepository extends AuthRepository {
 
   @override
   Future<User> register({required String username, required String email, required String password}) {
-    return _answer(username, email);
+    return _answer(username);
   }
 
   @override
-  Future<User> login({required String username, required String email, required String password}) {
-    return _answer(username, email);
+  Future<User> login({required String login, required String password}) {
+    return _answer(login);
   }
 
-  Future<User> _answer(String username, String email) {
+  Future<User> _answer(String login) {
     final message = failureMessage;
     if (message != null) throw AuthException(message);
-    return Future.value(User(id: 7, username: username, email: email));
+    return Future.value(User(id: 7, username: login, email: 'lukas@example.at'));
   }
 }
 
-Future<void> openForm(WidgetTester tester, AuthRepository repository, String linkLabel) async {
-  await tester.pumpWidget(SaphireApp(repository: repository));
-  await tester.tap(find.widgetWithText(TextButton, linkLabel));
-  await tester.pumpAndSettle();
-}
-
-Future<void> fillForm(WidgetTester tester) async {
+Future<void> fillRegisterForm(WidgetTester tester) async {
   await tester.enterText(find.byType(TextFormField).first, 'lukas');
   await tester.enterText(find.byType(TextFormField).at(1), 'lukas@example.at');
+  await tester.enterText(find.byType(TextFormField).last, 'geheim123');
+}
+
+/// The login form has two fields: the identity and the password.
+Future<void> fillLoginForm(WidgetTester tester) async {
+  await tester.enterText(find.byType(TextFormField).first, 'lukas');
   await tester.enterText(find.byType(TextFormField).last, 'geheim123');
 }
 
@@ -88,50 +88,61 @@ void main() {
 
   test('passes the error message of the server on', () async {
     final dio = Dio()
-      ..httpClientAdapter = StubAdapter(409, {'error': 'username or email is already registered'});
+      ..httpClientAdapter = StubAdapter(401, {'error': 'login or password is wrong'});
 
     expect(
-      () => AuthRepository(dio).login(
-        username: 'lukas',
-        email: 'lukas@example.at',
-        password: 'geheim123',
-      ),
+      () => AuthRepository(dio).login(login: 'lukas', password: 'geheim123'),
       throwsA(isA<AuthException>().having(
         (error) => error.message,
         'message',
-        'username or email is already registered',
+        'login or password is wrong',
       )),
     );
   });
 
   testWidgets('registering shows the created account', (tester) async {
-    await openForm(tester, FakeRepository(null), 'Registrieren');
+    await tester.pumpWidget(SaphireApp(repository: FakeRepository(null)));
+    await tester.tap(find.widgetWithText(TextButton, 'Registrieren'));
+    await tester.pumpAndSettle();
 
-    await fillForm(tester);
+    await fillRegisterForm(tester);
     await tester.tap(find.widgetWithText(FilledButton, 'Registrieren'));
     await tester.pumpAndSettle();
 
     expect(find.text('Konto erstellt als lukas (#7)'), findsOneWidget);
   });
 
-  testWidgets('logging in shows the account', (tester) async {
+  testWidgets('logging in with the username shows the account', (tester) async {
     await tester.pumpWidget(SaphireApp(repository: FakeRepository(null)));
 
-    await fillForm(tester);
+    await fillLoginForm(tester);
     await tester.tap(find.widgetWithText(FilledButton, 'Anmelden'));
     await tester.pumpAndSettle();
 
     expect(find.text('Angemeldet als lukas (#7)'), findsOneWidget);
   });
 
-  testWidgets('an error from the server shows below the fields', (tester) async {
-    await tester.pumpWidget(SaphireApp(repository: FakeRepository('username, email or password is wrong')));
+  // The login accepts a username or an address, so the same form is used with an
+  // address in the first field.
+  testWidgets('logging in with the address shows the account', (tester) async {
+    await tester.pumpWidget(SaphireApp(repository: FakeRepository(null)));
 
-    await fillForm(tester);
+    await tester.enterText(find.byType(TextFormField).first, 'lukas@example.at');
+    await tester.enterText(find.byType(TextFormField).last, 'geheim123');
     await tester.tap(find.widgetWithText(FilledButton, 'Anmelden'));
     await tester.pumpAndSettle();
 
-    expect(find.text('username, email or password is wrong'), findsOneWidget);
+    expect(find.text('Angemeldet als lukas@example.at (#7)'), findsOneWidget);
+  });
+
+  testWidgets('an error from the server shows below the fields', (tester) async {
+    await tester.pumpWidget(SaphireApp(repository: FakeRepository('login or password is wrong')));
+
+    await fillLoginForm(tester);
+    await tester.tap(find.widgetWithText(FilledButton, 'Anmelden'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('login or password is wrong'), findsOneWidget);
   });
 
   // The form checks the same limits as the server, so a short password never
@@ -140,7 +151,6 @@ void main() {
     await tester.pumpWidget(SaphireApp(repository: FakeRepository(null)));
 
     await tester.enterText(find.byType(TextFormField).first, 'lukas');
-    await tester.enterText(find.byType(TextFormField).at(1), 'lukas@example.at');
     await tester.enterText(find.byType(TextFormField).last, 'short');
     await tester.tap(find.widgetWithText(FilledButton, 'Anmelden'));
     await tester.pumpAndSettle();

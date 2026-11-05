@@ -20,7 +20,7 @@ class AuthScreen extends StatefulWidget {
 
 class _AuthScreenState extends State<AuthScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _username = TextEditingController();
+  final _identity = TextEditingController();
   final _email = TextEditingController();
   final _password = TextEditingController();
 
@@ -29,7 +29,7 @@ class _AuthScreenState extends State<AuthScreen> {
 
   @override
   void dispose() {
-    _username.dispose();
+    _identity.dispose();
     _email.dispose();
     _password.dispose();
     super.dispose();
@@ -43,14 +43,17 @@ class _AuthScreenState extends State<AuthScreen> {
       _note = null;
     });
 
-    final username = _username.text.trim();
-    final email = _email.text.trim();
+    final identity = _identity.text.trim();
     final password = _password.text;
 
     try {
       final user = widget.mode == AuthMode.register
-          ? await widget.repository.register(username: username, email: email, password: password)
-          : await widget.repository.login(username: username, email: email, password: password);
+          ? await widget.repository.register(
+              username: identity,
+              email: _email.text.trim(),
+              password: password,
+            )
+          : await widget.repository.login(login: identity, password: password);
 
       if (mounted) {
         final action = widget.mode == AuthMode.register ? 'Konto erstellt' : 'Angemeldet';
@@ -72,7 +75,9 @@ class _AuthScreenState extends State<AuthScreen> {
       formKey: _formKey,
       fields: [
         CredentialFields(
-          username: _username,
+          identity: _identity,
+          identityLabel: isRegister ? 'Benutzername' : 'Benutzername oder E-Mail',
+          showEmail: isRegister,
           email: _email,
           password: _password,
         ),

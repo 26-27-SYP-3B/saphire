@@ -21,23 +21,19 @@ class AuthRepository {
   final Dio _dio;
 
   /// POST /api/register, which creates the user and returns it including its id.
-  Future<User> register({required String username, required String email, required String password}) async {
-    return _post('/api/register', username, email, password);
+  Future<User> register({required String username, required String email, required String password}) {
+    return _post('/api/register', {'username': username, 'email': email, 'password': password});
   }
 
-  /// POST /api/login, which answers with the user when the three fields match.
-  Future<User> login({required String username, required String email, required String password}) async {
-    return _post('/api/login', username, email, password);
+  /// POST /api/login with a username or an address and the password.
+  Future<User> login({required String login, required String password}) {
+    return _post('/api/login', {'login': login, 'password': password});
   }
 
-  Future<User> _post(String path, String username, String email, String password) async {
+  Future<User> _post(String path, Map<String, String> body) async {
     final Response response;
     try {
-      response = await _dio.post('$apiBaseUrl$path', data: {
-        'username': username,
-        'email': email,
-        'password': password,
-      });
+      response = await _dio.post('$apiBaseUrl$path', data: body);
     } on DioException catch (error) {
       throw AuthException(errorMessageFor(error));
     }
@@ -49,8 +45,8 @@ class AuthRepository {
     final data = error.response?.data;
     if (data is Map && data['error'] is String) return data['error'] as String;
     if (error.type == DioExceptionType.connectionError) {
-      return 'Server is not reachable at $apiBaseUrl.';
+      return 'Server ist nicht erreichbar unter $apiBaseUrl.';
     }
-    return 'Request failed (${error.response?.statusCode ?? 'unknown status'}).';
+    return 'Anfrage fehlgeschlagen (${error.response?.statusCode ?? 'unbekannter Status'}).';
   }
 }
