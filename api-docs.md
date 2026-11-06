@@ -161,16 +161,86 @@ CREATE TABLE IF NOT EXISTS session (
 )
 ```
 
+### `POST /api/music/upload`
+
+Uploads one song into the music library. **Only a logged-in user may upload**;
+anonymous requests are refused with the same two 401 messages as
+`GET /api/session`. The library is one folder the server creates at startup
+(`SAPHIRE_LIBRARY_PATH`, default `library`), so every uploaded song is available
+to everyone — there is no per-user path.
+
+```
+POST /api/music/upload
+Authorization: Bearer <token>
+Content-Type: multipart/form-data
+```
+
+**Request**
+
+The file is sent as a form field named `file`:
+
+```bash
+curl -X POST localhost:8080/api/music/upload \
+  -H "Authorization: Bearer <token>" \
+  -F "file=@song.mp3"
+```
+
+**Input rules**
+
+| Part | Rules |
+|---|---|
+| `file` | Not empty, at most 20 MiB. Accepted audio extensions: `mp3`, `wav`, `m4a`, `ogg`, `opus`, `flac`, `aac`. If the content can be sniffed it must actually be audio, so a text file renamed `.mp3` is refused; formats the sniffer cannot name (M4A, Ogg, FLAC) are accepted on their extension. |
+| name | The name the client sends becomes the display title: base name only, no control characters, at most 200 characters. The file itself is stored under a generated name (16 random bytes as hex + the extension), so no client name can escape the library folder and no upload overwrites another song. |
+
+**Responses**
+
+| Status | When | Example body |
+|---|---|---|
+| `201 Created` | File saved in the library and the row inserted | `{"id": 4, "uploaded_by": "lukas", "title": "song.mp3", "stored_name": "18cfd7db41d243d98cc87c4ab33dded6.wav", "size": 32, "content_type": "audio/wav", "uploaded_at": 1793974311}` |
+| `401 Unauthorized` | Missing `Authorization: Bearer` header | `{"error": "authorization header with a Bearer token is missing"}` |
+| `401 Unauthorized` | Unknown or expired token | `{"error": "session is not valid or expired"}` |
+| `400 Bad Request` | Not `multipart/form-data`, no file, the field is not named `file`, an empty file, a name with no usable characters, or content that is not audio | `{"error": "only audio files are accepted (mp3, wav, m4a, ogg, opus, flac, aac)"}` |
+| `413 Request Entity Too Large` | Upload larger than 20 MiB | `{"error": "upload is larger than 20 MiB"}` |
+| `429 Too Many Requests` | Upload rate limit reached (3 requests per IP, refilling 1 token every 30 s — its own bucket). Includes `Retry-After: 60` header. | `{"error": "too many uploads from this address, try again later"}` |
+| `500 Internal Server Error` | Writing the file or inserting the row failed | `{"error": "could not save the file"}` |
+
+**Notes**
+
+- Authentication is checked before the body is read, so an anonymous caller
+  cannot make the server read 20 MiB it would throw away.
+- The file is written before the row is inserted; if the insert fails, the file
+  is removed again, so a library entry never points at a missing file.
+- `stored_name` is what the file is called inside the library folder. There is no
+  download endpoint yet — see **Upcoming**.
+- Database schema:
+
+  ```sql
+  CREATE TABLE IF NOT EXISTS track (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES user(id),
+      title TEXT NOT NULL,
+      stored_name TEXT NOT NULL UNIQUE,
+      size INTEGER NOT NULL,
+      content_type TEXT NOT NULL,
+      uploaded_at INTEGER NOT NULL
+  )
+  ```
+
 ---
 
 ## Upcoming
 
-Nothing beyond the endpoints above exists. Planned, in rough order:
+Beyond the endpoints above, nothing exists yet. Planned, in rough order:
 
+- `GET /api/music` — list the library for any logged-in user, and
+  `GET /api/music/{id}` — send one stored file back. Upload is implemented, so
+  the next step is reading the library; both need the same `Authorization: Bearer`
+  rule as `GET /api/session`, and an unauthenticated reader must be refused with
+  the same 401 messages.
 - `POST /api/logout` — delete the session row for the presented token and
   answer `204 No Content`. Same `Authorization: Bearer` rule as
   `GET /api/session`; a client that keeps the token after logout should be
   refused with the same 401 message as an expired session.
-- The client features (library, playlists, player, equalizer, upload) have no
-  API yet. When their endpoints are designed, they go under **Implemented**
-  here — same status tables, same error shape.
+- The client features (playlists, player, equalizer) have no API yet. When their
+  endpoints are designed, they go under **Implemented** here — same status
+  tables, same error shape.

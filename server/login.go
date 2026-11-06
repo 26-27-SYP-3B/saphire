@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -114,26 +113,9 @@ func sessionHandler(db *sql.DB, limiter *rateLimiter) http.HandlerFunc {
 			return
 		}
 
-		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") {
-			writeError(w, http.StatusUnauthorized, "authorization header with a Bearer token is missing")
-			return
-		}
-		token := strings.TrimPrefix(auth, "Bearer ")
-
-		session, err := FindSession(db, token)
-		if err != nil {
-			if errors.Is(err, ErrSessionNotFound) {
-				writeError(w, http.StatusUnauthorized, "session is not valid or expired")
-				return
-			}
-			writeError(w, http.StatusInternalServerError, "could not load session")
-			return
-		}
-
-		user, err := GetUserByID(db, session.UserID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "could not load user")
+		user, status, message := authenticate(db, r)
+		if user == nil {
+			writeError(w, status, message)
 			return
 		}
 

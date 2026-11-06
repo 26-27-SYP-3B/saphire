@@ -30,3 +30,17 @@ before running.
 only as its SHA-256 hash, 24 h TTL). `GET /api/session` with
 `Authorization: Bearer <token>` returns the user the token belongs to. Full API
 documentation: `api-docs.md` in the project root.
+
+`POST /api/music/upload` — only a logged-in user may upload. The file goes into
+the shared library folder (`SAPHIRE_LIBRARY_PATH`, default `library`, created on
+startup) and a row in the `track` table, so the library is the same for every
+user. Send the file as a form field named `file`:
+
+```bash
+curl -X POST localhost:8080/api/music/upload \
+  -H "Authorization: Bearer <token>" \
+  -F "file=@song.mp3"
+```
+
+Returns `201 Created` with the track record, `401` for anonymous requests,
+`400` for a non-audio or empty file, `413` above 20 MiB, `429` when rate limited.
