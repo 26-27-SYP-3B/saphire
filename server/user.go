@@ -44,7 +44,42 @@ func OpenDB() (*sql.DB, error) {
 		return nil, err
 	}
 
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS session (
+			token_hash TEXT PRIMARY KEY,
+			user_id INTEGER NOT NULL REFERENCES user(id),
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		)`)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+
 	return db, nil
+}
+
+// GetUserByUsername finds a user by its normalized username. Returns
+// sql.ErrNoRows when it does not exist. Always parameterized.
+func GetUserByUsername(db *sql.DB, username string) (*User, error) {
+	var u User
+	err := db.QueryRow(`SELECT id, username, password_hash FROM user WHERE username = ?`, username).
+		Scan(&u.ID, &u.Username, &u.PasswordHash)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// GetUserByID loads a user for a session lookup.
+func GetUserByID(db *sql.DB, id int64) (*User, error) {
+	var u User
+	err := db.QueryRow(`SELECT id, username, password_hash FROM user WHERE id = ?`, id).
+		Scan(&u.ID, &u.Username, &u.PasswordHash)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
 }
 
 // Insert saves the user and fills in its ID. Returns ErrUsernameTaken when

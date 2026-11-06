@@ -27,11 +27,16 @@ func main() {
 		port = "8080"
 	}
 
-	// Registration rate limit: 5 requests per IP, refilling one token every 12s.
-	limiter := newRateLimiter(5, 12*time.Second)
+	// Rate limits: 5 requests per IP, refilling one token every 12s. Separate
+	// buckets per endpoint so a login flood cannot starve registration requests.
+	registerLimiter := newRateLimiter(5, 12*time.Second)
+	loginLimiter := newRateLimiter(5, 12*time.Second)
+	sessionLimiter := newRateLimiter(10, 12*time.Second)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/register", registerHandler(db, limiter))
+	mux.HandleFunc("POST /api/register", registerHandler(db, registerLimiter))
+	mux.HandleFunc("POST /api/login", loginHandler(db, loginLimiter))
+	mux.HandleFunc("GET /api/session", sessionHandler(db, sessionLimiter))
 
 	addr := fmt.Sprintf("0.0.0.0:%s", port)
 	fmt.Printf("Listening on port %s\n", port)
