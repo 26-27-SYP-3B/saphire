@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/joho/godotenv"
 	_ "modernc.org/sqlite"
@@ -25,19 +26,17 @@ func main() {
 	}
 	defer db.Close()
 
-	newUser := &User{Name: "Lukas", Email: "lukas@example.at"}
-	if err := newUser.Insert(db); err != nil {
-		log.Fatalf("insert user: %v", err)
-	}
-
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
+	// Registration rate limit: 5 requests per IP, refilling one token every 12s.
+	limiter := newRateLimiter(5, 12*time.Second)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", hello)
-	mux.HandleFunc("POST /api/register", registerHandler(db))
+	mux.HandleFunc("POST /api/register", registerHandler(db, limiter))
 
 	addr := fmt.Sprintf("0.0.0.0:%s", port)
 	fmt.Printf("Listening on port %s\n", port)
@@ -48,6 +47,7 @@ func main() {
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
