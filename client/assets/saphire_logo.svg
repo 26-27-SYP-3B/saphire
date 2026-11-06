@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1200" role="img" aria-labelledby="logo-title logo-desc">
+  <title id="logo-title">Saphire – Symbol</title>
+  <desc id="logo-desc">A decorative, calligraphic white S monogram inside a circular frame, flanked by symmetrical audio equalizer bars on a deep navy background.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0A1B48"/>
+      <stop offset="1" stop-color="#06143B"/>
+    </linearGradient>
+    <linearGradient id="silver" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.52" stop-color="#F2F6FF"/>
+      <stop offset="1" stop-color="#C7D7F3"/>
+    </linearGradient>
+    <linearGradient id="engraving" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#A9C1ED" stop-opacity="0.15"/>
+      <stop offset="0.5" stop-color="#6F91CD" stop-opacity="0.8"/>
+      <stop offset="1" stop-color="#A9C1ED" stop-opacity="0.15"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="1200" fill="url(#background)"/>
+
+  <!-- Symmetrical audio equalizer -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="16" stroke-linecap="round">
+    <path d="M80 589V611 M112 579V621 M144 567V633 M176 548V652 M208 567V633 M240 579V621 M272 589V611
+             M928 589V611 M960 579V621 M992 567V633 M1024 548V652 M1056 567V633 M1088 579V621 M1120 589V611"/>
+  </g>
+
+  <!-- Circular frame -->
+  <circle cx="600" cy="600" r="300" fill="none" stroke="#FFFFFF" stroke-width="15"/>
+
+  <!-- Ornate S monogram: sculpted terminals and a more flowing silhouette -->
+  <g transform="translate(48 48) scale(0.92)">
+  <path fill="url(#silver)" d="
+    M 778 374
+    C 735 339 685 322 628 322
+    C 515 322 427 383 416 470
+    C 406 542 455 584 551 627
+    C 616 656 669 680 704 711
+    C 726 731 737 752 731 774
+    C 720 815 670 837 609 833
+    C 546 829 483 801 431 755
+    L 379 819
+    C 428 864 492 893 564 903
+    C 596 908 627 908 656 904
+    C 759 891 825 831 833 751
+    C 841 675 794 625 700 582
+    L 579 528
+    C 523 503 494 479 496 449
+    C 499 414 545 390 604 389
+    C 663 388 716 412 754 453
+    C 762 426 770 399 778 374
+    Z"/>
+
+  <!-- Fine engraved highlights add depth without changing the silhouette -->
+  <g fill="none" stroke="url(#engraving)" stroke-width="4" stroke-linecap="round" opacity="0.85">
+    <path d="M 540 365 C 579 350 628 349 670 359"/>
+    <path d="M 531 846 C 574 865 624 870 668 861"/>
+  </g>
+  </g>
+
+</svg>

@@ -9,6 +9,9 @@ All responses are JSON with `Content-Type: application/json` and
 { "error": "human readable description of what went wrong" }
 ```
 
+Authenticated requests carry the session token in
+`Authorization: Bearer <token>`.
+
 ---
 
 ## `POST /api/register`
@@ -82,7 +85,80 @@ curl -X POST localhost:8080/api/register \
 
 ---
 
+## `POST /api/login`
+
+Logs in and creates a session. The same field rules as `POST /api/register`
+apply (see the table above); the login rate limit is a separate bucket.
+
+```
+POST /api/login
+Content-Type: application/json
+```
+
+**Request body**
+
+```json
+{
+  "username": "lukas",
+  "password": "secure-pass-123"
+}
+```
+
+**Responses**
+
+| Status | When | Example body |
+|---|---|---|
+| `200 OK` | Password verified, session created | `{"token": "9eb5…946c", "expires_at": 1794039606}` |
+| `400 Bad Request` | Malformed JSON or fields that fail the input rules | same messages as `/api/register` |
+| `401 Unauthorized` | Username unknown **or** password wrong — always the same answer, so callers cannot enumerate users | `{"error": "username or password is wrong"}` |
+| `429 Too Many Requests` | Login rate limit reached. Includes `Retry-After: 60` header. | `{"error": "too many logins from this address, try again later"}` |
+| `500 Internal Server Error` | Database failure | `{"error": "could not load user"}` |
+
+**Notes**
+
+- The token is 32 random bytes from `crypto/rand` as 64 hex characters. It is
+  only shown once, in this response; the database stores just its SHA-256 hash,
+  so a leaked database does not hand out usable sessions.
+- Sessions expire 24 hours after login (`sessionTTL`). Expired rows are dropped
+  on the next lookup.
+- Unknown users are answered with the same 401 after a comparison against a
+  dummy hash, so the response time does not reveal whether a username exists.
+
+---
+
+## `GET /api/session`
+
+Returns the user the presented token belongs to — this is how a client proves it
+is logged in.
+
+```
+GET /api/session
+Authorization: Bearer <token>
+```
+
+**Responses**
+
+| Status | When | Example body |
+|---|---|---|
+| `200 OK` | Token valid and not expired | `{"id": 1, "username": "lukas"}` |
+| `401 Unauthorized` | Missing `Authorization: Bearer` header | `{"error": "authorization header with a Bearer token is missing"}` |
+| `401 Unauthorized` | Unknown or expired token (the row is dropped) | `{"error": "session is not valid or expired"}` |
+| `429 Too Many Requests` | Session rate limit reached | `{"error": "too many requests from this address, try again later"}` |
+
+**Database schema for sessions**
+
+```sql
+CREATE TABLE IF NOT EXISTS session (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES user(id),
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+)
+```
+
+---
+
 ## Planned endpoints
 
-Nothing beyond the endpoints above is implemented. A login endpoint would verify
-the password with `bcrypt.CompareHashAndPassword` (constant time by design).
+Nothing beyond the endpoints above is implemented. A logout endpoint would
+delete the session row for the presented token.

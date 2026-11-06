@@ -43,6 +43,8 @@ These are deliberate decisions, not accidents. Change them only with an explicit
 6. The hash is computed **before** the insert so response timing does not reveal whether a username exists. Keep this order.
 7. The registration endpoint is **rate-limited per IP** (token bucket, 5 burst / 1 refill per 12 s) and enforces a 4 KiB body limit with strict JSON parsing (`DisallowUnknownFields`).
 8. Error responses state what happened and the fix; they never leak internal details (no stack traces, no driver error strings).
+9. Session tokens come from `crypto/rand` (32 bytes), the database stores only their **SHA-256 hash** as the primary key, sessions have a **24 h TTL** and expired rows are dropped on lookup. Keep the raw token out of the database.
+10. A failed login answers the **same generic 401** whether the user is unknown or the password is wrong, and the unknown-user path compares against a dummy hash so timing does not reveal whether a username exists. Login, registration and session checks use **separate** rate-limit buckets.
 
 ## Testing
 
