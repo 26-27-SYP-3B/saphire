@@ -5,7 +5,7 @@ import '../../../shared/widgets/auth_page.dart';
 import '../../../shared/widgets/credential_fields.dart';
 import '../data/auth_repository.dart';
 
-/// Which form is shown: the same fields, a different call to the server.
+/// Which form is shown: the same fields, a different action.
 enum AuthMode { register, login }
 
 /// The register and login window.
@@ -21,8 +21,7 @@ class AuthScreen extends StatefulWidget {
 
 class _AuthScreenState extends State<AuthScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _identity = TextEditingController();
-  final _email = TextEditingController();
+  final _username = TextEditingController();
   final _password = TextEditingController();
 
   bool _isSending = false;
@@ -30,8 +29,7 @@ class _AuthScreenState extends State<AuthScreen> {
 
   @override
   void dispose() {
-    _identity.dispose();
-    _email.dispose();
+    _username.dispose();
     _password.dispose();
     super.dispose();
   }
@@ -39,21 +37,22 @@ class _AuthScreenState extends State<AuthScreen> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
 
+    // There is no login endpoint yet, so the login button only opens the home screen.
+    if (widget.mode == AuthMode.login) {
+      context.go('/home');
+      return;
+    }
+
     setState(() {
       _isSending = true;
       _note = null;
     });
 
-    final identity = _identity.text.trim();
-    final password = _password.text;
-
     try {
-      if (widget.mode == AuthMode.register) {
-        await widget.repository.register(username: identity, email: _email.text.trim(), password: password);
-      } else {
-        await widget.repository.login(login: identity, password: password);
-      }
-
+      await widget.repository.register(
+        username: _username.text.trim(),
+        password: _password.text,
+      );
       if (mounted) context.go('/home');
     } on AuthException catch (error) {
       if (mounted) setState(() => _note = error.message);
@@ -69,15 +68,7 @@ class _AuthScreenState extends State<AuthScreen> {
     return AuthPage(
       title: isRegister ? 'Registrieren' : 'Anmelden',
       formKey: _formKey,
-      fields: [
-        CredentialFields(
-          identity: _identity,
-          identityLabel: isRegister ? 'Benutzername' : 'Benutzername oder E-Mail',
-          showEmail: isRegister,
-          email: _email,
-          password: _password,
-        ),
-      ],
+      fields: [CredentialFields(username: _username, password: _password)],
       buttonLabel: _isSending ? 'Wird gesendet…' : (isRegister ? 'Registrieren' : 'Anmelden'),
       onSubmitted: _isSending ? null : _submit,
       note: _note,

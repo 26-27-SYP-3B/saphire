@@ -41,19 +41,10 @@ class FakeRepository extends AuthRepository {
   final String? failureMessage;
 
   @override
-  Future<User> register({required String username, required String email, required String password}) {
-    return _answer(username);
-  }
-
-  @override
-  Future<User> login({required String login, required String password}) {
-    return _answer(login);
-  }
-
-  Future<User> _answer(String login) {
+  Future<User> register({required String username, required String password}) {
     final message = failureMessage;
     if (message != null) throw AuthException(message);
-    return Future.value(User(id: 7, username: login, email: 'lukas@example.at'));
+    return Future.value(User(id: 7, username: username));
   }
 }
 
@@ -67,27 +58,22 @@ Future<void> openRegister(WidgetTester tester, AuthRepository repository) async 
   await tester.pumpAndSettle();
 }
 
-/// The login form has two fields: the identity and the password.
-Future<void> fillLoginForm(WidgetTester tester, String identity) async {
-  await tester.enterText(find.byType(TextFormField).first, identity);
+Future<void> fillForm(WidgetTester tester) async {
+  await tester.enterText(find.byType(TextFormField).first, 'lukas');
   await tester.enterText(find.byType(TextFormField).last, 'geheim123');
-  await tester.tap(find.widgetWithText(FilledButton, 'Anmelden'));
+}
+
+Future<void> submit(WidgetTester tester, String buttonLabel) async {
+  await tester.tap(find.widgetWithText(FilledButton, buttonLabel));
   await tester.pumpAndSettle();
 }
 
 void main() {
   test('reads the answer of the server as a user', () async {
     final dio = Dio()
-      ..httpClientAdapter = StubAdapter(
-        201,
-        {'id': 7, 'username': 'lukas', 'email': 'lukas@example.at'},
-      );
+      ..httpClientAdapter = StubAdapter(201, {'id': 7, 'username': 'lukas'});
 
-    final user = await AuthRepository(dio).register(
-      username: 'lukas',
-      email: 'lukas@example.at',
-      password: 'geheim123',
-    );
+    final user = await AuthRepository(dio).register(username: 'lukas', password: 'geheim123');
 
     expect(user.id, 7);
     expect(user.username, 'lukas');
@@ -95,66 +81,70 @@ void main() {
 
   test('passes the error message of the server on', () async {
     final dio = Dio()
-      ..httpClientAdapter = StubAdapter(401, {'error': 'login or password is wrong'});
+      ..httpClientAdapter = StubAdapter(429, {'error': 'too many registrations from this address'});
 
     expect(
-      () => AuthRepository(dio).login(login: 'lukas', password: 'geheim123'),
+      () => AuthRepository(dio).register(username: 'lukas', password: 'geheim123'),
       throwsA(isA<AuthException>().having(
         (error) => error.message,
         'message',
-        'login or password is wrong',
+        'too many registrations from this address',
       )),
     );
   });
 
-  testWidgets('registering goes to the empty home screen', (tester) async {
+  testWidgets('registering goes to the home screen', (tester) async {
     await openRegister(tester, FakeRepository(null));
 
-    await tester.enterText(find.byType(TextFormField).first, 'lukas');
-    await tester.enterText(find.byType(TextFormField).at(1), 'lukas@example.at');
-    await tester.enterText(find.byType(TextFormField).last, 'geheim123');
-    await tester.tap(find.widgetWithText(FilledButton, 'Registrieren'));
-    await tester.pumpAndSettle();
+    await fillForm(tester);
+    await submit(tester, 'Registrieren');
 
     expect(find.byType(HomeScreen), findsOneWidget);
   });
 
-  testWidgets('logging in with the username goes to the home screen', (tester) async {
-    await openLogin(tester, FakeRepository(null));
-    await fillLoginForm(tester, 'lukas');
+  // The login has no endpoint, so it must not send anything: a repository that
+  // would fail here proves that nothing was called.
+  testWidgets('logging in goes to the home screen without a request', (tester) async {
+    await openLogin(tester, FakeRepository('darf hier nicht aufgerufen werden'));
+
+    await fillForm(tester);
+    await submit(tester, 'Anmelden');
 
     expect(find.byType(HomeScreen), findsOneWidget);
-  });
-
-  // The first field takes a username or an address, so an address has to pass the
-  // check without being treated as a username.
-  testWidgets('logging in with an address goes to the home screen', (tester) async {
-    await openLogin(tester, FakeRepository(null));
-    await fillLoginForm(tester, 'lukas@example.at');
-
-    expect(find.byType(HomeScreen), findsOneWidget);
-    expect(find.text('Das ist keine Adresse'), findsNothing);
+    expect(find.text('darf hier nicht aufgerufen werden'), findsNothing);
   });
 
   testWidgets('an error from the server shows below the fields', (tester) async {
-    await openLogin(tester, FakeRepository('login or password is wrong'));
-    await fillLoginForm(tester, 'lukas');
+    await openRegister(tester, FakeRepository('username already taken'));
 
-    expect(find.text('login or password is wrong'), findsOneWidget);
+    await fillForm(tester);
+    await submit(tester, 'Registrieren');
+
+    expect(find.text('username already taken'), findsOneWidget);
     expect(find.byType(HomeScreen), findsNothing);
   });
 
   // The form checks the same limits as the server, so a short password never
   // leaves the phone.
   testWidgets('a short password is stopped before the request', (tester) async {
-    await openLogin(tester, FakeRepository(null));
+    await openLogin(tester, FakeRepository('darf hier nicht aufgerufen werden'));
 
     await tester.enterText(find.byType(TextFormField).first, 'lukas');
     await tester.enterText(find.byType(TextFormField).last, 'short');
-    await tester.tap(find.widgetWithText(FilledButton, 'Anmelden'));
-    await tester.pumpAndSettle();
+    await submit(tester, 'Anmelden');
 
     expect(find.text('Passwort: mindestens 8 Zeichen'), findsOneWidget);
+    expect(find.byType(HomeScreen), findsNothing);
+  });
+
+  testWidgets('a username the server would reject is stopped too', (tester) async {
+    await openLogin(tester, FakeRepository('darf hier nicht aufgerufen werden'));
+
+    await tester.enterText(find.byType(TextFormField).first, 'lu kas');
+    await tester.enterText(find.byType(TextFormField).last, 'geheim123');
+    await submit(tester, 'Anmelden');
+
+    expect(find.text('Benutzername: nur Buchstaben, Zahlen, Unterstrich, Punkt und Bindestrich'), findsOneWidget);
     expect(find.byType(HomeScreen), findsNothing);
   });
 }

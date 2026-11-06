@@ -1,54 +1,44 @@
 import 'package:flutter/material.dart';
 
-/// The fields both auth forms show. The first field is the identity: a username,
-/// or an address when it contains an @. The email field only exists at register.
-/// The server is the trust boundary; these checks only stop obvious mistakes
-/// before a request is sent, and they use the same limits as the server.
+/// The two fields both auth forms show. The limits are the same as the server's
+/// (see server/register.go); this only stops obvious mistakes before a request.
 class CredentialFields extends StatelessWidget {
   const CredentialFields({
     super.key,
-    required this.identity,
-    required this.identityLabel,
-    required this.showEmail,
-    required this.email,
+    required this.username,
     required this.password,
   });
 
-  final TextEditingController identity;
-  final String identityLabel;
-  final bool showEmail;
-  final TextEditingController email;
+  final TextEditingController username;
   final TextEditingController password;
+
+  // Same pattern as server/register.go.
+  static final RegExp usernamePattern = RegExp(r'^[a-z0-9_.-]+$');
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        field(identity, identityLabel, TextInputAction.next, identityError),
-        if (showEmail) ...[
-          const SizedBox(height: 16),
-          field(email, 'E-Mail', TextInputAction.next,
-              (value) => _looksLikeAddress(value) ? null : 'E-Mail ausfüllen',
-              keyboardType: TextInputType.emailAddress),
-        ],
+        field(username, 'Benutzername', TextInputAction.next, (value) {
+          final text = (value ?? '').trim();
+          if (text.length < 3 || text.length > 32) {
+            return 'Benutzername: 3 bis 32 Zeichen';
+          }
+          if (!usernamePattern.hasMatch(text.toLowerCase())) {
+            return 'Benutzername: nur Buchstaben, Zahlen, Unterstrich, Punkt und Bindestrich';
+          }
+          return null;
+        }),
         const SizedBox(height: 16),
-        field(password, 'Passwort', TextInputAction.done,
-            (value) => (value ?? '').length < 8 ? 'Passwort: mindestens 8 Zeichen' : null,
-            obscureText: true),
+        field(password, 'Passwort', TextInputAction.done, (value) {
+          final text = value ?? '';
+          if (text.length < 8) return 'Passwort: mindestens 8 Zeichen';
+          if (text.length > 72) return 'Passwort: höchstens 72 Zeichen';
+          return null;
+        }, obscureText: true),
       ],
     );
-  }
-
-  String? identityError(String? value) {
-    final text = (value ?? '').trim();
-    if (text.contains('@')) return _looksLikeAddress(text) ? null : 'Das ist keine Adresse';
-    return text.length < 3 ? 'Benutzername: mindestens 3 Zeichen' : null;
-  }
-
-  bool _looksLikeAddress(String? value) {
-    final text = value ?? '';
-    return text.contains('@') && text.split('@').last.contains('.');
   }
 
   Widget field(
@@ -56,14 +46,12 @@ class CredentialFields extends StatelessWidget {
     String label,
     TextInputAction action,
     String? Function(String?) validator, {
-    TextInputType? keyboardType,
     bool obscureText = false,
   }) {
     return TextFormField(
       controller: controller,
       decoration: InputDecoration(labelText: label),
       textInputAction: action,
-      keyboardType: keyboardType,
       obscureText: obscureText,
       validator: validator,
     );
