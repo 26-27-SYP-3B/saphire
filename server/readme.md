@@ -25,3 +25,8 @@ input, `409` if the username is taken, `429` when rate limited. Passwords are
 stored as bcrypt hashes (cost 12) and never returned. Note: the database schema
 changed (username/password instead of name/email); delete an old `saphire.db`
 before running.
+
+`POST /api/login` — verifies the password and creates a session token (stored
+only as its SHA-256 hash, 24 h TTL). `GET /api/session` with
+`Authorization: Bearer <token>` returns the user the token belongs to. Full API
+documentation: `DOCS.md`.
