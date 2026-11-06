@@ -12,6 +12,13 @@ All responses are JSON with `Content-Type: application/json` and
 Authenticated requests carry the session token in
 `Authorization: Bearer <token>`.
 
+Browser clients work because of a CORS middleware (`server/cors.go`): the
+`Origin` is reflected on every answer, `OPTIONS` preflights get `204 No Content`
+with the allowed methods and headers, and a request without an `Origin` (a plain
+HTTP client) gets no CORS headers. On a phone or an Android emulator the default
+`http://127.0.0.1:8080` does not reach the development machine — override
+`API_BASE_URL` with `--dart-define`.
+
 ---
 
 ## `POST /api/register`
