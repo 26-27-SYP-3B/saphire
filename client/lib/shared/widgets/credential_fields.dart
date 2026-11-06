@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 /// The two fields both auth forms show. The limits are the same as the server's
@@ -21,11 +23,13 @@ class CredentialFields extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         field(username, 'Benutzername', TextInputAction.next, (value) {
-          final text = (value ?? '').trim();
+          // The server normalizes to lowercase before checking, so we validate
+          // the same form it will see.
+          final text = (value ?? '').trim().toLowerCase();
           if (text.length < 3 || text.length > 32) {
             return 'Benutzername: 3 bis 32 Zeichen';
           }
-          if (!usernamePattern.hasMatch(text.toLowerCase())) {
+          if (!usernamePattern.hasMatch(text)) {
             return 'Benutzername: nur Buchstaben, Zahlen, Unterstrich, Punkt und Bindestrich';
           }
           return null;
@@ -33,8 +37,13 @@ class CredentialFields extends StatelessWidget {
         const SizedBox(height: 16),
         field(password, 'Passwort', TextInputAction.done, (value) {
           final text = value ?? '';
-          if (text.length < 8) return 'Passwort: mindestens 8 Zeichen';
-          if (text.length > 72) return 'Passwort: höchstens 72 Zeichen';
+          // The server counts UTF-8 bytes, not characters: an ä is two bytes.
+          // Counting the same here stops long passwords before the request.
+          if (utf8.encode(text).length < 8) return 'Passwort: mindestens 8 Zeichen';
+          if (utf8.encode(text).length > 72) return 'Passwort: höchstens 72 Bytes';
+          if (text.codeUnits.any((unit) => unit < 0x20 || unit == 0x7f)) {
+            return 'Passwort: keine Kontrollzeichen';
+          }
           return null;
         }, obscureText: true),
       ],

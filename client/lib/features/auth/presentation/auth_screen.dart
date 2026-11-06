@@ -37,11 +37,9 @@ class _AuthScreenState extends State<AuthScreen> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
 
-    // There is no login endpoint yet, so the login button only opens the home screen.
-    if (widget.mode == AuthMode.login) {
-      context.go('/home');
-      return;
-    }
+    // The server normalizes usernames to lowercase; we send the same form so
+    // what the user typed and what the app stores are always the same name.
+    final username = _username.text.trim().toLowerCase();
 
     setState(() {
       _isSending = true;
@@ -49,10 +47,14 @@ class _AuthScreenState extends State<AuthScreen> {
     });
 
     try {
-      await widget.repository.register(
-        username: _username.text.trim(),
-        password: _password.text,
-      );
+      if (widget.mode == AuthMode.register) {
+        await widget.repository.register(username: username, password: _password.text);
+        // Registration does not create a session on the server, so we log in
+        // with the same credentials before opening the home screen.
+        await widget.repository.login(username: username, password: _password.text);
+      } else {
+        await widget.repository.login(username: username, password: _password.text);
+      }
       if (mounted) context.go('/home');
     } on AuthException catch (error) {
       if (mounted) setState(() => _note = error.message);

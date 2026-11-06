@@ -7,8 +7,9 @@ class User {
   final int id;
   final String username;
 
+  // JSON numbers arrive as double on the web, so the cast goes through num.
   factory User.fromJson(Map<String, dynamic> json) => User(
-    id: json['id'] as int,
+    id: (json['id'] as num).toInt(),
     username: json['username'] as String,
   );
 }
