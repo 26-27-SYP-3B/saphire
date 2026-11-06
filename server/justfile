@@ -9,5 +9,8 @@ run-release:
 build:
     go build -o build/saphire-server .
 
+test:
+    go test ./...
+
 clean:
     rm -rf build
