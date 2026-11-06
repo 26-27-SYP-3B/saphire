@@ -11,22 +11,6 @@ All responses are JSON with `Content-Type: application/json` and
 
 ---
 
-## `GET /`
-
-Health/hello endpoint.
-
-```
-GET /
-```
-
-**200 OK**
-
-```json
-{ "message": "hello world" }
-```
-
----
-
 ## `POST /api/register`
 
 Registers a new user. Users have only a username and a password — no email or

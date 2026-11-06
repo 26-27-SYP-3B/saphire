@@ -12,10 +12,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func hello(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("Hello, world!")
-	writeJSON(w, http.StatusOK, map[string]string{"message": "hello world"})
-}
 
 func main() {
 	_ = godotenv.Load()
@@ -35,7 +31,6 @@ func main() {
 	limiter := newRateLimiter(5, 12*time.Second)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", hello)
 	mux.HandleFunc("POST /api/register", registerHandler(db, limiter))
 
 	addr := fmt.Sprintf("0.0.0.0:%s", port)
