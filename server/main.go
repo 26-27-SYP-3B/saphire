@@ -40,7 +40,7 @@ func main() {
 
 	addr := fmt.Sprintf("0.0.0.0:%s", port)
 	fmt.Printf("Listening on port %s\n", port)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	if err := http.ListenAndServe(addr, corsMiddleware(mux)); err != nil {
 		log.Fatalf("server: %v", err)
 	}
 }

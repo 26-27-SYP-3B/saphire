@@ -1,4 +1,4 @@
-# Saphire Server API
+# Saphire API Documentation
 
 Base URL: `http://localhost:8080` (port configurable via `PORT` in `.env`).
 
@@ -12,9 +12,18 @@ All responses are JSON with `Content-Type: application/json` and
 Authenticated requests carry the session token in
 `Authorization: Bearer <token>`.
 
+Browser clients work because of a CORS middleware (`server/cors.go`): the
+`Origin` is reflected on every answer, `OPTIONS` preflights get `204 No Content`
+with the allowed methods and headers, and a request without an `Origin` (a plain
+HTTP client) gets no CORS headers. On a phone or an Android emulator the default
+`http://127.0.0.1:8080` does not reach the development machine — override
+`API_BASE_URL` with `--dart-define`.
+
 ---
 
-## `POST /api/register`
+## Implemented
+
+### `POST /api/register`
 
 Registers a new user. Users have only a username and a password — no email or
 other fields.
@@ -83,9 +92,7 @@ curl -X POST localhost:8080/api/register \
   The old `name`/`email` schema is not migrated; delete an existing `saphire.db`
   created before this change.
 
----
-
-## `POST /api/login`
+### `POST /api/login`
 
 Logs in and creates a session. The same field rules as `POST /api/register`
 apply (see the table above); the login rate limit is a separate bucket.
@@ -124,9 +131,7 @@ Content-Type: application/json
 - Unknown users are answered with the same 401 after a comparison against a
   dummy hash, so the response time does not reveal whether a username exists.
 
----
-
-## `GET /api/session`
+### `GET /api/session`
 
 Returns the user the presented token belongs to — this is how a client proves it
 is logged in.
@@ -158,7 +163,14 @@ CREATE TABLE IF NOT EXISTS session (
 
 ---
 
-## Planned endpoints
+## Upcoming
 
-Nothing beyond the endpoints above is implemented. A logout endpoint would
-delete the session row for the presented token.
+Nothing beyond the endpoints above exists. Planned, in rough order:
+
+- `POST /api/logout` — delete the session row for the presented token and
+  answer `204 No Content`. Same `Authorization: Bearer` rule as
+  `GET /api/session`; a client that keeps the token after logout should be
+  refused with the same 401 message as an expired session.
+- The client features (library, playlists, player, equalizer, upload) have no
+  API yet. When their endpoints are designed, they go under **Implemented**
+  here — same status tables, same error shape.

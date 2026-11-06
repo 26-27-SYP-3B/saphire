@@ -6,10 +6,18 @@ import '../features/home/presentation/home_screen.dart';
 
 /// Anmeldung und Registrierung: gleiche Felder, zwei Routen, beide Seiten
 /// verlinken sich gegenseitig. Nach einer erfolgreichen Anmeldung oder
-/// Registrierung geht es auf die leere Startseite.
+/// Registrierung geht es auf die leere Startseite – aber nur mit einer gültigen
+/// Session, ohne sie bleibt die App auf der Anmeldung.
 GoRouter buildRouter(AuthRepository repository) {
   return GoRouter(
     initialLocation: '/login',
+    redirect: (context, state) {
+      final goingHome = state.matchedLocation == '/home';
+      if (goingHome && !repository.session.isLoggedIn) {
+        return '/login';
+      }
+      return null;
+    },
     routes: [
       GoRoute(
         path: '/login',

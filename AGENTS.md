@@ -8,7 +8,8 @@ Instructions for AI coding agents working in this repository.
 saphire/
 ├── server/    # Go HTTP server (module saphire-server) — work here for API tasks
 ├── client/    # Flutter app (saphire_client)
-└── dokumente/ # project paperwork, do not edit
+├── dokumente/ # project paperwork, do not edit
+└── api-docs.md # the API documentation — this is the one docs file
 ```
 
 ## Commands (from `server/`)
@@ -29,7 +30,7 @@ Use `go vet` and `go test` before declaring work done. The whole server is a sin
 - Environment config comes from `.env` (loaded with godotenv); document new variables in `.env.template`.
 - All responses go through the `writeJSON`/`writeError` helpers in `main.go`. One file per domain area (e.g. `user.go`, `register.go`).
 - Comments explain *why*, not *what* — e.g. why the password length cap is 72.
-- Keep `DOCS.md` in sync: any endpoint change must update its entry, including status codes and error messages.
+- Keep `api-docs.md` (in the project root) in sync: any endpoint change must update its entry, including status codes and error messages, and move planned endpoints between its **Upcoming** and **Implemented** sections.
 
 ## Security rules — do not weaken these
 
@@ -49,12 +50,13 @@ These are deliberate decisions, not accidents. Change them only with an explicit
 ## Testing
 
 Server tests exist in `server/` (`just test`). Keep them green and extend them for
-new behavior. Additionally verify with `curl` — the responses in `DOCS.md` are the
-expected behavior, including status codes and headers (`Retry-After`,
+new behavior. Additionally verify with `curl` — the responses in `api-docs.md` are
+the expected behavior, including status codes and headers (`Retry-After`,
 `X-Content-Type-Options`).
 
 ## Gotchas
 
 - An existing `saphire.db` uses the old `name`/`email` schema. `CREATE TABLE IF NOT EXISTS` will not migrate it; delete the file for a fresh start.
 - The rate limiter state is in memory and resets on restart.
+- Browser clients only work through `corsMiddleware` in `main.go`; without the reflected Origin the browser blocks every JSON POST. On devices, `127.0.0.1` is the device itself — `API_BASE_URL` must point at the development machine (Android emulator: `10.0.2.2`).
 - The project is a school project (3BHIF): prefer simple, readable code over frameworks.

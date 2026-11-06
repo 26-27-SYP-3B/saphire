@@ -29,4 +29,4 @@ before running.
 `POST /api/login` — verifies the password and creates a session token (stored
 only as its SHA-256 hash, 24 h TTL). `GET /api/session` with
 `Authorization: Bearer <token>` returns the user the token belongs to. Full API
-documentation: `DOCS.md`.
+documentation: `api-docs.md` in the project root.
