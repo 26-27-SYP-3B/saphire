@@ -92,6 +92,9 @@ func authenticate(db *sql.DB, r *http.Request) (*User, int, string) {
 
 	user, err := GetUserByID(db, session.UserID)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, http.StatusUnauthorized, "session is not valid or expired"
+		}
 		return nil, http.StatusInternalServerError, "could not load user"
 	}
 	return user, http.StatusOK, ""

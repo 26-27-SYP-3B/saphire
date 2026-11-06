@@ -50,7 +50,7 @@ trailing content are rejected. Body is limited to 4 KiB.
 | Field | Rules |
 |---|---|
 | `username` | 3–32 characters; only `a-z`, `0-9`, `_`, `.`, `-`. Trimmed and lowercased, so `Lukas` and `lukas` are the same account. |
-| `password` | 8–72 characters, no control characters. 72 is the bcrypt limit — longer input is rejected instead of silently truncated. Stored only as a bcrypt hash (cost 12), never returned or logged. |
+| `password` | 8–72 bytes, no control characters. 72 is the bcrypt limit — longer input is rejected instead of silently truncated. Stored only as a bcrypt hash (cost 12), never returned or logged. |
 
 **Responses**
 
@@ -59,7 +59,7 @@ trailing content are rejected. Body is limited to 4 KiB.
 | `201 Created` | User registered | `{"id": 1, "username": "lukas"}` |
 | `400 Bad Request` | Malformed JSON, unknown fields, oversized body, or a username/password that fails the rules | `{"error": "password must be at least 8 characters"}` |
 | `409 Conflict` | Username already taken | `{"error": "username is not available"}` |
-| `429 Too Many Requests` | Rate limit reached (5 requests per IP, refilling 1 token every 12 s). Includes `Retry-After: 60` header. | `{"error": "too many registrations from this address, try again later"}` |
+| `429 Too Many Requests` | Rate limit reached (5 requests per IP, refilling 1 token every 12 s). Includes a `Retry-After` header with the seconds until the next token (never more than the 12 s refill window). | `{"error": "too many registrations from this address, try again later"}` |
 | `500 Internal Server Error` | Hashing or database failure | `{"error": "could not save user"}` |
 
 **Success example**
@@ -79,6 +79,9 @@ curl -X POST localhost:8080/api/register \
 - Username existence checks are deliberately timed to not leak whether a
   username exists: the hash is computed before the insert is attempted.
 - The rate limiter trusts `X-Forwarded-For` when running behind a reverse proxy.
+  The peer address is split off the port with `net.SplitHostPort`, so IPv6 peers
+  (bracketed `RemoteAddr`, including `::1`) get their own bucket rather than a
+  shared one; stale buckets are pruned so the map stays bounded.
 - Database schema:
 
   ```sql
@@ -118,7 +121,7 @@ Content-Type: application/json
 | `200 OK` | Password verified, session created | `{"token": "9eb5…946c", "expires_at": 1794039606}` |
 | `400 Bad Request` | Malformed JSON or fields that fail the input rules | same messages as `/api/register` |
 | `401 Unauthorized` | Username unknown **or** password wrong — always the same answer, so callers cannot enumerate users | `{"error": "username or password is wrong"}` |
-| `429 Too Many Requests` | Login rate limit reached. Includes `Retry-After: 60` header. | `{"error": "too many logins from this address, try again later"}` |
+| `429 Too Many Requests` | Login rate limit reached. Includes a `Retry-After` header (seconds until the next token, at most the 12 s refill window). | `{"error": "too many logins from this address, try again later"}` |
 | `500 Internal Server Error` | Database failure | `{"error": "could not load user"}` |
 
 **Notes**
@@ -147,8 +150,9 @@ Authorization: Bearer <token>
 |---|---|---|
 | `200 OK` | Token valid and not expired | `{"id": 1, "username": "lukas"}` |
 | `401 Unauthorized` | Missing `Authorization: Bearer` header | `{"error": "authorization header with a Bearer token is missing"}` |
-| `401 Unauthorized` | Unknown or expired token (the row is dropped) | `{"error": "session is not valid or expired"}` |
-| `429 Too Many Requests` | Session rate limit reached | `{"error": "too many requests from this address, try again later"}` |
+| `401 Unauthorized` | Unknown or expired token (the row is dropped), or the token's user no longer exists | `{"error": "session is not valid or expired"}` |
+| `429 Too Many Requests` | Session rate limit reached. Includes a `Retry-After` header (seconds until the next token, at most the 12 s refill window). | `{"error": "too many requests from this address, try again later"}` |
+| `500 Internal Server Error` | Database failure | `{"error": "could not load session"}` or `{"error": "could not load user"}` |
 
 **Database schema for sessions**
 
@@ -201,7 +205,7 @@ curl -X POST localhost:8080/api/music/upload \
 | `401 Unauthorized` | Unknown or expired token | `{"error": "session is not valid or expired"}` |
 | `400 Bad Request` | Not `multipart/form-data`, no file, the field is not named `file`, an empty file, a name with no usable characters, or content that is not audio | `{"error": "only audio files are accepted (mp3, wav, m4a, ogg, opus, flac, aac)"}` |
 | `413 Request Entity Too Large` | Upload larger than 20 MiB | `{"error": "upload is larger than 20 MiB"}` |
-| `429 Too Many Requests` | Upload rate limit reached (3 requests per IP, refilling 1 token every 30 s — its own bucket). Includes `Retry-After: 60` header. | `{"error": "too many uploads from this address, try again later"}` |
+| `429 Too Many Requests` | Upload rate limit reached (3 requests per IP, refilling 1 token every 30 s — its own bucket). Includes a `Retry-After` header (seconds until the next token, at most the 30 s refill window). | `{"error": "too many uploads from this address, try again later"}` |
 | `500 Internal Server Error` | Writing the file or inserting the row failed | `{"error": "could not save the file"}` |
 
 **Notes**

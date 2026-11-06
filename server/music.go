@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -145,14 +146,16 @@ func sanitizeTitle(name string) string {
 	name = path.Base(strings.ReplaceAll(name, "\x00", ""))
 
 	var b strings.Builder
+	count := 0
 	for _, r := range name {
 		if r < 0x20 || r == 0x7f {
 			continue
 		}
-		if b.Len() >= maxTitleLen {
+		if count >= maxTitleLen {
 			break
 		}
 		b.WriteRune(r)
+		count++
 	}
 	return strings.TrimSpace(b.String())
 }
@@ -164,8 +167,8 @@ func sanitizeTitle(name string) string {
 func uploadHandler(db *sql.DB, library string, limiter *rateLimiter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ip := clientIP(r)
-		if !limiter.allow(ip) {
-			w.Header().Set("Retry-After", "60")
+		if ok, retry := limiter.allow(ip); !ok {
+			w.Header().Set("Retry-After", strconv.Itoa(retry))
 			writeError(w, http.StatusTooManyRequests, "too many uploads from this address, try again later")
 			return
 		}

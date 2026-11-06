@@ -155,7 +155,5 @@ func TestLoginRateLimit(t *testing.T) {
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("third request -> %d, wanted 429 (%s)", rec.Code, rec.Body)
 	}
-	if rec.Header().Get("Retry-After") != "60" {
-		t.Errorf("missing Retry-After header")
-	}
+	checkRetryAfter(t, rec, 1)
 }

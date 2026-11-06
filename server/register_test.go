@@ -5,10 +5,22 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
+
+// checkRetryAfter asserts a rate-limited answer carries an honest Retry-After:
+// the seconds until the next token, which for a token bucket is at most the
+// refill window. It must not be a fixed guess that overstates the wait.
+func checkRetryAfter(t *testing.T, rec *httptest.ResponseRecorder, windowSeconds int) {
+	t.Helper()
+	n, err := strconv.Atoi(rec.Header().Get("Retry-After"))
+	if err != nil || n < 1 || n > windowSeconds {
+		t.Errorf("Retry-After %q must be a positive value within the %d s refill window", rec.Header().Get("Retry-After"), windowSeconds)
+	}
+}
 
 func openTestDB(t *testing.T) *sql.DB {
 	t.Setenv("SAPHIRE_DB_PATH", ":memory:")
@@ -74,6 +86,29 @@ func TestRegister(t *testing.T) {
 	}
 }
 
+// The rate limiter buckets per IP, so the peer address must be parsed for IPv6
+// too — a bracketed RemoteAddr must not fall into the shared unknown bucket.
+func TestClientIP(t *testing.T) {
+	cases := []struct {
+		remote string
+		want   string
+	}{
+		{"127.0.0.1:8080", "127.0.0.1"},
+		{"[::1]:8080", "::1"},
+		{"[2001:db8::1]:443", "2001:db8::1"},
+		{"[fe80::1%eth0]:8080", "fe80::1%eth0"},
+		{"[::1]", "::1"}, // bracketed without a port
+	}
+
+	for _, c := range cases {
+		req := httptest.NewRequest(http.MethodPost, "/api/register", nil)
+		req.RemoteAddr = c.remote
+		if got := clientIP(req).String(); got != c.want {
+			t.Errorf("clientIP(%q) = %q, want %q", c.remote, got, c.want)
+		}
+	}
+}
+
 func TestRegisterRateLimit(t *testing.T) {
 	handler := registerHandler(openTestDB(t), newRateLimiter(2, time.Second))
 
@@ -94,7 +129,5 @@ func TestRegisterRateLimit(t *testing.T) {
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("third request -> %d, wanted 429 (%s)", rec.Code, rec.Body)
 	}
-	if rec.Header().Get("Retry-After") != "60" {
-		t.Errorf("missing Retry-After header")
-	}
+	checkRetryAfter(t, rec, 1)
 }

@@ -293,9 +293,7 @@ func TestUploadRateLimit(t *testing.T) {
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("third upload -> %d, wanted 429 (%s)", rec.Code, rec.Body)
 	}
-	if rec.Header().Get("Retry-After") != "60" {
-		t.Errorf("missing Retry-After header")
-	}
+	checkRetryAfter(t, rec, 1)
 
 	// The upload bucket is its own: a full bucket answers before the token is
 	// looked up, so a flood of anonymous uploads cannot starve the session checks.
