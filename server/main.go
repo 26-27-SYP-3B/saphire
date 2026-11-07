@@ -48,6 +48,16 @@ func main() {
 	mux.HandleFunc("GET /api/session", sessionHandler(db, sessionLimiter))
 	mux.HandleFunc("POST /api/music/upload", uploadHandler(db, library, uploadLimiter))
 
+	// The development frontend in static/, mounted under its own prefix so it cannot
+	// take over a path an API pattern owns. See static.go.
+	mux.Handle("GET /static/", http.StripPrefix("/static", staticHandler(staticDir)))
+
+	// The root pattern here is the exact "/" only ({$}), not a wildcard, so the API
+	// keeps its own answers. It just forwards an open browser tab to the page.
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/static/", http.StatusMovedPermanently)
+	})
+
 	addr := fmt.Sprintf("0.0.0.0:%s", port)
 	fmt.Printf("Listening on port %s\n", port)
 	if err := http.ListenAndServe(addr, corsMiddleware(mux)); err != nil {

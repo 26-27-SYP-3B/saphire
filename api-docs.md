@@ -248,3 +248,41 @@ Beyond the endpoints above, nothing exists yet. Planned, in rough order:
 - The client features (playlists, player, equalizer) have no API yet. When their
   endpoints are designed, they go under **Implemented** here — same status
   tables, same error shape.
+
+---
+
+## Development frontend
+
+`server/static/` holds a plain HTML page for calling these endpoints from a browser
+while they are being built. `main.go` serves it for `GET /static/` through
+`static.go`, from the folder relative to the directory the server is started from
+(`just run` inside `server/`); nothing is compiled into the binary, so editing a
+file and reloading the page is enough.
+
+It is mounted under its own prefix on purpose. A pattern for `/` is a wildcard, so it
+would also answer `/api/*` for a method no endpoint serves, and a wrong-method request
+would get the page's plain text 404 instead of the `405` the endpoints above document.
+The root itself is the exact root pattern (`GET /{$}`), so it cannot take an API path
+over; it only forwards a browser to the page.
+
+These answers are not part of the API: they are `text/html`, `text/css` and
+`text/javascript` (with `X-Content-Type-Options: nosniff`, like every other answer
+from this server), and a missing file is the plain text `404 page not found` of
+`http.FileServer` rather than the JSON error shape:
+
+| Route | Status | What it answers |
+|---|---|---|
+| `GET /` | `301 Moved Permanently` | `Location: /static/`, so a tab opened at the root reaches the page |
+| `GET /static/` | `200 OK` | `static/index.html` |
+| `GET /static/index.html` | `301 Moved Permanently` | `Location: ./`, because `http.FileServer` treats the index file as its folder — the page has one address |
+| `GET /static/style.css`, `GET /static/app.js` | `200 OK` | the files the page links |
+| `GET /static/<anything else>` | `404 Not Found` | plain text `404 page not found` |
+| `POST /static/` | `405 Method Not Allowed` | only GET serves the page |
+
+The page sends exactly what is typed and shows what the server answered: the status
+code, the elapsed time, `Retry-After` when a rate limit answers 429, and the same
+request written as `curl`. It keeps the session token in `sessionStorage` for the
+current tab and shows it from there — the raw token is still only ever returned by
+`POST /api/login`, and the database still stores only its hash. On load the page calls
+`GET /api/session` with the stored token, so the 401 path is visible
+without logging in again.
