@@ -34,7 +34,7 @@ type Track struct {
 // Upload limits. The body limit covers the multipart framing plus the file; a
 // single song must not be able to fill the disk.
 const (
-	maxUploadBytes = 20 << 20 // 20 MiB
+	maxUploadBytes = 500 << 20 // 500 MiB
 	maxTitleLen    = 200
 )
 
@@ -174,7 +174,7 @@ func uploadHandler(db *sql.DB, library string, limiter *rateLimiter) http.Handle
 		}
 
 		// Auth before reading the body, so an unauthenticated caller cannot make
-		// the server read 20 MiB it will throw away.
+		// the server read 500 MiB it will throw away.
 		user, status, message := authenticate(db, r)
 		if user == nil {
 			writeError(w, status, message)
@@ -198,7 +198,7 @@ func uploadHandler(db *sql.DB, library string, limiter *rateLimiter) http.Handle
 		part, err := mr.NextPart()
 		if err != nil {
 			if errors.As(err, &maxBytesErr) {
-				writeError(w, http.StatusRequestEntityTooLarge, "upload is larger than 20 MiB")
+				writeError(w, http.StatusRequestEntityTooLarge, "upload is larger than 500 MiB")
 				return
 			}
 			if errors.Is(err, io.EOF) {
@@ -218,14 +218,14 @@ func uploadHandler(db *sql.DB, library string, limiter *rateLimiter) http.Handle
 		data, err := io.ReadAll(io.LimitReader(part, maxUploadBytes+1))
 		if err != nil {
 			if errors.As(err, &maxBytesErr) {
-				writeError(w, http.StatusRequestEntityTooLarge, "upload is larger than 20 MiB")
+				writeError(w, http.StatusRequestEntityTooLarge, "upload is larger than 500 MiB")
 				return
 			}
 			writeError(w, http.StatusBadRequest, "the upload could not be read")
 			return
 		}
 		if len(data) > maxUploadBytes {
-			writeError(w, http.StatusRequestEntityTooLarge, "upload is larger than 20 MiB")
+			writeError(w, http.StatusRequestEntityTooLarge, "upload is larger than 500 MiB")
 			return
 		}
 		if len(data) == 0 {

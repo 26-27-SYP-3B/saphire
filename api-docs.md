@@ -193,7 +193,7 @@ curl -X POST localhost:8080/api/music/upload \
 
 | Part | Rules |
 |---|---|
-| `file` | Not empty, at most 20 MiB. Accepted audio extensions: `mp3`, `wav`, `m4a`, `ogg`, `opus`, `flac`, `aac`. If the content can be sniffed it must actually be audio, so a text file renamed `.mp3` is refused; formats the sniffer cannot name (M4A, Ogg, FLAC) are accepted on their extension. |
+| `file` | Not empty, at most 500 MiB. Accepted audio extensions: `mp3`, `wav`, `m4a`, `ogg`, `opus`, `flac`, `aac`. If the content can be sniffed it must actually be audio, so a text file renamed `.mp3` is refused; formats the sniffer cannot name (M4A, Ogg, FLAC) are accepted on their extension. |
 | name | The name the client sends becomes the display title: base name only, no control characters, at most 200 characters. The file itself is stored under a generated name (16 random bytes as hex + the extension), so no client name can escape the library folder and no upload overwrites another song. |
 
 **Responses**
@@ -204,14 +204,14 @@ curl -X POST localhost:8080/api/music/upload \
 | `401 Unauthorized` | Missing `Authorization: Bearer` header | `{"error": "authorization header with a Bearer token is missing"}` |
 | `401 Unauthorized` | Unknown or expired token | `{"error": "session is not valid or expired"}` |
 | `400 Bad Request` | Not `multipart/form-data`, no file, the field is not named `file`, an empty file, a name with no usable characters, or content that is not audio | `{"error": "only audio files are accepted (mp3, wav, m4a, ogg, opus, flac, aac)"}` |
-| `413 Request Entity Too Large` | Upload larger than 20 MiB | `{"error": "upload is larger than 20 MiB"}` |
+| `413 Request Entity Too Large` | Upload larger than 500 MiB | `{"error": "upload is larger than 500 MiB"}` |
 | `429 Too Many Requests` | Upload rate limit reached (3 requests per IP, refilling 1 token every 30 s — its own bucket). Includes a `Retry-After` header (seconds until the next token, at most the 30 s refill window). | `{"error": "too many uploads from this address, try again later"}` |
 | `500 Internal Server Error` | Writing the file or inserting the row failed | `{"error": "could not save the file"}` |
 
 **Notes**
 
 - Authentication is checked before the body is read, so an anonymous caller
-  cannot make the server read 20 MiB it would throw away.
+  cannot make the server read 500 MiB it would throw away.
 - The file is written before the row is inserted; if the insert fails, the file
   is removed again, so a library entry never points at a missing file.
 - `stored_name` is what the file is called inside the library folder. There is no

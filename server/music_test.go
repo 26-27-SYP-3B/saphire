@@ -235,7 +235,7 @@ func TestUploadRejectsBadUploads(t *testing.T) {
 		{"field is not a file", "file", "", notAudio, http.StatusBadRequest},
 		{"wrong field name", "upload", "song.flac", notAudio, http.StatusBadRequest},
 		{"no file at all", "", "", nil, http.StatusBadRequest},
-		{"larger than 20 MiB", "file", "big.wav", bytes.Repeat([]byte{0}, maxUploadBytes+1), http.StatusRequestEntityTooLarge},
+		{"larger than 500 MiB", "file", "big.wav", bytes.Repeat([]byte{0}, maxUploadBytes+1), http.StatusRequestEntityTooLarge},
 	}
 
 	for _, c := range cases {

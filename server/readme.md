@@ -43,7 +43,7 @@ curl -X POST localhost:8080/api/music/upload \
 ```
 
 Returns `201 Created` with the track record, `401` for anonymous requests,
-`400` for a non-audio or empty file, `413` above 20 MiB, `429` when rate limited.
+`400` for a non-audio or empty file, `413` above 500 MiB, `429` when rate limited.
 
 ## Development frontend
 
