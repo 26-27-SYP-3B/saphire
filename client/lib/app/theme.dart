@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
 
-/// Farben der Anmelde- und Registrierungsseiten.
-/// Marinblau ist der einzige Akzent, alles andere bleibt neutral dunkel.
-const canvas = Color(0xFF10151A);
-const fieldBackground = Color(0xFF171E24);
-const hairline = Color(0xFF29333B);
-const accent = Color(0xFF1F5F8C);
-const accentFocused = Color(0xFF3C88BC);
-const bodyText = Color(0xFFEDF1F4);
-const mutedText = Color(0xFF8A99A6);
+/// Farben der app: Marinblau ist die Hauptfarbe, die Fläche bleibt tiefes
+/// Marine-Blau-Schwarz. Akzente sind nur das aktive Feld und die Hauptaktion.
+const canvas = Color(0xFF0A1219);
+const fieldBackground = Color(0xFF141F2B);
+const hairline = Color(0xFF223140);
+const accent = Color(0xFF1F5FA8);
+const accentFocused = Color(0xFF3F82C8);
+const bodyText = Color(0xFFE8EFF6);
+const mutedText = Color(0xFF8FA1B3);
 const errorText = Color(0xFFE2685F);
 
 ThemeData buildTheme() {
@@ -21,6 +21,9 @@ ThemeData buildTheme() {
     surface: canvas,
     onSurface: bodyText,
     onSurfaceVariant: mutedText,
+    // Karten und Felder auf der Startseite.
+    surfaceContainer: fieldBackground,
+    outline: hairline,
     error: errorText,
   );
 
@@ -34,12 +37,20 @@ ThemeData buildTheme() {
     // shortcut: keine eigene Schrift, es ist die Systemschrift. Upgrade: ein
     // Font-Asset, wenn die app eine eigene Marke bekommen soll.
     textTheme: (const TextTheme(
+      // Die Begrüßung auf der Startseite.
+      displayLarge: TextStyle(
+        fontSize: 32,
+        fontWeight: FontWeight.w700,
+        letterSpacing: -0.6,
+        height: 1.2,
+      ),
       displaySmall: TextStyle(
         fontSize: 30,
         fontWeight: FontWeight.w700,
         letterSpacing: -0.5,
         height: 1.2,
       ),
+      titleMedium: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, height: 1.3),
       labelLarge: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
       bodyMedium: TextStyle(fontSize: 14, height: 1.5),
     )).apply(

@@ -1,21 +1,616 @@
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../../shared/widgets/saphire_logo.dart';
+import '../../auth/data/auth_repository.dart';
+import '../../auth/domain/user.dart';
+import '../../upload/data/upload_repository.dart';
+import '../../upload/domain/track.dart';
 
-/// Placeholder until the home screen is built: empty page, logo at the top left.
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
+/// The extensions the server accepts (see server/music.go), so a file that could
+/// only be refused there is not picked first.
+const audioExtensions = ['mp3', 'wav', 'm4a', 'ogg', 'opus', 'flac', 'aac'];
+
+/// A picked song: the name the server would store as the title and its bytes.
+typedef PickedAudio = ({String name, Uint8List bytes});
+typedef PickAudio = Future<PickedAudio?> Function();
+
+/// The picker used when the screen is started without one. A widget test passes
+/// its own, because the plugin cannot answer there.
+Future<PickedAudio?> pickAudioFile() async {
+  final picked = await FilePicker.pickFile(
+    type: FileType.custom,
+    allowedExtensions: audioExtensions,
+  );
+  if (picked == null) return null;
+
+  // shortcut: the whole file is held in memory. Upgrade: stream from the path on
+  // the platforms that give one, so a 500 MiB song is not read twice.
+  return (name: picked.name, bytes: await picked.readAsBytes());
+}
+
+/// The greeting follows the time of day.
+String greetingFor(DateTime now) {
+  if (now.hour < 11) return 'Guten Morgen';
+  if (now.hour < 18) return 'Guten Nachmittag';
+  return 'Guten Abend';
+}
+
+/// What the page shows. The uploaded songs are real; the rest is placeholder,
+/// because playlists and mixes have no endpoints yet (api-docs.md, Upcoming).
+const _placeholders = [
+  (title: 'Lieblingssongs', meta: 'Playlist · 150 Songs', icon: Icons.favorite),
+  (title: 'Workout', meta: 'Playlist · 87 Songs', icon: Icons.local_activity),
+  (title: 'Chill Vibes', meta: 'Playlist · 122 Songs', icon: Icons.wb_sunny),
+  (title: 'Techno', meta: 'Playlist · 95 Songs', icon: Icons.graphic_eq),
+  (title: 'Good Times', meta: 'Playlist · 78 Songs', icon: Icons.west),
+];
+
+const _mixes = [
+  (title: 'Dein Mix der Woche', description: 'Deine Lieblingsmusik in einem Mix.'),
+  (title: 'Deutschrap Mix', description: 'Die besten Deutschrap Tracks für dich.'),
+  (title: 'Chill Mix', description: 'Entspann dich mit deinem Mix.'),
+];
+
+const _navItems = [
+  (label: 'Home', icon: Icons.home, selected: true),
+  (label: 'Suche', icon: Icons.search, selected: false),
+  (label: 'Bibliothek', icon: Icons.library_books, selected: false),
+];
+
+/// The home screen: the app on the left, the greeting and the rows on the right.
+/// Only the upload reaches the server. The other areas have no endpoints yet, so
+/// they are labels and pictures, not buttons.
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({
+    super.key,
+    required this.repository,
+    required this.uploads,
+    this.pickAudio = pickAudioFile,
+  });
+
+  final AuthRepository repository;
+  final UploadRepository uploads;
+  final PickAudio pickAudio;
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  final List<Track> _uploads = [];
+  final TextEditingController _search = TextEditingController();
+
+  bool _isUploading = false;
+  String? _note;
+  User? _user;
+
+  @override
+  void initState() {
+    super.initState();
+    // The name in the greeting is the account name, so it comes from the session
+    // check: the session store holds only the token, nothing that says who we are.
+    _loadUser();
+  }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadUser() async {
+    try {
+      final user = await widget.repository.currentSession();
+      if (mounted) setState(() => _user = user);
+    } on AuthException catch (error) {
+      if (!mounted) return;
+      // The server just said this token is gone, so the app must not keep it:
+      // the router guard and the page then agree on the same session.
+      widget.repository.logout();
+      setState(() => _note = error.message);
+    }
+  }
+
+  Future<void> _upload() async {
+    setState(() {
+      _isUploading = true;
+      _note = null;
+    });
+
+    try {
+      final picked = await widget.pickAudio();
+      if (picked == null) return;
+
+      final track = await widget.uploads.upload(filename: picked.name, bytes: picked.bytes);
+      if (mounted) setState(() => _uploads.add(track));
+    } on UploadException catch (error) {
+      if (mounted) setState(() => _note = error.message);
+    } finally {
+      if (mounted) setState(() => _isUploading = false);
+    }
+  }
+
+  bool _matches(String title) {
+    final query = _search.text.trim().toLowerCase();
+    return query.isEmpty || title.toLowerCase().contains(query);
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Align(
-          alignment: Alignment.topLeft,
-          child: SaphireLogo(size: 64),
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return LayoutBuilder(builder: (context, constraints) {
+      // Below this width the sidebar has no room, the content takes the screen.
+      // For a phone the upgrade would be a drawer.
+      final wide = constraints.maxWidth >= 760;
+
+      return Scaffold(
+        backgroundColor: scheme.surface,
+        body: SafeArea(
+          child: Row(
+            children: [
+              if (wide) _sidebar(constraints.maxHeight),
+              Expanded(
+                child: Column(
+                  children: [
+                    _topBar(),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _greeting(),
+                            const SizedBox(height: 24),
+                            Wrap(
+                              spacing: 10,
+                              runSpacing: 10,
+                              children: [
+                                _chip('Dein Mix', Icons.equalizer),
+                                _chip('Charts', Icons.star),
+                                _chip('Radio', Icons.radio),
+                                _chip(
+                                  'Eigene Dateien hochladen',
+                                  Icons.upload,
+                                  onPressed: _isUploading ? null : _upload,
+                                ),
+                                _chip('Entdecken', Icons.explore),
+                              ],
+                            ),
+                            if (_note != null) ...[
+                              const SizedBox(height: 16),
+                              Text(_note!, style: TextStyle(color: scheme.error)),
+                            ],
+                            _section('Eigene Dateien'),
+                            _row([
+                              for (final track in _uploads.where((track) => _matches(track.title)))
+                                _card((
+                                  title: track.title,
+                                  meta: '${track.uploadedBy} · ${_size(track.size)}',
+                                  icon: Icons.audio_file,
+                                )),
+                              if (_uploads.isEmpty && _matches('Eigene Dateien')) _uploadCard(),
+                            ]),
+                            _section('Zuletzt gehört'),
+                            _row([
+                              for (final item in _placeholders.where((item) => _matches(item.title))) _card(item),
+                            ]),
+                            const SizedBox(height: 24),
+                            _section('Für dich ausgewählt'),
+                            _row([
+                              for (final mix in _mixes.where((mix) => _matches(mix.title))) _mixCard(mix),
+                            ]),
+                          ],
+                        ),
+                      ),
+                    ),
+                    _playerBar(),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    });
+  }
+
+  Widget _sidebar(double height) {
+    final theme = Theme.of(context);
+
+    return SizedBox(
+      width: 248,
+      height: height,
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // The lines in the logo asset are thin, so at this size they come out
+            // soft — that is the small mark the mock shows.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+              child: SaphireLogo(size: 44),
+            ),
+            for (final item in _navItems) _navItem(item.label, item.icon, selected: item.selected),
+            _heading('Deine Inhalte'),
+            for (final item in [
+              (label: 'Eigene Dateien', icon: Icons.add, badge: 'NEU'),
+              (label: 'Playlists', icon: Icons.playlist_play, badge: ''),
+              (label: 'Podcasts', icon: Icons.podcasts, badge: ''),
+              (label: 'Alben', icon: Icons.album, badge: ''),
+              (label: 'Künstler*innen', icon: Icons.people, badge: ''),
+            ])
+              _navItem(item.label, item.icon, badge: item.badge),
+            _heading('Playlists'),
+            // The sidebar is the list of what is there, the search field above
+            // only filters the page.
+            for (final item in _placeholders)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 6, 20, 6),
+                child: Row(
+                  children: [
+                    _thumb(item.icon),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(item.title, style: theme.textTheme.labelLarge),
+                          Text(
+                            item.meta,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
         ),
       ),
     );
+  }
+
+  Widget _heading(String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+      child: Text(title, style: Theme.of(context).textTheme.titleMedium),
+    );
+  }
+
+  Widget _navItem(String label, IconData icon, {bool selected = false, String badge = ''}) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: selected ? scheme.primary : scheme.onSurfaceVariant),
+          const SizedBox(width: 14),
+          Flexible(child: Text(label, style: theme.textTheme.labelLarge)),
+          if (badge.isNotEmpty) ...[
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: scheme.primary,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                badge,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: scheme.onPrimary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _topBar() {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final name = _user?.username;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
+      child: Row(
+        children: [
+          Icon(Icons.chevron_left, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 8),
+          Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 16),
+          Expanded(
+            // The server has no search yet, so what is typed here only filters
+            // what this page already shows.
+            child: TextField(
+              controller: _search,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(hintText: 'Was möchtest du wiedergeben?'),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Icon(Icons.notifications_outlined, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 16),
+          Container(
+            width: 34,
+            height: 34,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: scheme.primary,
+              borderRadius: BorderRadius.circular(17),
+            ),
+            child: Text(
+              name == null ? '?' : name.substring(0, 1).toUpperCase(),
+              style: theme.textTheme.labelLarge?.copyWith(color: scheme.onPrimary),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _greeting() {
+    final theme = Theme.of(context);
+    final name = _user?.username;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text.rich(
+          TextSpan(
+            text: '${greetingFor(DateTime.now())}, ',
+            style: theme.textTheme.displayLarge,
+            children: [
+              TextSpan(
+                text: name ?? '',
+                style: TextStyle(color: theme.colorScheme.primary),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Hier sind deine Highlights für heute.',
+          style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        ),
+      ],
+    );
+  }
+
+  Widget _section(String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 24, 0, 12),
+      child: Text(title, style: Theme.of(context).textTheme.titleLarge),
+    );
+  }
+
+  Widget _row(List<Widget> cards) => Wrap(spacing: 12, runSpacing: 12, children: cards);
+
+  Widget _card(({String title, String meta, IconData icon}) item) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return SizedBox(
+      width: 186,
+      height: 186,
+      child: Container(
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainer,
+          border: Border.all(color: scheme.outline),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // The mock has pictures here. Until the library has an API, a
+              // gradient in the brand color stands in for one.
+              Container(
+                width: double.infinity,
+                height: 96,
+                alignment: Alignment.bottomLeft,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [scheme.primary.withValues(alpha: 0.35), scheme.surface],
+                  ),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(10),
+                  child: Icon(item.icon, color: scheme.onSurface),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                item.title,
+                style: theme.textTheme.titleMedium,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              Text(
+                item.meta,
+                style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _uploadCard() {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return SizedBox(
+      width: 186,
+      height: 186,
+      child: FilledButton(
+        onPressed: _isUploading ? null : _upload,
+        style: FilledButton.styleFrom(
+          // The card stays in the card color, only the plus is the accent.
+          backgroundColor: scheme.surfaceContainer,
+          foregroundColor: scheme.onSurface,
+          padding: const EdgeInsets.all(14),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.add, color: scheme.primary),
+            const Spacer(),
+            Text(
+              'Datei auswählen',
+              style: theme.textTheme.titleMedium,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            Text(
+              _isUploading ? 'Wird hochgeladen…' : 'Noch nichts hochgeladen',
+              style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _mixCard(({String title, String description}) mix) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return SizedBox(
+      width: 320,
+      child: Container(
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainer,
+          border: Border.all(color: scheme.outline),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.play_circle_outline, color: scheme.onSurfaceVariant),
+              const SizedBox(height: 12),
+              Text(mix.title, style: theme.textTheme.titleMedium),
+              const SizedBox(height: 6),
+              Text(
+                mix.description,
+                style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _chip(String label, IconData icon, {VoidCallback? onPressed}) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    if (onPressed == null) {
+      // Nothing is behind this on the server, so it is a label and not a button.
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainer,
+          border: Border.all(color: scheme.outline),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18, color: scheme.onSurfaceVariant),
+            const SizedBox(width: 10),
+            Text(label, style: theme.textTheme.labelLarge),
+          ],
+        ),
+      );
+    }
+
+    return FilledButton(
+      onPressed: onPressed,
+      style: FilledButton.styleFrom(
+        minimumSize: const Size(0, 44),
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [Icon(icon, size: 18), const SizedBox(width: 10), Text(label)],
+      ),
+    );
+  }
+
+  Widget _thumb(IconData icon) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainer,
+        border: Border.all(color: scheme.outline),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Icon(icon, size: 18, color: scheme.onSurfaceVariant),
+    );
+  }
+
+  Widget _playerBar() {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    // The player has no audio yet, so the controls show nothing and stay off.
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      decoration: BoxDecoration(border: Border(top: BorderSide(color: scheme.outline))),
+      child: Row(
+        children: [
+          Icon(Icons.audio_file, size: 22, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Nichts wird abgespielt', style: theme.textTheme.labelLarge),
+                Text(
+                  'Lade ein Lied hoch, um etwas zu hören.',
+                  style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+          for (final icon in [Icons.shuffle, Icons.skip_previous, Icons.play_arrow, Icons.skip_next, Icons.repeat])
+            Icon(icon, color: scheme.onSurfaceVariant),
+        ],
+      ),
+    );
+  }
+
+  String _size(int bytes) {
+    return bytes >= 1000000 ? '${(bytes / 1000000).toStringAsFixed(1)} MB' : '${(bytes / 1000).round()} kB';
   }
 }
