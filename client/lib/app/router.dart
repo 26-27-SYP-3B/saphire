@@ -13,10 +13,12 @@ GoRouter buildRouter(AuthRepository repository, UploadRepository uploads) {
   return GoRouter(
     initialLocation: '/login',
     redirect: (context, state) {
-      final goingHome = state.matchedLocation == '/home';
-      if (goingHome && !repository.session.isLoggedIn) {
-        return '/login';
-      }
+      final loggedIn = repository.session.isLoggedIn;
+      final atAuthPage = state.matchedLocation == '/login' || state.matchedLocation == '/register';
+      // A session restored from the last run skips the form; a browser that
+      // reloads on the login page has no session left and stays there.
+      if (loggedIn && atAuthPage) return '/home';
+      if (!loggedIn && !atAuthPage) return '/login';
       return null;
     },
     routes: [

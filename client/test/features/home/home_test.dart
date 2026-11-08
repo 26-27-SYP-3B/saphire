@@ -90,6 +90,29 @@ void main() {
     expect(find.textContaining('lukas · 1.5 MB'), findsOneWidget);
   });
 
+  // The name on the row is the title the server stored (base name only), not the
+  // path the picker handed over.
+  testWidgets('the row shows the name the server stored', (tester) async {
+    await openHome(
+      tester,
+      uploadBody: {
+        'id': 4.0,
+        'uploaded_by': 'lukas',
+        'title': 'evil.mp3',
+        'stored_name': '18cfd7db41d243d98cc87c4ab33dded6.mp3',
+        'size': 1500000.0,
+        'content_type': 'audio/mpeg',
+        'uploaded_at': 1793974311.0,
+      },
+      pickAudio: () async => [(name: '../evil.mp3', bytes: Uint8List.fromList([1, 2, 3]))],
+    );
+
+    await upload(tester);
+
+    expect(find.text('evil.mp3'), findsOneWidget);
+    expect(find.text('../evil.mp3'), findsNothing);
+  });
+
   // The server said this token is gone, so the app must not keep it.
   testWidgets('a session the server rejects is dropped from the store', (tester) async {
     final session = await openHome(tester, userStatus: 401, userBody: {'error': 'session is not valid or expired'});
@@ -166,6 +189,30 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     gate.complete();
     await tester.pumpAndSettle();
+  });
+
+  // A second tap while the picker is open must not open a second picker.
+  testWidgets('uploads cannot be started twice while the picker is open', (tester) async {
+    var opened = 0;
+    final picker = Completer<List<PickedAudio>?>();
+
+    await openHome(tester, pickAudio: () {
+      opened++;
+      return picker.future;
+    });
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Eigene Dateien hochladen'));
+    await tester.pump();
+
+    // The chip is a plain label while the picker is open, so there is nothing to tap.
+    expect(find.widgetWithText(FilledButton, 'Eigene Dateien hochladen'), findsNothing);
+    expect(opened, 1);
+
+    picker.complete(null);
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(FilledButton, 'Eigene Dateien hochladen'), findsOneWidget);
+    expect(opened, 1);
   });
 
   testWidgets('the search field only shows what matches', (tester) async {

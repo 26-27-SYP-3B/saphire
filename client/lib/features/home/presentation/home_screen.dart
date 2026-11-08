@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../shared/widgets/saphire_logo.dart';
 import '../../auth/data/auth_repository.dart';
@@ -54,17 +55,15 @@ const _placeholders = [
   (title: 'Good Times', meta: 'Playlist · 78 Songs', icon: Icons.west),
 ];
 
-const _mixes = [
-  (title: 'Dein Mix der Woche', description: 'Deine Lieblingsmusik in einem Mix.'),
-  (title: 'Deutschrap Mix', description: 'Die besten Deutschrap Tracks für dich.'),
-  (title: 'Chill Mix', description: 'Entspann dich mit deinem Mix.'),
-];
-
 const _navItems = [
   (label: 'Home', icon: Icons.home, selected: true),
   (label: 'Suche', icon: Icons.search, selected: false),
   (label: 'Bibliothek', icon: Icons.library_books, selected: false),
 ];
+
+/// What the server accepts (server/music.go): the client only says it up front,
+/// the upload itself is still checked on the server.
+const _uploadHint = 'Erlaubt: MP3, WAV, M4A, OGG, OPUS, FLAC, AAC · höchstens 500 MiB pro Datei';
 
 /// The home screen: the app on the left, the greeting and the rows on the right.
 /// Only the upload reaches the server. The other areas have no endpoints yet, so
@@ -92,6 +91,8 @@ class _HomeScreenState extends State<HomeScreen> {
   // The message from the session check. What a single file got is on its own row.
   String? _note;
   User? _user;
+  // While the picker is open a second tap must not open it again.
+  bool _picking = false;
 
   @override
   void initState() {
@@ -121,7 +122,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _upload() async {
-    final picked = await widget.pickAudio();
+    if (_picking) return;
+
+    setState(() => _picking = true);
+    final List<PickedAudio>? picked;
+    try {
+      picked = await widget.pickAudio();
+    } finally {
+      if (mounted) setState(() => _picking = false);
+    }
     if (picked == null) return;
 
     for (final file in picked) {
@@ -146,6 +155,10 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
   }
+
+  /// The name the row shows: before the answer the picked name, after it the title
+  /// the server stored (base name only, see api-docs.md).
+  String _title(_UploadFile file) => file.track?.title ?? file.name;
 
   /// What a row says about its own file: the progress, or what the server answered.
   String _result(_UploadFile file) {
@@ -194,9 +207,14 @@ class _HomeScreenState extends State<HomeScreen> {
                                 _chip('Dein Mix', Icons.equalizer),
                                 _chip('Charts', Icons.star),
                                 _chip('Radio', Icons.radio),
-                                _chip('Eigene Dateien hochladen', Icons.upload, onPressed: _upload),
+                                _chip('Eigene Dateien hochladen', Icons.upload, onPressed: _picking ? null : _upload),
                                 _chip('Entdecken', Icons.explore),
                               ],
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              _uploadHint,
+                              style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
                             ),
                             if (_note != null) ...[
                               const SizedBox(height: 16),
@@ -204,17 +222,12 @@ class _HomeScreenState extends State<HomeScreen> {
                             ],
                             _section('Eigene Dateien'),
                             _row([
-                              for (final file in _files.where((file) => _matches(file.name))) _fileCard(file),
+                              for (final file in _files.where((file) => _matches(_title(file)))) _fileCard(file),
                               if (_files.isEmpty && _matches('Eigene Dateien')) _uploadCard(),
                             ]),
                             _section('Zuletzt gehört'),
                             _row([
                               for (final item in _placeholders.where((item) => _matches(item.title))) _card(item),
-                            ]),
-                            const SizedBox(height: 24),
-                            _section('Für dich ausgewählt'),
-                            _row([
-                              for (final mix in _mixes.where((mix) => _matches(mix.title))) _mixCard(mix),
                             ]),
                           ],
                         ),
@@ -250,13 +263,12 @@ class _HomeScreenState extends State<HomeScreen> {
             for (final item in _navItems) _navItem(item.label, item.icon, selected: item.selected),
             _heading('Deine Inhalte'),
             for (final item in [
-              (label: 'Eigene Dateien', icon: Icons.add, badge: 'NEU'),
-              (label: 'Playlists', icon: Icons.playlist_play, badge: ''),
-              (label: 'Podcasts', icon: Icons.podcasts, badge: ''),
-              (label: 'Alben', icon: Icons.album, badge: ''),
-              (label: 'Künstler*innen', icon: Icons.people, badge: ''),
+              (label: 'Eigene Dateien', icon: Icons.add),
+              (label: 'Playlists', icon: Icons.playlist_play),
+              (label: 'Alben', icon: Icons.album),
+              (label: 'Künstler*innen', icon: Icons.people),
             ])
-              _navItem(item.label, item.icon, badge: item.badge),
+              _navItem(item.label, item.icon),
             _heading('Playlists'),
             // The sidebar is the list of what is there, the search field above
             // only filters the page.
@@ -297,7 +309,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _navItem(String label, IconData icon, {bool selected = false, String badge = ''}) {
+  Widget _navItem(String label, IconData icon, {bool selected = false}) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
@@ -308,23 +320,6 @@ class _HomeScreenState extends State<HomeScreen> {
           Icon(icon, size: 20, color: selected ? scheme.primary : scheme.onSurfaceVariant),
           const SizedBox(width: 14),
           Flexible(child: Text(label, style: theme.textTheme.labelLarge)),
-          if (badge.isNotEmpty) ...[
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: scheme.primary,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                badge,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: scheme.onPrimary,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ],
         ],
       ),
     );
@@ -355,17 +350,31 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(width: 16),
           Icon(Icons.notifications_outlined, color: scheme.onSurfaceVariant),
           const SizedBox(width: 16),
-          Container(
-            width: 34,
-            height: 34,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: scheme.primary,
-              borderRadius: BorderRadius.circular(17),
-            ),
-            child: Text(
-              name == null ? '?' : name.substring(0, 1).toUpperCase(),
-              style: theme.textTheme.labelLarge?.copyWith(color: scheme.onPrimary),
+          PopupMenuButton<String>(
+            tooltip: 'Konto',
+            offset: const Offset(0, 44),
+            onSelected: (value) {
+              if (value != 'logout') return;
+              // There is no logout endpoint yet (api-docs.md, Upcoming), so
+              // dropping the token here is the whole logout on this side.
+              widget.repository.logout();
+              context.go('/login');
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: 'logout', child: Text('Abmelden')),
+            ],
+            child: Container(
+              width: 34,
+              height: 34,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: scheme.primary,
+                borderRadius: BorderRadius.circular(17),
+              ),
+              child: Text(
+                name == null ? '?' : name.substring(0, 1).toUpperCase(),
+                style: theme.textTheme.labelLarge?.copyWith(color: scheme.onPrimary),
+              ),
             ),
           ),
         ],
@@ -386,7 +395,8 @@ class _HomeScreenState extends State<HomeScreen> {
             style: theme.textTheme.displayLarge,
             children: [
               TextSpan(
-                text: name ?? '',
+                // The session check is still running on the first frames.
+                text: name ?? '…',
                 style: TextStyle(color: theme.colorScheme.primary),
               ),
             ],
@@ -492,7 +502,7 @@ class _HomeScreenState extends State<HomeScreen> {
               Icon(failed ? Icons.error : Icons.audio_file, color: failed ? scheme.error : scheme.primary),
               const Spacer(),
               Text(
-                file.name,
+                _title(file),
                 style: theme.textTheme.titleMedium,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -524,7 +534,7 @@ class _HomeScreenState extends State<HomeScreen> {
       width: 186,
       height: 186,
       child: FilledButton(
-        onPressed: _upload,
+        onPressed: _picking ? null : _upload,
         style: FilledButton.styleFrom(
           // The card stays in the card color, only the plus is the accent.
           backgroundColor: scheme.surfaceContainer,
@@ -550,38 +560,6 @@ class _HomeScreenState extends State<HomeScreen> {
               overflow: TextOverflow.ellipsis,
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _mixCard(({String title, String description}) mix) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-
-    return SizedBox(
-      width: 320,
-      child: Container(
-        decoration: BoxDecoration(
-          color: scheme.surfaceContainer,
-          border: Border.all(color: scheme.outline),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(Icons.play_circle_outline, color: scheme.onSurfaceVariant),
-              const SizedBox(height: 12),
-              Text(mix.title, style: theme.textTheme.titleMedium),
-              const SizedBox(height: 6),
-              Text(
-                mix.description,
-                style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-              ),
-            ],
-          ),
         ),
       ),
     );

@@ -7,8 +7,11 @@ import 'features/auth/data/auth_repository.dart';
 import 'features/upload/data/upload_repository.dart';
 
 // One Dio and one session, because the upload uses the same token the login got.
-void main() {
-  final session = SessionStore();
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // A session from the last run means the app opens on the home screen instead
+  // of asking for the password again.
+  final session = await SessionStore.restore();
   final dio = Dio();
 
   runApp(

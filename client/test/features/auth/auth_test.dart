@@ -153,6 +153,33 @@ void main() {
     expect(repository.session.isLoggedIn, true);
   });
 
+  testWidgets('the profile menu logs out and goes back to the login screen', (tester) async {
+    final repository = FakeRepository(null);
+    await openLogin(tester, repository);
+    await fillForm(tester);
+    await submit(tester, 'Anmelden');
+
+    await tester.tap(find.byTooltip('Konto'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Abmelden'));
+    await tester.pumpAndSettle();
+
+    expect(repository.session.isLoggedIn, false);
+    expect(find.byType(AuthScreen), findsOneWidget);
+  });
+
+  // A token kept from the last run opens the home screen without the form.
+  testWidgets('a saved session skips the login screen', (tester) async {
+    final repository = FakeRepository(null);
+    repository.session.save('f' * 64, DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch ~/ 1000);
+
+    await openLogin(tester, repository);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(HomeScreen), findsOneWidget);
+    expect(find.byType(AuthScreen), findsNothing);
+  });
+
   // Without a session there is nothing to show on the home screen, so a direct
   // navigation stays on the login.
   testWidgets('the home screen is guarded while no session exists', (tester) async {
