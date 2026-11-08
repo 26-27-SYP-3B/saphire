@@ -54,6 +54,22 @@ new behavior. Additionally verify with `curl` — the responses in `api-docs.md`
 the expected behavior, including status codes and headers (`Retry-After`,
 `X-Content-Type-Options`).
 
+## Before pushing — independent review
+
+Before pushing newly written code, delegate a **sub-agent** review of just the
+diff you wrote. The sub-agent has no memory of this chat, so give it only the
+changed files and this brief: look for **logical errors and programmatical
+bugs** — off-by-one and length limits that count bytes but claim characters,
+wrong status codes, errors that are swallowed or mislabelled, validation that
+disagrees with `api-docs.md`, unbounded maps or leaked resources, and anything
+that breaks the *Security rules* invariants (timing parity, parameterized
+queries, hash-before-insert order). It must not restate the code; it returns
+concrete findings with `file:line` and the fix.
+
+Reconcile its findings against `go vet` and `just test` before pushing, and add
+a test for any real bug it confirms. If two checks disagree, verify against the
+code yourself — do not average them.
+
 ## Gotchas
 
 - An existing `saphire.db` uses the old `name`/`email` schema. `CREATE TABLE IF NOT EXISTS` will not migrate it; delete the file for a fresh start.

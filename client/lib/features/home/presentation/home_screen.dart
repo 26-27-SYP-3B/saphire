@@ -1,21 +1,657 @@
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../shared/widgets/saphire_logo.dart';
+import '../../auth/data/auth_repository.dart';
+import '../../auth/domain/user.dart';
+import '../../upload/data/upload_repository.dart';
+import '../../upload/domain/track.dart';
 
-/// Placeholder until the home screen is built: empty page, logo at the top left.
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
+/// A picked song: the name the server would store as the title and its bytes.
+typedef PickedAudio = ({String name, Uint8List bytes});
+typedef PickAudio = Future<List<PickedAudio>?> Function();
+
+/// One file in the upload window: what it is, how far it got, what the server
+/// said about it. Every picked file keeps its own row, so the results do not mix.
+class _UploadFile {
+  _UploadFile(this.name);
+
+  final String name;
+  int percent = 0;
+  String? error;
+  Track? track;
+}
+
+/// The picker used when the screen is started without one. A widget test passes
+/// its own, because the plugin cannot answer there. Any file can be picked,
+/// because which formats are allowed is the server's decision (see server/music.go);
+/// a file it refuses comes back as its message and is shown on that file's row.
+Future<List<PickedAudio>?> pickAudioFiles() async {
+  final picked = await FilePicker.pickFiles(type: FileType.any);
+  if (picked.isEmpty) return null;
+
+  // shortcut: the whole file is held in memory. Upgrade: stream from the path on
+  // the platforms that give one, so a 500 MiB song is not read twice.
+  return [for (final file in picked) (name: file.name, bytes: await file.readAsBytes())];
+}
+
+/// The greeting follows the time of day.
+String greetingFor(DateTime now) {
+  if (now.hour < 11) return 'Guten Morgen';
+  if (now.hour < 18) return 'Guten Nachmittag';
+  return 'Guten Abend';
+}
+
+/// What the page shows. The uploaded songs are real; the rest is placeholder,
+/// because playlists and mixes have no endpoints yet (api-docs.md, Upcoming).
+const _placeholders = [
+  (title: 'Lieblingssongs', meta: 'Playlist · 150 Songs', icon: Icons.favorite),
+  (title: 'Workout', meta: 'Playlist · 87 Songs', icon: Icons.local_activity),
+  (title: 'Chill Vibes', meta: 'Playlist · 122 Songs', icon: Icons.wb_sunny),
+  (title: 'Techno', meta: 'Playlist · 95 Songs', icon: Icons.graphic_eq),
+  (title: 'Good Times', meta: 'Playlist · 78 Songs', icon: Icons.west),
+];
+
+const _navItems = [
+  (label: 'Home', icon: Icons.home, selected: true),
+  (label: 'Suche', icon: Icons.search, selected: false),
+  (label: 'Bibliothek', icon: Icons.library_books, selected: false),
+];
+
+/// What the server accepts (server/music.go): the client only says it up front,
+/// the upload itself is still checked on the server.
+const _uploadHint = 'Erlaubt: MP3, WAV, M4A, OGG, OPUS, FLAC, AAC · höchstens 500 MiB pro Datei';
+
+/// The home screen: the app on the left, the greeting and the rows on the right.
+/// Only the upload reaches the server. The other areas have no endpoints yet, so
+/// they are labels and pictures, not buttons.
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({
+    super.key,
+    required this.repository,
+    required this.uploads,
+    this.pickAudio = pickAudioFiles,
+  });
+
+  final AuthRepository repository;
+  final UploadRepository uploads;
+  final PickAudio pickAudio;
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  final List<_UploadFile> _files = [];
+  final TextEditingController _search = TextEditingController();
+
+  // The message from the session check. What a single file got is on its own row.
+  String? _note;
+  User? _user;
+  // While the picker is open a second tap must not open it again.
+  bool _picking = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // The name in the greeting is the account name, so it comes from the session
+    // check: the session store holds only the token, nothing that says who we are.
+    _loadUser();
+  }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadUser() async {
+    try {
+      final user = await widget.repository.currentSession();
+      if (mounted) setState(() => _user = user);
+    } on AuthException catch (error) {
+      if (!mounted) return;
+      // The server just said this token is gone, so the app must not keep it:
+      // the router guard and the page then agree on the same session.
+      widget.repository.logout();
+      setState(() => _note = error.message);
+    }
+  }
+
+  Future<void> _upload() async {
+    if (_picking) return;
+
+    setState(() => _picking = true);
+    final List<PickedAudio>? picked;
+    try {
+      picked = await widget.pickAudio();
+    } finally {
+      if (mounted) setState(() => _picking = false);
+    }
+    if (picked == null) return;
+
+    for (final file in picked) {
+      final row = _UploadFile(file.name);
+      // The screen can be gone by the time the next file of a batch is answered.
+      if (!mounted) return;
+      setState(() => _files.add(row));
+
+      try {
+        final track = await widget.uploads.upload(
+          filename: file.name,
+          bytes: file.bytes,
+          // The percent is what Dio reports while this file is written; the server
+          // answers after it has read and checked it.
+          onProgress: (sent, total) {
+            if (mounted && total > 0) setState(() => row.percent = (sent * 100 / total).round());
+          },
+        );
+        if (mounted) setState(() => row.track = track);
+      } on UploadException catch (error) {
+        if (mounted) setState(() => row.error = error.message);
+      }
+    }
+  }
+
+  /// The name the row shows: before the answer the picked name, after it the title
+  /// the server stored (base name only, see api-docs.md).
+  String _title(_UploadFile file) => file.track?.title ?? file.name;
+
+  /// What a row says about its own file: the progress, or what the server answered.
+  String _result(_UploadFile file) {
+    if (file.error != null) return file.error!;
+    if (file.track == null) return 'wird hochgeladen · ${file.percent} %';
+    return '${file.track!.uploadedBy} · ${_size(file.track!.size)}';
+  }
+
+  bool _matches(String title) {
+    final query = _search.text.trim().toLowerCase();
+    return query.isEmpty || title.toLowerCase().contains(query);
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Align(
-          alignment: Alignment.topLeft,
-          child: SaphireLogo(size: 64),
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return LayoutBuilder(builder: (context, constraints) {
+      // Below this width the sidebar has no room, the content takes the screen.
+      // For a phone the upgrade would be a drawer.
+      final wide = constraints.maxWidth >= 760;
+
+      return Scaffold(
+        backgroundColor: scheme.surface,
+        body: SafeArea(
+          child: Row(
+            children: [
+              if (wide) _sidebar(constraints.maxHeight),
+              Expanded(
+                child: Column(
+                  children: [
+                    _topBar(),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _greeting(),
+                            const SizedBox(height: 24),
+                            Wrap(
+                              spacing: 10,
+                              runSpacing: 10,
+                              children: [
+                                _chip('Dein Mix', Icons.equalizer),
+                                _chip('Charts', Icons.star),
+                                _chip('Radio', Icons.radio),
+                                _chip('Eigene Dateien hochladen', Icons.upload, onPressed: _picking ? null : _upload),
+                                _chip('Entdecken', Icons.explore),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              _uploadHint,
+                              style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                            ),
+                            if (_note != null) ...[
+                              const SizedBox(height: 16),
+                              Text(_note!, style: TextStyle(color: scheme.error)),
+                            ],
+                            _section('Eigene Dateien'),
+                            _row([
+                              for (final file in _files.where((file) => _matches(_title(file)))) _fileCard(file),
+                              if (_files.isEmpty && _matches('Eigene Dateien')) _uploadCard(),
+                            ]),
+                            _section('Zuletzt gehört'),
+                            _row([
+                              for (final item in _placeholders.where((item) => _matches(item.title))) _card(item),
+                            ]),
+                          ],
+                        ),
+                      ),
+                    ),
+                    _playerBar(),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    });
+  }
+
+  Widget _sidebar(double height) {
+    final theme = Theme.of(context);
+
+    return SizedBox(
+      width: 248,
+      height: height,
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // The lines in the logo asset are thin, so at this size they come out
+            // soft — that is the small mark the mock shows.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+              child: SaphireLogo(size: 44),
+            ),
+            for (final item in _navItems) _navItem(item.label, item.icon, selected: item.selected),
+            _heading('Deine Inhalte'),
+            for (final item in [
+              (label: 'Eigene Dateien', icon: Icons.add),
+              (label: 'Playlists', icon: Icons.playlist_play),
+              (label: 'Alben', icon: Icons.album),
+              (label: 'Künstler*innen', icon: Icons.people),
+            ])
+              _navItem(item.label, item.icon),
+            _heading('Playlists'),
+            // The sidebar is the list of what is there, the search field above
+            // only filters the page.
+            for (final item in _placeholders)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 6, 20, 6),
+                child: Row(
+                  children: [
+                    _thumb(item.icon),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(item.title, style: theme.textTheme.labelLarge),
+                          Text(
+                            item.meta,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
         ),
       ),
     );
   }
+
+  Widget _heading(String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+      child: Text(title, style: Theme.of(context).textTheme.titleMedium),
+    );
+  }
+
+  Widget _navItem(String label, IconData icon, {bool selected = false}) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: selected ? scheme.primary : scheme.onSurfaceVariant),
+          const SizedBox(width: 14),
+          Flexible(child: Text(label, style: theme.textTheme.labelLarge)),
+        ],
+      ),
+    );
+  }
+
+  Widget _topBar() {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final name = _user?.username;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
+      child: Row(
+        children: [
+          Icon(Icons.chevron_left, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 8),
+          Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 16),
+          Expanded(
+            // The server has no search yet, so what is typed here only filters
+            // what this page already shows.
+            child: TextField(
+              controller: _search,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(hintText: 'Was möchtest du wiedergeben?'),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Icon(Icons.notifications_outlined, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 16),
+          PopupMenuButton<String>(
+            tooltip: 'Konto',
+            offset: const Offset(0, 44),
+            onSelected: (value) {
+              if (value != 'logout') return;
+              // There is no logout endpoint yet (api-docs.md, Upcoming), so
+              // dropping the token here is the whole logout on this side.
+              widget.repository.logout();
+              context.go('/login');
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: 'logout', child: Text('Abmelden')),
+            ],
+            child: Container(
+              width: 34,
+              height: 34,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: scheme.primary,
+                borderRadius: BorderRadius.circular(17),
+              ),
+              child: Text(
+                name == null ? '?' : name.substring(0, 1).toUpperCase(),
+                style: theme.textTheme.labelLarge?.copyWith(color: scheme.onPrimary),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _greeting() {
+    final theme = Theme.of(context);
+    final name = _user?.username;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text.rich(
+          TextSpan(
+            text: '${greetingFor(DateTime.now())}, ',
+            style: theme.textTheme.displayLarge,
+            children: [
+              TextSpan(
+                // The session check is still running on the first frames.
+                text: name ?? '…',
+                style: TextStyle(color: theme.colorScheme.primary),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Hier sind deine Highlights für heute.',
+          style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        ),
+      ],
+    );
+  }
+
+  Widget _section(String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 24, 0, 12),
+      child: Text(title, style: Theme.of(context).textTheme.titleLarge),
+    );
+  }
+
+  Widget _row(List<Widget> cards) => Wrap(spacing: 12, runSpacing: 12, children: cards);
+
+  Widget _card(({String title, String meta, IconData icon}) item) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return SizedBox(
+      width: 186,
+      height: 186,
+      child: Container(
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainer,
+          border: Border.all(color: scheme.outline),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // The mock has pictures here. Until the library has an API, a
+              // gradient in the brand color stands in for one.
+              Container(
+                width: double.infinity,
+                height: 96,
+                alignment: Alignment.bottomLeft,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [scheme.primary.withValues(alpha: 0.35), scheme.surface],
+                  ),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(10),
+                  child: Icon(item.icon, color: scheme.onSurface),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                item.title,
+                style: theme.textTheme.titleMedium,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              Text(
+                item.meta,
+                style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// One picked file: its name and the answer for this file only, so the results
+  /// of a batch do not mix into one message.
+  Widget _fileCard(_UploadFile file) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final failed = file.error != null;
+
+    return SizedBox(
+      width: 186,
+      height: 186,
+      child: Container(
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainer,
+          // A refused file is marked as refused, so the row can be told apart.
+          border: Border.all(color: failed ? scheme.error : scheme.outline),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(failed ? Icons.error : Icons.audio_file, color: failed ? scheme.error : scheme.primary),
+              const Spacer(),
+              Text(
+                _title(file),
+                style: theme.textTheme.titleMedium,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _result(file),
+                style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              // The bar is only for a file that is still on its way.
+              if (!failed && file.track == null) ...[
+                const SizedBox(height: 8),
+                LinearProgressIndicator(value: file.percent / 100, minHeight: 3),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _uploadCard() {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return SizedBox(
+      width: 186,
+      height: 186,
+      child: FilledButton(
+        onPressed: _picking ? null : _upload,
+        style: FilledButton.styleFrom(
+          // The card stays in the card color, only the plus is the accent.
+          backgroundColor: scheme.surfaceContainer,
+          foregroundColor: scheme.onSurface,
+          padding: const EdgeInsets.all(14),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.add, color: scheme.primary),
+            const Spacer(),
+            Text(
+              'Datei auswählen',
+              style: theme.textTheme.titleMedium,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            Text(
+              'Noch nichts hochgeladen',
+              style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _chip(String label, IconData icon, {VoidCallback? onPressed}) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    if (onPressed == null) {
+      // Nothing is behind this on the server, so it is a label and not a button.
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainer,
+          border: Border.all(color: scheme.outline),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18, color: scheme.onSurfaceVariant),
+            const SizedBox(width: 10),
+            Text(label, style: theme.textTheme.labelLarge),
+          ],
+        ),
+      );
+    }
+
+    return FilledButton(
+      onPressed: onPressed,
+      style: FilledButton.styleFrom(
+        minimumSize: const Size(0, 44),
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [Icon(icon, size: 18), const SizedBox(width: 10), Text(label)],
+      ),
+    );
+  }
+
+  Widget _thumb(IconData icon) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainer,
+        border: Border.all(color: scheme.outline),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Icon(icon, size: 18, color: scheme.onSurfaceVariant),
+    );
+  }
+
+  Widget _playerBar() {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    // The player has no audio yet, so the controls show nothing and stay off.
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      decoration: BoxDecoration(border: Border(top: BorderSide(color: scheme.outline))),
+      child: Row(
+        children: [
+          Icon(Icons.audio_file, size: 22, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Nichts wird abgespielt', style: theme.textTheme.labelLarge),
+                Text(
+                  'Lade ein Lied hoch, um etwas zu hören.',
+                  style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+          for (final icon in [Icons.shuffle, Icons.skip_previous, Icons.play_arrow, Icons.skip_next, Icons.repeat])
+            Icon(icon, color: scheme.onSurfaceVariant),
+        ],
+      ),
+    );
+  }
+
+  String _size(int bytes) {
+    return bytes >= 1000000 ? '${(bytes / 1000000).toStringAsFixed(1)} MB' : '${(bytes / 1000).round()} kB';
+  }
 }
+
+

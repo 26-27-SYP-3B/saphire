@@ -1,6 +1,3 @@
-import 'dart:convert';
-import 'dart:io';
-
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,36 +9,9 @@ import 'package:saphire_client/features/auth/data/auth_repository.dart';
 import 'package:saphire_client/features/auth/domain/user.dart';
 import 'package:saphire_client/features/auth/presentation/auth_screen.dart';
 import 'package:saphire_client/features/home/presentation/home_screen.dart';
+import 'package:saphire_client/features/upload/data/upload_repository.dart';
 
-/// Adapter that returns one fixed answer instead of going to the network,
-/// and remembers the last request so the Authorization header can be checked.
-class StubAdapter implements HttpClientAdapter {
-  StubAdapter(this.statusCode, this.body, {Map<String, List<String>>? headers})
-      : headers = headers ?? const {},
-        lastOptions = null;
-
-  final int statusCode;
-  final Object body;
-  final Map<String, List<String>> headers;
-  RequestOptions? lastOptions;
-
-  @override
-  Future<ResponseBody> fetch(
-    RequestOptions options,
-    Stream<List<int>>? requestStream,
-    Future<void>? cancelFuture,
-  ) async {
-    lastOptions = options;
-    return ResponseBody.fromString(
-      jsonEncode(body),
-      statusCode,
-      headers: {HttpHeaders.contentTypeHeader: ['application/json'], ...headers},
-    );
-  }
-
-  @override
-  void close({bool force = false}) {}
-}
+import '../../support/stub_adapter.dart';
 
 /// Repository that never calls the server, so the form can be tested on its own.
 /// A successful login fills the session store like the real one would.
@@ -64,10 +34,19 @@ class FakeRepository extends AuthRepository {
     session.save('f' * 64, DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch ~/ 1000);
     return Future.value();
   }
+
+  // The home screen asks who the session belongs to, so the answer has to come
+  // from here instead of from the network.
+  @override
+  Future<User> currentSession() => Future.value(User(id: 7, username: 'lukas'));
 }
 
 Future<void> openLogin(WidgetTester tester, AuthRepository repository) async {
-  await tester.pumpWidget(SaphireApp(repository: repository));
+  // Nothing uploads in these tests, the start page only needs the repository to
+  // exist.
+  await tester.pumpWidget(
+    SaphireApp(repository: repository, uploads: UploadRepository(Dio(), repository.session)),
+  );
 }
 
 Future<void> openRegister(WidgetTester tester, AuthRepository repository) async {
@@ -174,11 +153,38 @@ void main() {
     expect(repository.session.isLoggedIn, true);
   });
 
+  testWidgets('the profile menu logs out and goes back to the login screen', (tester) async {
+    final repository = FakeRepository(null);
+    await openLogin(tester, repository);
+    await fillForm(tester);
+    await submit(tester, 'Anmelden');
+
+    await tester.tap(find.byTooltip('Konto'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Abmelden'));
+    await tester.pumpAndSettle();
+
+    expect(repository.session.isLoggedIn, false);
+    expect(find.byType(AuthScreen), findsOneWidget);
+  });
+
+  // A token kept from the last run opens the home screen without the form.
+  testWidgets('a saved session skips the login screen', (tester) async {
+    final repository = FakeRepository(null);
+    repository.session.save('f' * 64, DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch ~/ 1000);
+
+    await openLogin(tester, repository);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(HomeScreen), findsOneWidget);
+    expect(find.byType(AuthScreen), findsNothing);
+  });
+
   // Without a session there is nothing to show on the home screen, so a direct
   // navigation stays on the login.
   testWidgets('the home screen is guarded while no session exists', (tester) async {
     final repository = FakeRepository(null);
-    final router = buildRouter(repository);
+    final router = buildRouter(repository, UploadRepository(Dio(), repository.session));
     await tester.pumpWidget(MaterialApp.router(routerConfig: router));
     await tester.pumpAndSettle();
 

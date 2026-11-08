@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 
+import '../../../core/api/server_error.dart';
 import '../../../core/config/api_config.dart';
 import '../../../core/storage/session_store.dart';
 import '../domain/user.dart';
@@ -31,7 +32,7 @@ class AuthRepository {
         'password': password,
       });
     } on DioException catch (error) {
-      throw AuthException(errorMessageFor(error));
+      throw AuthException(serverErrorMessage(error));
     }
 
     return User.fromJson(response.data as Map<String, dynamic>);
@@ -48,7 +49,7 @@ class AuthRepository {
         'password': password,
       });
     } on DioException catch (error) {
-      throw AuthException(errorMessageFor(error));
+      throw AuthException(serverErrorMessage(error));
     }
 
     final data = response.data as Map<String, dynamic>;
@@ -66,26 +67,9 @@ class AuthRepository {
       );
       return User.fromJson(response.data as Map<String, dynamic>);
     } on DioException catch (error) {
-      throw AuthException(errorMessageFor(error));
+      throw AuthException(serverErrorMessage(error));
     }
   }
 
   void logout() => session.clear();
-
-  String errorMessageFor(DioException error) {
-    final data = error.response?.data;
-    if (data is Map && data['error'] is String) {
-      final message = data['error'] as String;
-      // The server sends Retry-After with a 429; say when the next try makes sense.
-      final retryAfter = error.response?.headers.value('retry-after');
-      if (retryAfter != null) {
-        return '$message (Erneut versuchen in $retryAfter s).';
-      }
-      return message;
-    }
-    if (error.type == DioExceptionType.connectionError) {
-      return 'Server ist nicht erreichbar unter $apiBaseUrl.';
-    }
-    return 'Anfrage fehlgeschlagen (${error.response?.statusCode ?? 'unbekannter Status'}).';
-  }
 }
