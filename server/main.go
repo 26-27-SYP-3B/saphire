@@ -41,12 +41,19 @@ func main() {
 	sessionLimiter := newRateLimiter(10, 12*time.Second)
 	// Uploads move whole files, so this bucket is smaller on purpose.
 	uploadLimiter := newRateLimiter(3, 30*time.Second)
+	// Reading the library and streaming one song are their own buckets, so a client
+	// that polls the list cannot starve playback, and a player that opens several
+	// songs cannot starve the session checks.
+	libraryLimiter := newRateLimiter(10, 12*time.Second)
+	streamLimiter := newRateLimiter(10, 10*time.Second)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/register", registerHandler(db, registerLimiter))
 	mux.HandleFunc("POST /api/login", loginHandler(db, loginLimiter))
 	mux.HandleFunc("GET /api/session", sessionHandler(db, sessionLimiter))
 	mux.HandleFunc("POST /api/music/upload", uploadHandler(db, library, uploadLimiter))
+	mux.HandleFunc("GET /api/music", listHandler(db, libraryLimiter))
+	mux.HandleFunc("GET /api/music/{id}", streamHandler(db, library, streamLimiter))
 
 	// The development frontend in static/, mounted under its own prefix so it cannot
 	// take over a path an API pattern owns. See static.go.

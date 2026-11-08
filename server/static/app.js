@@ -252,6 +252,77 @@ $("upload-form").addEventListener("submit", async (event) => {
   if (track) showSession("ok", "uploaded " + track.title + " as " + track.stored_name);
 });
 
+$("list-songs").addEventListener("click", () => {
+  send("GET", "/api/music", { curl: `-X GET ${location.origin}/api/music${authFlag()}` });
+});
+
+// The streaming endpoint is only worth testing when the pieces arrive one by one, so
+// this logs what came in and when instead of the bytes themselves.
+async function streamSong(id) {
+  // The id is encoded so the path in the log is the path that was sent.
+  const path = "/api/music/" + encodeURIComponent(id);
+  const started = performance.now();
+
+  let response;
+  try {
+    response = await fetch(path, { headers: state.token ? { Authorization: "Bearer " + state.token } : {} });
+  } catch (error) {
+    addEntry({ status: 0, method: "GET", path, ms: Math.round(performance.now() - started), text: "the server is not reachable at " + location.origin });
+    return;
+  }
+
+  const headers = response.headers;
+  if (response.status !== 200) {
+    addEntry({
+      status: response.status,
+      method: "GET",
+      path,
+      ms: Math.round(performance.now() - started),
+      text: await response.text(),
+      retryAfter: headers.get("Retry-After"),
+      curl: `-X GET ${location.origin}${path}${authFlag()}`,
+    });
+    return;
+  }
+
+  const maxChunkLines = 20; // a 500 MiB song is about 16000 chunks; the entry must not hold them all
+  const lines = [];
+  let total = 0;
+  let chunks = 0;
+
+  const reader = response.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks += 1;
+    total += value.length;
+    if (chunks <= maxChunkLines) lines.push(`${value.length} bytes at ${Math.round(performance.now() - started)} ms`);
+  }
+
+  const declared = Number(headers.get("Content-Length") || 0);
+  const summary = [`${chunks} chunk(s), ${total} bytes of ${declared}`, ...lines];
+  if (chunks > maxChunkLines) summary.push(`… ${chunks - maxChunkLines} more chunks`);
+  if (chunks === 1 && total === declared) summary.push("the whole file arrived in one read, so nothing was streamed");
+
+  addEntry({
+    status: response.status,
+    method: "GET",
+    path,
+    ms: Math.round(performance.now() - started),
+    text: summary.join("\n"),
+    curl: `-X GET ${location.origin}${path}${authFlag()}`,
+  });
+}
+
+$("stream-song").addEventListener("click", () => {
+  const id = $("stream-id").value.trim();
+  if (!id) {
+    addEntry({ status: null, method: "GET", path: "/api/music/{id}", ms: 0, text: "no song id was typed, so nothing was sent" });
+    return;
+  }
+  streamSong(id);
+});
+
 $("clear-log").addEventListener("click", () => {
   $("log").textContent = "";
 });

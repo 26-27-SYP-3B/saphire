@@ -2,8 +2,10 @@
 
 Base URL: `http://localhost:8080` (port configurable via `PORT` in `.env`).
 
-All responses are JSON with `Content-Type: application/json` and
-`X-Content-Type-Options: nosniff`. Errors use a single shape:
+Every API answer is JSON with `Content-Type: application/json` and
+`X-Content-Type-Options: nosniff`, except `GET /api/music/{id}`, which sends the file
+itself with the content type stored for that song — there the JSON error shape applies
+only to the answers sent before the first byte. Errors use a single shape:
 
 ```json
 { "error": "human readable description of what went wrong" }
@@ -214,8 +216,8 @@ curl -X POST localhost:8080/api/music/upload \
   cannot make the server read 500 MiB it would throw away.
 - The file is written before the row is inserted; if the insert fails, the file
   is removed again, so a library entry never points at a missing file.
-- `stored_name` is what the file is called inside the library folder. There is no
-  download endpoint yet — see **Upcoming**.
+- `stored_name` is what the file is called inside the library folder. It is not sent
+  by `GET /api/music`; a client reads a song through `GET /api/music/{id}`.
 - Database schema:
 
   ```sql
@@ -232,15 +234,105 @@ curl -X POST localhost:8080/api/music/upload \
 
 ---
 
+### `GET /api/music`
+
+Lists the shared library: every song as `id` and `title`, ordered by `id`. Only a
+logged-in user may read it, with the same two 401 messages as `GET /api/session`.
+An empty library answers `[]`, never `null`.
+
+```
+GET /api/music
+Authorization: Bearer <token>
+```
+
+**Response shape**
+
+```json
+[
+  { "id": 4, "title": "lied.wav" },
+  { "id": 8, "title": "Technogal.mp3" }
+]
+```
+
+`stored_name` is not in this response: the name the file has inside the library
+folder stays on the server, and a client reaches a song through `GET /api/music/{id}`.
+
+**Responses**
+
+| Status | When | Example body |
+|---|---|---|
+| `200 OK` | Library listed, ordered by `id` | `[{ "id": 4, "title": "lied.wav" }]` |
+| `401 Unauthorized` | Missing `Authorization: Bearer` header | `{"error": "authorization header with a Bearer token is missing"}` |
+| `401 Unauthorized` | Unknown or expired token (the row is dropped), or the token's user no longer exists | `{"error": "session is not valid or expired"}` |
+| `429 Too Many Requests` | Rate limit reached (10 requests per IP, refilling 1 token every 12 s — its own bucket). Includes a `Retry-After` header. | `{"error": "too many requests from this address, try again later"}` |
+| `500 Internal Server Error` | Database failure while reading the library | `{"error": "could not list the library"}` |
+| `500 Internal Server Error` | Database failure while checking the token, with the same answers as `GET /api/session` | `{"error": "could not load session"}` or `{"error": "could not load user"}` |
+
+No pagination yet: every row is returned in one answer.
+
+### `GET /api/music/{id}`
+
+Sends the file of one song. Only a logged-in user may read it, with the same two 401
+messages as `GET /api/session`. The file is **streamed in chunks**: the server reads
+32 KiB at a time (`streamChunkBytes`) and flushes after each chunk, so a player gets
+the start of a song before the rest of the file is read, and a large song is never
+held in memory as a whole.
+
+```
+GET /api/music/{id}
+Authorization: Bearer <token>
+```
+
+**Headers on a successful answer**
+
+| Header | Value |
+|---|---|
+| `Content-Type` | the type stored for that song (`audio/mpeg`, `audio/wav`, …) |
+| `Content-Length` | the size of the file on disk, so a player can show progress |
+| `X-Content-Type-Options` | `nosniff`, like every other answer from this server |
+
+`Content-Length` is known because the file is in the library, so the transfer is not
+chunk-encoded — but the bytes still leave piece by piece. `Range` is not implemented:
+a `Range` request is ignored and answers `200` with the whole file, so a player that
+seeks still needs it (see **Upcoming**).
+
+**Responses**
+
+| Status | When | Example body |
+|---|---|---|
+| `200 OK` | The file, in 32 KiB chunks with a flush after each | the file bytes |
+| `400 Bad Request` | `id` is not a plain positive number (`-1`, `0`, `0004`, `+4`, `abc`) | `{"error": "the song id must be a positive number"}` |
+| `400 Bad Request` | Digits, but too large to be an id | `{"error": "the song id is too large"}` |
+| `401 Unauthorized` | Missing `Authorization: Bearer` header | `{"error": "authorization header with a Bearer token is missing"}` |
+| `401 Unauthorized` | Unknown or expired token | `{"error": "session is not valid or expired"}` |
+| `404 Not Found` | No row with that id | `{"error": "song is not in the library"}` |
+| `404 Not Found` | The row exists but its file is gone (a broken library) | `{"error": "the file for this song is not in the library folder"}` |
+| `429 Too Many Requests` | Rate limit reached (10 requests per IP, refilling 1 token every 10 s — its own bucket). Includes a `Retry-After` header. | `{"error": "too many requests from this address, try again later"}` |
+| `500 Internal Server Error` | Database failure, or the file could not be opened | `{"error": "could not load the song"}` or `{"error": "could not read the file"}` |
+| `500 Internal Server Error` | Database failure while checking the token, with the same answers as `GET /api/session` | `{"error": "could not load session"}` or `{"error": "could not load user"}` |
+
+**Notes**
+
+- Every error above is answered **before the first byte**. Once `200` and the audio
+  content type are sent, the status is fixed: a read failure that happens mid-stream
+  cannot become a JSON error, it only ends the body. A client must treat a body that
+  stops early as a failed read, not as a complete song. In practice that looks like
+  fewer bytes than `Content-Length` and a connection that is not reused — with
+  `net/http` the client sees `unexpected EOF` while reading.
+- The client's `Accept` header does not matter here — the content type comes from the
+  record written at upload time.
+
+---
+
 ## Upcoming
 
 Beyond the endpoints above, nothing exists yet. Planned, in rough order:
 
-- `GET /api/music` — list the library for any logged-in user, and
-  `GET /api/music/{id}` — send one stored file back. Upload is implemented, so
-  the next step is reading the library; both need the same `Authorization: Bearer`
-  rule as `GET /api/session`, and an unauthenticated reader must be refused with
-  the same 401 messages.
+- `Range` on `GET /api/music/{id}` — serve one byte range with `206 Partial Content`,
+  which is what a player needs for seeking. A client that only reads the whole stream
+  works with the endpoint as it is now.
+- Pagination for `GET /api/music`, once the library is large enough that one answer is
+  too much.
 - `POST /api/logout` — delete the session row for the presented token and
   answer `204 No Content`. Same `Authorization: Bearer` rule as
   `GET /api/session`; a client that keeps the token after logout should be

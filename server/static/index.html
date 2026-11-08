@@ -65,9 +65,23 @@
       </form>
     </section>
 
+    <section>
+      <h2><span class="method">GET</span> /api/music</h2>
+      <p class="rules">id and title for every song, ordered by id · 10 requests per IP, one token every 12 s</p>
+      <button type="button" id="list-songs">List songs</button>
+    </section>
+
+    <section>
+      <h2><span class="method">GET</span> /api/music/{id}</h2>
+      <p class="rules">a positive song id (digits only) · the file in 32 KiB chunks with a flush after each · 10 requests per IP, one token every 10 s · errors only before the first byte</p>
+      <label for="stream-id">song id</label>
+      <input id="stream-id" inputmode="numeric" placeholder="4">
+      <button type="button" id="stream-song">Stream it</button>
+    </section>
+
     <section class="planned">
-      <h2>No endpoints yet</h2>
-      <p class="rules">GET /api/music · GET /api/music/{id} · POST /api/logout — planned in api-docs.md, so a request to any of them answers 404.</p>
+      <h2>Not implemented yet</h2>
+      <p class="rules">POST /api/logout answers 404. <code>Range</code> on GET /api/music/{id} is not implemented, so a Range request gets the whole file with 200 — a player that seeks needs it.</p>
     </section>
 
   </div>

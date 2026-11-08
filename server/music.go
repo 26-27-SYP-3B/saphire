@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -36,7 +38,16 @@ type Track struct {
 const (
 	maxUploadBytes = 500 << 20 // 500 MiB
 	maxTitleLen    = 200
+
+	// streamChunkBytes is how much of a file goes out at a time. Small enough that a
+	// player starts playing before the whole file is read, large enough that a
+	// 500 MiB song is not sent in tiny pieces.
+	streamChunkBytes = 32 << 10 // 32 KiB
 )
+
+// songIDPattern is the id as the database writes it: digits only, no sign, no leading
+// zeros. "0" and "-1" are not ids, and "0004" would be the same song under two names.
+var songIDPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
 
 // audioExtensions are the formats the library accepts, with the content type
 // they are reported as. http.DetectContentType cannot sniff every audio
@@ -126,6 +137,49 @@ func (t *Track) Insert(db *sql.DB) error {
 		return err
 	}
 	return nil
+}
+
+// GetTrackByID loads one library row. Returns sql.ErrNoRows when it does not exist.
+func GetTrackByID(db *sql.DB, id int64) (*Track, error) {
+	var t Track
+	err := db.QueryRow(`SELECT id, user_id, title, stored_name, size, content_type, uploaded_at FROM track WHERE id = ?`, id).
+		Scan(&t.ID, &t.UserID, &t.Title, &t.StoredName, &t.Size, &t.ContentType, &t.UploadedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// LibraryEntry is what GET /api/music shows for one song: the two fields a client
+// needs to list the library, and nothing else. The name the file has inside the
+// library folder stays on the server.
+type LibraryEntry struct {
+	ID    int64  `json:"id"`
+	Title string `json:"title"`
+}
+
+// ListTracks returns the whole library ordered by id. Always parameterized.
+func ListTracks(db *sql.DB) ([]LibraryEntry, error) {
+	rows, err := db.Query(`SELECT id, title FROM track ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// An empty library answers [] rather than null, so a client does not have to tell
+	// the two apart.
+	entries := []LibraryEntry{}
+	for rows.Next() {
+		var e LibraryEntry
+		if err := rows.Scan(&e.ID, &e.Title); err != nil {
+			return nil, err
+		}
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return entries, nil
 }
 
 // storedFileName turns an uploaded name into a name inside the library. The name
@@ -277,5 +331,133 @@ func uploadHandler(db *sql.DB, library string, limiter *rateLimiter) http.Handle
 		track.Uploader = user.Username
 
 		writeJSON(w, http.StatusCreated, track)
+	}
+}
+
+// listHandler answers GET /api/music for a logged-in user: every song in the shared
+// library as id and title, ordered by id. The library is shared, so the list is the
+// same for everyone who is logged in.
+func listHandler(db *sql.DB, limiter *rateLimiter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if ok, retry := limiter.allow(clientIP(r)); !ok {
+			w.Header().Set("Retry-After", strconv.Itoa(retry))
+			writeError(w, http.StatusTooManyRequests, "too many requests from this address, try again later")
+			return
+		}
+
+		// Reading the library needs an account, with the same two 401 messages as
+		// GET /api/session.
+		if _, status, message := authenticate(db, r); status != http.StatusOK {
+			writeError(w, status, message)
+			return
+		}
+
+		entries, err := ListTracks(db)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not list the library")
+			return
+		}
+
+		writeJSON(w, http.StatusOK, entries)
+	}
+}
+
+// streamHandler answers GET /api/music/{id} for a logged-in user: the file for one
+// song, written out in chunks of streamChunkBytes with a flush after each chunk. The
+// file is never read into memory as a whole, so a 500 MiB song does not become a
+// 500 MiB allocation, and a player gets the first bytes before the rest is read.
+func streamHandler(db *sql.DB, library string, limiter *rateLimiter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ip := clientIP(r)
+		if ok, retry := limiter.allow(ip); !ok {
+			w.Header().Set("Retry-After", strconv.Itoa(retry))
+			writeError(w, http.StatusTooManyRequests, "too many requests from this address, try again later")
+			return
+		}
+
+		// Auth before the file is opened, as in the upload endpoint: an anonymous
+		// caller must not make the server read a whole song it will not send.
+		if _, status, message := authenticate(db, r); status != http.StatusOK {
+			writeError(w, status, message)
+			return
+		}
+
+		// Ids are positive integers as the database produces them, so a form like "-1",
+		// "0", "0004" or "+4" is not an id even though it parses as a number.
+		idText := r.PathValue("id")
+		if !songIDPattern.MatchString(idText) {
+			writeError(w, http.StatusBadRequest, "the song id must be a positive number")
+			return
+		}
+
+		id, err := strconv.ParseInt(idText, 10, 64)
+		if err != nil {
+			// The characters are digits, so this can only be a value too large to be an
+			// id, and the answer must say that instead of "not a number".
+			writeError(w, http.StatusBadRequest, "the song id is too large")
+			return
+		}
+
+		track, err := GetTrackByID(db, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "song is not in the library")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not load the song")
+			return
+		}
+
+		// stored_name is generated here, so it cannot name anything outside the
+		// library folder.
+		file, err := os.Open(filepath.Join(library, track.StoredName))
+		if errors.Is(err, fs.ErrNotExist) {
+			// The file is written before the row, so this should not happen; it is a
+			// broken library, and the client needs to know the song cannot be played.
+			writeError(w, http.StatusNotFound, "the file for this song is not in the library folder")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not read the file")
+			return
+		}
+		defer file.Close()
+
+		// Everything that can still be answered with the JSON error shape must be
+		// decided here: after WriteHeader the status is fixed, and a later failure can
+		// only end the stream.
+		info, err := file.Stat()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not read the file")
+			return
+		}
+
+		// Content-Length is the size of the file that is actually sent, so a player
+		// can show progress. It does not change how the body is written: the chunks
+		// still go out one by one.
+		w.Header().Set("Content-Type", track.ContentType)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+		w.WriteHeader(http.StatusOK)
+
+		buffer := make([]byte, streamChunkBytes)
+		flusher, canFlush := w.(http.Flusher)
+
+		for {
+			n, err := file.Read(buffer)
+			if n > 0 {
+				if _, err := w.Write(buffer[:n]); err != nil {
+					return // the client went away mid-stream
+				}
+				if canFlush {
+					flusher.Flush()
+				}
+			}
+			if err != nil {
+				// EOF is the normal end. A read error after the status line cannot be
+				// reported as JSON, so the body simply stops here.
+				return
+			}
+		}
 	}
 }

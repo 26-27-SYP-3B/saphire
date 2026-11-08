@@ -45,13 +45,19 @@ curl -X POST localhost:8080/api/music/upload \
 Returns `201 Created` with the track record, `401` for anonymous requests,
 `400` for a non-audio or empty file, `413` above 500 MiB, `429` when rate limited.
 
+`GET /api/music` — the library as `id` and `title` for any logged-in user, ordered by
+id. `GET /api/music/{id}` — one song, streamed in 32 KiB chunks with a flush after
+each, so a player gets the start of a file before the rest is read. Both need the
+same `Authorization: Bearer` rule as `GET /api/session`.
+
 ## Development frontend
 
 Run the server from `server/` and open <http://localhost:8080/> (it forwards to
 `/static/`) — `main.go` serves a plain HTML page (`static/`) for calling these
-endpoints from a browser: register, login, session check, upload. It prints the status
-code, the elapsed time, `Retry-After`, and the same request as a `curl` command.
-Nothing on the page checks the fields first (the file picker is filtered to the
-accepted extensions), so what shows is what the server answered. The page is served
-under its own prefix so an API route keeps the answers documented in `api-docs.md`,
-and the path is relative to the folder the server is started from.
+endpoints from a browser: register, login, session check, upload, list, stream. It
+prints the status code, the elapsed time, `Retry-After`, and the same request as a
+`curl` command; for the stream it shows which chunks arrived and when. Nothing on the
+page checks the fields first (the file picker is filtered to the accepted extensions),
+so what shows is what the server answered. The page is served under its own prefix so
+an API route keeps the answers documented in `api-docs.md`, and the path is relative to
+the folder the server is started from.
