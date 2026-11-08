@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -23,17 +24,20 @@ const uploadAnswer = {
 
 const userAnswer = {'id': 7.0, 'username': 'lukas'};
 
-/// The plugin cannot answer in a test, so the screen is given a fixed file.
-PickAudio fixedFile = () async => (name: 'song.mp3', bytes: Uint8List.fromList([1, 2, 3]));
+/// The plugin cannot answer in a test, so the screen is given fixed files.
+PickAudio pickedFiles = () async => [(name: 'song.mp3', bytes: Uint8List.fromList([1, 2, 3]))];
 
-/// Opens the start page with a valid session, so the greeting has a name, and
-/// hands the session store back so a test can check what the page does with it.
+/// Opens the start page with a valid session, so the greeting has a name, and hands
+/// the session store and the upload adapter back so a test can check what the page
+/// does with them.
 Future<SessionStore> openHome(
   WidgetTester tester, {
   int userStatus = 200,
   Map<String, Object> userBody = userAnswer,
   int uploadStatus = 201,
   Map<String, Object> uploadBody = uploadAnswer,
+  PickAudio? pickAudio,
+  StubAdapter? uploads,
 }) async {
   // The test font draws every glyph as wide as the font size, so this page needs
   // more room than the default test window.
@@ -48,8 +52,8 @@ Future<SessionStore> openHome(
     MaterialApp(
       home: HomeScreen(
         repository: AuthRepository(Dio()..httpClientAdapter = StubAdapter(userStatus, userBody), session),
-        uploads: UploadRepository(Dio()..httpClientAdapter = StubAdapter(uploadStatus, uploadBody), session),
-        pickAudio: fixedFile,
+        uploads: UploadRepository(Dio()..httpClientAdapter = uploads ?? StubAdapter(uploadStatus, uploadBody), session),
+        pickAudio: pickAudio ?? pickedFiles,
       ),
     ),
   );
@@ -94,13 +98,74 @@ void main() {
     expect(session.isLoggedIn, false);
   });
 
-  testWidgets('a rejected upload shows what the server said', (tester) async {
-    await openHome(tester, uploadStatus: 400, uploadBody: {'error': 'the uploaded file is empty'});
+  // Which format is allowed is the server's decision, so the file is sent and its
+  // answer is shown on that file's row.
+  testWidgets('a file the server refuses shows its message on the row of that file', (tester) async {
+    await openHome(
+      tester,
+      pickAudio: () async => [(name: 'notes.txt', bytes: Uint8List.fromList([1, 2, 3]))],
+      uploadStatus: 400,
+      uploadBody: {'error': 'only audio files are accepted'},
+    );
 
     await upload(tester);
 
-    expect(find.text('the uploaded file is empty'), findsOneWidget);
-    expect(find.text('song.mp3'), findsNothing);
+    expect(find.text('notes.txt'), findsOneWidget);
+    expect(find.text('only audio files are accepted'), findsOneWidget);
+    expect(find.textContaining('lukas · '), findsNothing);
+  });
+
+  testWidgets('every picked file gets its own progress and its own result', (tester) async {
+    final adapter = StubAdapter(201, uploadAnswer);
+    adapter.queue.add((201, uploadAnswer));
+    adapter.queue.add((400, {'error': 'only audio files are accepted'}));
+    final gate = Completer<void>();
+    adapter.wait = gate.future;
+
+    await openHome(
+      tester,
+      uploads: adapter,
+      pickAudio: () async => [
+        (name: 'song.mp3', bytes: Uint8List.fromList([1, 2, 3])),
+        (name: 'notes.txt', bytes: Uint8List.fromList([4, 5, 6])),
+      ],
+    );
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Eigene Dateien hochladen'));
+    await tester.pumpAndSettle();
+
+    // The first file is held by the gate, so its row still shows its own progress.
+    expect(find.textContaining('wird hochgeladen ·'), findsOneWidget);
+
+    gate.complete();
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('lukas · 1.5 MB'), findsOneWidget);
+    expect(find.text('only audio files are accepted'), findsOneWidget);
+    expect(find.textContaining('wird hochgeladen'), findsNothing);
+  });
+
+  // The screen can be left while a file is still on its way.
+  testWidgets('an answer that arrives after the screen is gone does not rebuild it', (tester) async {
+    final adapter = StubAdapter(201, uploadAnswer);
+    final gate = Completer<void>();
+    adapter.wait = gate.future;
+
+    await openHome(
+      tester,
+      uploads: adapter,
+      pickAudio: () async => [
+        (name: 'song.mp3', bytes: Uint8List.fromList([1, 2, 3])),
+        (name: 'other.mp3', bytes: Uint8List.fromList([4, 5, 6])),
+      ],
+    );
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Eigene Dateien hochladen'));
+    await tester.pumpAndSettle();
+
+    await tester.pumpWidget(const SizedBox());
+    gate.complete();
+    await tester.pumpAndSettle();
   });
 
   testWidgets('the search field only shows what matches', (tester) async {

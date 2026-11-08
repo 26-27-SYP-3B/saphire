@@ -53,6 +53,23 @@ void main() {
     expect(adapter.lastBody, contains('filename="song.mp3"'));
   });
 
+  test('reports how much of the file was sent, so the page can show a percent', () async {
+    final adapter = StubAdapter(201, uploadAnswer);
+    final seen = <List<int>>[];
+
+    await UploadRepository(Dio()..httpClientAdapter = adapter, loggedIn()).upload(
+      filename: 'song.mp3',
+      bytes: Uint8List.fromList([1, 2, 3]),
+      onProgress: (count, total) => seen.add([count, total]),
+    );
+
+    // The page can only show a percent while the file is being written, so the
+    // counts have to arrive before the answer.
+    expect(seen, isNotEmpty);
+    expect(seen.first.first, greaterThan(0));
+    expect(seen.last.first, seen.last[1]);
+  });
+
   test('the message of the server is passed on', () async {
     final repository = UploadRepository(
       Dio()..httpClientAdapter = StubAdapter(401, {'error': 'session is not valid or expired'}),

@@ -27,7 +27,11 @@ class UploadRepository {
   final Dio _dio;
   final SessionStore session;
 
-  Future<Track> upload({required String filename, required Uint8List bytes}) async {
+  Future<Track> upload({
+    required String filename,
+    required Uint8List bytes,
+    ProgressCallback? onProgress,
+  }) async {
     try {
       final response = await _dio.post(
         '$apiBaseUrl/api/music/upload',
@@ -35,6 +39,7 @@ class UploadRepository {
           'file': MultipartFile.fromBytes(bytes, filename: filename),
         }),
         options: Options(headers: {'Authorization': 'Bearer ${session.token}'}),
+        onSendProgress: onProgress,
       );
       return Track.fromJson(response.data as Map<String, dynamic>);
     } on DioException catch (error) {

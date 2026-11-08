@@ -11,13 +11,21 @@ class StubAdapter implements HttpClientAdapter {
         lastOptions = null,
         lastBody = '';
 
-  final int statusCode;
-  final Object body;
+  int statusCode;
+  Object body;
   final Map<String, List<String>> headers;
   RequestOptions? lastOptions;
 
   /// The body as the server would receive it, so a multipart form can be checked.
   String lastBody = '';
+
+  /// Answers taken in order for the following requests, so one batch can mix
+  /// success and error. When the list is empty, the fixed answer above is used.
+  final List<(int, Map<String, Object>)> queue = [];
+
+  /// When set, the answer is only given after it completes, so a test can look at
+  /// a row while its file is still on the way.
+  Future<void>? wait;
 
   @override
   Future<ResponseBody> fetch(
@@ -29,12 +37,21 @@ class StubAdapter implements HttpClientAdapter {
     if (requestStream != null) {
       // The body is binary as soon as a real file is in it, so decoding it is
       // only for looking at the part names.
+      // The body is read chunk by chunk, which is what Dio reports as progress.
       lastBody = utf8.decode((await requestStream.toList()).expand((chunk) => chunk).toList(), allowMalformed: true);
     }
 
+    int status = statusCode;
+    Object answer = body;
+    if (queue.isNotEmpty) {
+      (status, answer) = queue.removeAt(0);
+    }
+
+    if (wait != null) await wait;
+
     return ResponseBody.fromString(
-      jsonEncode(body),
-      statusCode,
+      jsonEncode(answer),
+      status,
       headers: {HttpHeaders.contentTypeHeader: ['application/json'], ...headers},
     );
   }

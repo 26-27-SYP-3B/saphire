@@ -9,26 +9,32 @@ import '../../auth/domain/user.dart';
 import '../../upload/data/upload_repository.dart';
 import '../../upload/domain/track.dart';
 
-/// The extensions the server accepts (see server/music.go), so a file that could
-/// only be refused there is not picked first.
-const audioExtensions = ['mp3', 'wav', 'm4a', 'ogg', 'opus', 'flac', 'aac'];
-
 /// A picked song: the name the server would store as the title and its bytes.
 typedef PickedAudio = ({String name, Uint8List bytes});
-typedef PickAudio = Future<PickedAudio?> Function();
+typedef PickAudio = Future<List<PickedAudio>?> Function();
+
+/// One file in the upload window: what it is, how far it got, what the server
+/// said about it. Every picked file keeps its own row, so the results do not mix.
+class _UploadFile {
+  _UploadFile(this.name);
+
+  final String name;
+  int percent = 0;
+  String? error;
+  Track? track;
+}
 
 /// The picker used when the screen is started without one. A widget test passes
-/// its own, because the plugin cannot answer there.
-Future<PickedAudio?> pickAudioFile() async {
-  final picked = await FilePicker.pickFile(
-    type: FileType.custom,
-    allowedExtensions: audioExtensions,
-  );
-  if (picked == null) return null;
+/// its own, because the plugin cannot answer there. Any file can be picked,
+/// because which formats are allowed is the server's decision (see server/music.go);
+/// a file it refuses comes back as its message and is shown on that file's row.
+Future<List<PickedAudio>?> pickAudioFiles() async {
+  final picked = await FilePicker.pickFiles(type: FileType.any);
+  if (picked.isEmpty) return null;
 
   // shortcut: the whole file is held in memory. Upgrade: stream from the path on
   // the platforms that give one, so a 500 MiB song is not read twice.
-  return (name: picked.name, bytes: await picked.readAsBytes());
+  return [for (final file in picked) (name: file.name, bytes: await file.readAsBytes())];
 }
 
 /// The greeting follows the time of day.
@@ -68,7 +74,7 @@ class HomeScreen extends StatefulWidget {
     super.key,
     required this.repository,
     required this.uploads,
-    this.pickAudio = pickAudioFile,
+    this.pickAudio = pickAudioFiles,
   });
 
   final AuthRepository repository;
@@ -80,10 +86,10 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final List<Track> _uploads = [];
+  final List<_UploadFile> _files = [];
   final TextEditingController _search = TextEditingController();
 
-  bool _isUploading = false;
+  // The message from the session check. What a single file got is on its own row.
   String? _note;
   User? _user;
 
@@ -115,22 +121,37 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _upload() async {
-    setState(() {
-      _isUploading = true;
-      _note = null;
-    });
+    final picked = await widget.pickAudio();
+    if (picked == null) return;
 
-    try {
-      final picked = await widget.pickAudio();
-      if (picked == null) return;
+    for (final file in picked) {
+      final row = _UploadFile(file.name);
+      // The screen can be gone by the time the next file of a batch is answered.
+      if (!mounted) return;
+      setState(() => _files.add(row));
 
-      final track = await widget.uploads.upload(filename: picked.name, bytes: picked.bytes);
-      if (mounted) setState(() => _uploads.add(track));
-    } on UploadException catch (error) {
-      if (mounted) setState(() => _note = error.message);
-    } finally {
-      if (mounted) setState(() => _isUploading = false);
+      try {
+        final track = await widget.uploads.upload(
+          filename: file.name,
+          bytes: file.bytes,
+          // The percent is what Dio reports while this file is written; the server
+          // answers after it has read and checked it.
+          onProgress: (sent, total) {
+            if (mounted && total > 0) setState(() => row.percent = (sent * 100 / total).round());
+          },
+        );
+        if (mounted) setState(() => row.track = track);
+      } on UploadException catch (error) {
+        if (mounted) setState(() => row.error = error.message);
+      }
     }
+  }
+
+  /// What a row says about its own file: the progress, or what the server answered.
+  String _result(_UploadFile file) {
+    if (file.error != null) return file.error!;
+    if (file.track == null) return 'wird hochgeladen · ${file.percent} %';
+    return '${file.track!.uploadedBy} · ${_size(file.track!.size)}';
   }
 
   bool _matches(String title) {
@@ -173,11 +194,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 _chip('Dein Mix', Icons.equalizer),
                                 _chip('Charts', Icons.star),
                                 _chip('Radio', Icons.radio),
-                                _chip(
-                                  'Eigene Dateien hochladen',
-                                  Icons.upload,
-                                  onPressed: _isUploading ? null : _upload,
-                                ),
+                                _chip('Eigene Dateien hochladen', Icons.upload, onPressed: _upload),
                                 _chip('Entdecken', Icons.explore),
                               ],
                             ),
@@ -187,13 +204,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             ],
                             _section('Eigene Dateien'),
                             _row([
-                              for (final track in _uploads.where((track) => _matches(track.title)))
-                                _card((
-                                  title: track.title,
-                                  meta: '${track.uploadedBy} · ${_size(track.size)}',
-                                  icon: Icons.audio_file,
-                                )),
-                              if (_uploads.isEmpty && _matches('Eigene Dateien')) _uploadCard(),
+                              for (final file in _files.where((file) => _matches(file.name))) _fileCard(file),
+                              if (_files.isEmpty && _matches('Eigene Dateien')) _uploadCard(),
                             ]),
                             _section('Zuletzt gehört'),
                             _row([
@@ -455,6 +467,55 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// One picked file: its name and the answer for this file only, so the results
+  /// of a batch do not mix into one message.
+  Widget _fileCard(_UploadFile file) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final failed = file.error != null;
+
+    return SizedBox(
+      width: 186,
+      height: 186,
+      child: Container(
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainer,
+          // A refused file is marked as refused, so the row can be told apart.
+          border: Border.all(color: failed ? scheme.error : scheme.outline),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(failed ? Icons.error : Icons.audio_file, color: failed ? scheme.error : scheme.primary),
+              const Spacer(),
+              Text(
+                file.name,
+                style: theme.textTheme.titleMedium,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _result(file),
+                style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              // The bar is only for a file that is still on its way.
+              if (!failed && file.track == null) ...[
+                const SizedBox(height: 8),
+                LinearProgressIndicator(value: file.percent / 100, minHeight: 3),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _uploadCard() {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
@@ -463,7 +524,7 @@ class _HomeScreenState extends State<HomeScreen> {
       width: 186,
       height: 186,
       child: FilledButton(
-        onPressed: _isUploading ? null : _upload,
+        onPressed: _upload,
         style: FilledButton.styleFrom(
           // The card stays in the card color, only the plus is the accent.
           backgroundColor: scheme.surfaceContainer,
@@ -483,7 +544,7 @@ class _HomeScreenState extends State<HomeScreen> {
               overflow: TextOverflow.ellipsis,
             ),
             Text(
-              _isUploading ? 'Wird hochgeladen…' : 'Noch nichts hochgeladen',
+              'Noch nichts hochgeladen',
               style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -614,3 +675,5 @@ class _HomeScreenState extends State<HomeScreen> {
     return bytes >= 1000000 ? '${(bytes / 1000000).toStringAsFixed(1)} MB' : '${(bytes / 1000).round()} kB';
   }
 }
+
+
