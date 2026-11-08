@@ -88,7 +88,7 @@ Future<Wiring> openHome(
 }
 
 Future<void> upload(WidgetTester tester) async {
-  await tester.tap(find.widgetWithText(FilledButton, 'Eigene Dateien hochladen'));
+  await tester.tap(find.byTooltip('Datei auswählen'));
   await tester.pumpAndSettle();
 }
 
@@ -179,8 +179,7 @@ void main() {
       ],
     );
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Eigene Dateien hochladen'));
-    await tester.pumpAndSettle();
+    await upload(tester);
 
     // The first file is held by the gate, so its row still shows its own progress.
     expect(find.textContaining('wird hochgeladen ·'), findsOneWidget);
@@ -208,8 +207,7 @@ void main() {
       ],
     );
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Eigene Dateien hochladen'));
-    await tester.pumpAndSettle();
+    await upload(tester);
 
     await tester.pumpWidget(const SizedBox());
     gate.complete();
@@ -226,18 +224,22 @@ void main() {
       return picker.future;
     });
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Eigene Dateien hochladen'));
+    final pick = find.byTooltip('Datei auswählen');
+    await tester.tap(pick);
     await tester.pump();
 
-    // The chip is a plain label while the picker is open, so there is nothing to tap.
-    expect(find.widgetWithText(FilledButton, 'Eigene Dateien hochladen'), findsNothing);
+    // The button is off while the picker is open, so the second tap does nothing.
+    await tester.tap(pick);
+    await tester.pump();
     expect(opened, 1);
 
     picker.complete(null);
     await tester.pumpAndSettle();
 
-    expect(find.widgetWithText(FilledButton, 'Eigene Dateien hochladen'), findsOneWidget);
-    expect(opened, 1);
+    // It works again once the picker answered.
+    await tester.tap(pick);
+    await tester.pump();
+    expect(opened, 2);
   });
 
   testWidgets('the search field only shows what matches', (tester) async {

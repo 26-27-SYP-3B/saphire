@@ -282,23 +282,6 @@ class _HomeScreenState extends State<HomeScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             _greeting(),
-                            const SizedBox(height: 24),
-                            Wrap(
-                              spacing: 10,
-                              runSpacing: 10,
-                              children: [
-                                _chip('Dein Mix', Icons.equalizer),
-                                _chip('Charts', Icons.star),
-                                _chip('Radio', Icons.radio),
-                                _chip('Eigene Dateien hochladen', Icons.upload, onPressed: _picking ? null : _upload),
-                                _chip('Entdecken', Icons.explore),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              _uploadHint,
-                              style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-                            ),
                             if (_note != null) ...[
                               const SizedBox(height: 16),
                               Text(_note!, style: TextStyle(color: scheme.error)),
@@ -307,14 +290,25 @@ class _HomeScreenState extends State<HomeScreen> {
                               _section('Suchergebnisse'),
                               _row([for (final entry in results) _songCard(entry)]),
                             ],
-                            _section('Eigene Dateien'),
-                            _row([
-                              for (final file in _files.where((file) => _matches(_title(file)))) _fileCard(file),
-                              if (_files.isEmpty && _matches('Eigene Dateien')) _uploadCard(),
-                            ]),
                             _section('Zuletzt gehört'),
                             _row([
                               for (final item in _placeholders.where((item) => _matches(item.title))) _card(item),
+                            ]),
+                            _section(
+                              'In aktueller Sitzung hinzugefügt',
+                              action: IconButton(
+                                tooltip: 'Datei auswählen',
+                                onPressed: _picking ? null : _upload,
+                                icon: Icon(Icons.add, color: scheme.primary),
+                              ),
+                            ),
+                            Text(
+                              _uploadHint,
+                              style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                            ),
+                            const SizedBox(height: 12),
+                            _row([
+                              for (final file in _files.where((file) => _matches(_title(file)))) _fileCard(file),
                             ]),
                           ],
                         ),
@@ -332,8 +326,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _sidebar(double height) {
-    final theme = Theme.of(context);
-
     return SizedBox(
       width: 248,
       height: height,
@@ -350,39 +342,11 @@ class _HomeScreenState extends State<HomeScreen> {
             for (final item in _navItems) _navItem(item.label, item.icon, selected: item.selected, route: item.route),
             _heading('Deine Inhalte'),
             for (final item in [
-              (label: 'Eigene Dateien', icon: Icons.add),
               (label: 'Playlists', icon: Icons.playlist_play),
               (label: 'Alben', icon: Icons.album),
               (label: 'Künstler*innen', icon: Icons.people),
             ])
               _navItem(item.label, item.icon),
-            _heading('Playlists'),
-            // The sidebar is the list of what is there, the search field above
-            // only filters the page.
-            for (final item in _placeholders)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 6, 20, 6),
-                child: Row(
-                  children: [
-                    _thumb(item.icon),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(item.title, style: theme.textTheme.labelLarge),
-                          Text(
-                            item.meta,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
           ],
         ),
       ),
@@ -505,10 +469,18 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _section(String title) {
+  /// A section title, with the control for that section on its left when there is one.
+  Widget _section(String title, {Widget? action}) {
+    final theme = Theme.of(context);
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(0, 24, 0, 12),
-      child: Text(title, style: Theme.of(context).textTheme.titleLarge),
+      child: Row(
+        children: [
+          if (action != null) ...[action, const SizedBox(width: 10)],
+          Flexible(child: Text(title, style: theme.textTheme.titleLarge, maxLines: 1, overflow: TextOverflow.ellipsis)),
+        ],
+      ),
     );
   }
 
@@ -630,101 +602,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _uploadCard() {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-
-    return SizedBox(
-      width: 186,
-      height: 186,
-      child: FilledButton(
-        onPressed: _picking ? null : _upload,
-        style: FilledButton.styleFrom(
-          // The card stays in the card color, only the plus is the accent.
-          backgroundColor: scheme.surfaceContainer,
-          foregroundColor: scheme.onSurface,
-          padding: const EdgeInsets.all(14),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(Icons.add, color: scheme.primary),
-            const Spacer(),
-            Text(
-              'Datei auswählen',
-              style: theme.textTheme.titleMedium,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            Text(
-              'Noch nichts hochgeladen',
-              style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _chip(String label, IconData icon, {VoidCallback? onPressed}) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-
-    if (onPressed == null) {
-      // Nothing is behind this on the server, so it is a label and not a button.
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: scheme.surfaceContainer,
-          border: Border.all(color: scheme.outline),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 18, color: scheme.onSurfaceVariant),
-            const SizedBox(width: 10),
-            Text(label, style: theme.textTheme.labelLarge),
-          ],
-        ),
-      );
-    }
-
-    return FilledButton(
-      onPressed: onPressed,
-      style: FilledButton.styleFrom(
-        minimumSize: const Size(0, 44),
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [Icon(icon, size: 18), const SizedBox(width: 10), Text(label)],
-      ),
-    );
-  }
-
-  Widget _thumb(IconData icon) {
-    final scheme = Theme.of(context).colorScheme;
-
-    return Container(
-      width: 40,
-      height: 40,
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainer,
-        border: Border.all(color: scheme.outline),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Icon(icon, size: 18, color: scheme.onSurfaceVariant),
-    );
-  }
-
-  /// The bar at the bottom: the song the shared player is playing. This page does not own a
-  /// player, so the bar shows the same queue the Playlists page filled, and its buttons go
-  /// through the same player. What the player cannot do — seek, repeat, shuffle — is not here.
   Widget _playerBar() {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
