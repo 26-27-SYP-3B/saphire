@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"net/http"
+	"strings"
 	"time"
 )
 
@@ -67,4 +69,33 @@ func FindSession(db *sql.DB, token string) (*Session, error) {
 		return nil, ErrSessionNotFound
 	}
 	return &s, nil
+}
+
+// authenticate resolves the "Authorization: Bearer <token>" header to the user
+// the session belongs to. It returns (nil, status, message) when the request is
+// not authenticated, so every endpoint answers protected requests with the same
+// two messages as GET /api/session: one for a missing header, one for an unknown
+// or expired token.
+func authenticate(db *sql.DB, r *http.Request) (*User, int, string) {
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return nil, http.StatusUnauthorized, "authorization header with a Bearer token is missing"
+	}
+
+	session, err := FindSession(db, strings.TrimPrefix(auth, "Bearer "))
+	if err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			return nil, http.StatusUnauthorized, "session is not valid or expired"
+		}
+		return nil, http.StatusInternalServerError, "could not load session"
+	}
+
+	user, err := GetUserByID(db, session.UserID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, http.StatusUnauthorized, "session is not valid or expired"
+		}
+		return nil, http.StatusInternalServerError, "could not load user"
+	}
+	return user, http.StatusOK, ""
 }

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Saphire dev console</title>
+  <!-- Relative links, so the page works wherever main.go mounts it. -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <h1>saphire <span>dev console</span></h1>
+  <p class="session-state" id="session-state">
+    <span class="dot" id="session-dot"></span>
+    <span id="session-text">no session</span>
+  </p>
+</header>
+
+<main>
+  <div class="endpoints">
+
+    <section>
+      <h2><span class="method">POST</span> /api/register</h2>
+      <p class="rules">username 3–32 characters (a-z 0-9 . _ -), stored as lowercase · password 8–72 bytes, no control characters · body max 4 KiB · 5 requests per IP, one token every 12 s</p>
+      <form id="register-form">
+        <label for="register-username">username</label>
+        <input id="register-username" spellcheck="false" autocomplete="off">
+        <label for="register-password">password</label>
+        <input id="register-password" type="password" autocomplete="off">
+        <button type="submit">Register</button>
+      </form>
+    </section>
+
+    <section>
+      <h2><span class="method">POST</span> /api/login</h2>
+      <p class="rules">same field rules as register · 5 requests per IP, one token every 12 s · the answer never says which of the two was wrong</p>
+      <form id="login-form">
+        <label for="login-username">username</label>
+        <input id="login-username" spellcheck="false" autocomplete="off">
+        <label for="login-password">password</label>
+        <input id="login-password" type="password" autocomplete="off">
+        <button type="submit">Log in</button>
+      </form>
+    </section>
+
+    <section>
+      <h2><span class="method">GET</span> /api/session</h2>
+      <p class="rules">Authorization: Bearer &lt;token&gt; · 10 requests per IP, one token every 12 s</p>
+      <p class="token" id="token-line">no token stored</p>
+      <p class="expiry" id="token-expiry"></p>
+      <div class="actions">
+        <button type="button" id="check-session">Check session</button>
+        <button type="button" id="clear-session" class="secondary">Clear stored token</button>
+      </div>
+    </section>
+
+    <section>
+      <h2><span class="method">POST</span> /api/music/upload</h2>
+      <p class="rules">form field named <code>file</code> · audio only: mp3 wav m4a ogg opus flac aac · max 500 MiB · 3 requests per IP, one token every 30 s</p>
+      <form id="upload-form">
+        <label for="upload-file">file</label>
+        <input id="upload-file" type="file" accept=".mp3,.wav,.m4a,.ogg,.opus,.flac,.aac">
+        <button type="submit">Upload file</button>
+      </form>
+    </section>
+
+    <section class="planned">
+      <h2>No endpoints yet</h2>
+      <p class="rules">GET /api/music · GET /api/music/{id} · POST /api/logout — planned in api-docs.md, so a request to any of them answers 404.</p>
+    </section>
+
+  </div>
+
+  <section class="log">
+    <h2>Response log <button type="button" id="clear-log">Clear log</button></h2>
+    <p class="hint">The newest request is at the top. The file picker is filtered to the accepted extensions and nothing else here checks the fields first, so what shows is what the server answered.</p>
+    <ol id="log"></ol>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

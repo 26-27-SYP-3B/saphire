@@ -4,12 +4,16 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"math"
+	"net"
 	"net/http"
 	"net/netip"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -52,7 +56,7 @@ func normalizeUsername(name string) string {
 // validateRegistration returns an error describing the first problem with the
 // input, or nil if it is acceptable.
 func validateRegistration(req *RegistrationRequest) error {
-	if len(req.Username) < minUsernameLen || len(req.Username) > maxUsernameLen {
+	if n := utf8.RuneCountInString(req.Username); n < minUsernameLen || n > maxUsernameLen {
 		return errors.New("username must be 3-32 characters")
 	}
 	if !usernamePattern.MatchString(req.Username) {
@@ -91,13 +95,20 @@ func newRateLimiter(capacity int, refill time.Duration) *rateLimiter {
 	return &rateLimiter{buckets: make(map[netip.Addr]*tokenBucket), capacity: capacity, refill: refill}
 }
 
-func (l *rateLimiter) allow(ip netip.Addr) bool {
+// allow reports whether a request from ip fits in the bucket. When it does not,
+// the second value is the seconds until the next token refills, so a handler can
+// answer with an honest Retry-After instead of a fixed guess that overstates the
+// wait. A bucket that has been idle long enough to be fully refilled is
+// equivalent to a fresh one, so stale entries are pruned to keep the map bounded
+// to IPs that are actually active.
+func (l *rateLimiter) allow(ip netip.Addr) (bool, int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	now := time.Now()
 	b := l.buckets[ip]
 	if b == nil {
+		l.prune(now)
 		b = &tokenBucket{tokens: float64(l.capacity), last: now}
 		l.buckets[ip] = b
 	}
@@ -109,10 +120,19 @@ func (l *rateLimiter) allow(ip netip.Addr) bool {
 	b.last = now
 
 	if b.tokens < 1 {
-		return false
+		return false, int(math.Ceil((1.0 - b.tokens) * l.refill.Seconds()))
 	}
 	b.tokens--
-	return true
+	return true, 0
+}
+
+func (l *rateLimiter) prune(now time.Time) {
+	idle := time.Duration(l.capacity) * l.refill
+	for ip, b := range l.buckets {
+		if now.Sub(b.last) >= idle {
+			delete(l.buckets, ip)
+		}
+	}
 }
 
 // clientIP extracts the peer address, optionally trusting X-Forwarded-For
@@ -123,15 +143,15 @@ func clientIP(r *http.Request) netip.Addr {
 			return addr
 		}
 	}
-	addr, err := netip.ParseAddr(r.RemoteAddr)
+	// RemoteAddr is "ip:port", and for IPv6 the address is bracketed, so
+	// split the port off properly instead of cutting at the last colon.
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		// RemoteAddr is normally "ip:port"; strip the port.
-		if i := strings.LastIndex(r.RemoteAddr, ":"); i > 0 {
-			addr, err = netip.ParseAddr(r.RemoteAddr[:i])
-		}
-		if err != nil {
-			return netip.Addr{} // unknown peer, share one bucket
-		}
+		host = r.RemoteAddr
+	}
+	addr, err := netip.ParseAddr(strings.Trim(host, "[]"))
+	if err != nil {
+		return netip.Addr{} // unknown peer, share one bucket
 	}
 	return addr
 }
@@ -143,8 +163,8 @@ func clientIP(r *http.Request) netip.Addr {
 func registerHandler(db *sql.DB, limiter *rateLimiter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ip := clientIP(r)
-		if !limiter.allow(ip) {
-			w.Header().Set("Retry-After", "60")
+		if ok, retry := limiter.allow(ip); !ok {
+			w.Header().Set("Retry-After", strconv.Itoa(retry))
 			writeError(w, http.StatusTooManyRequests, "too many registrations from this address, try again later")
 			return
 		}

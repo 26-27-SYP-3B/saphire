@@ -56,6 +56,12 @@ func OpenDB() (*sql.DB, error) {
 		return nil, err
 	}
 
+	// The library table lives in music.go, its domain file.
+	if err := ensureTrackTable(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+
 	return db, nil
 }
 

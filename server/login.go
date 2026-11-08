@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
+	"strconv"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -32,8 +32,8 @@ func mustDummyHash() string {
 func loginHandler(db *sql.DB, limiter *rateLimiter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ip := clientIP(r)
-		if !limiter.allow(ip) {
-			w.Header().Set("Retry-After", "60")
+		if ok, retry := limiter.allow(ip); !ok {
+			w.Header().Set("Retry-After", strconv.Itoa(retry))
 			writeError(w, http.StatusTooManyRequests, "too many logins from this address, try again later")
 			return
 		}
@@ -108,32 +108,15 @@ func loginHandler(db *sql.DB, limiter *rateLimiter) http.HandlerFunc {
 // "Authorization: Bearer <token>". This is how the client proves it is logged in.
 func sessionHandler(db *sql.DB, limiter *rateLimiter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !limiter.allow(clientIP(r)) {
-			w.Header().Set("Retry-After", "60")
+		if ok, retry := limiter.allow(clientIP(r)); !ok {
+			w.Header().Set("Retry-After", strconv.Itoa(retry))
 			writeError(w, http.StatusTooManyRequests, "too many requests from this address, try again later")
 			return
 		}
 
-		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") {
-			writeError(w, http.StatusUnauthorized, "authorization header with a Bearer token is missing")
-			return
-		}
-		token := strings.TrimPrefix(auth, "Bearer ")
-
-		session, err := FindSession(db, token)
-		if err != nil {
-			if errors.Is(err, ErrSessionNotFound) {
-				writeError(w, http.StatusUnauthorized, "session is not valid or expired")
-				return
-			}
-			writeError(w, http.StatusInternalServerError, "could not load session")
-			return
-		}
-
-		user, err := GetUserByID(db, session.UserID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "could not load user")
+		user, status, message := authenticate(db, r)
+		if user == nil {
+			writeError(w, status, message)
 			return
 		}
 
