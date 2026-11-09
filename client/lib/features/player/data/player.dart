@@ -12,10 +12,13 @@ import '../../upload/domain/track.dart';
 /// plugin has no platform there — the same reason the file picker is injected.
 typedef PlayAudio = Future<void> Function(String url, Map<String, String> headers);
 
+// One player for the app: a new AudioPlayer per song would keep one alive for
+// every song that was ever started.
+final _audio = AudioPlayer();
+
 Future<void> playWithJustAudio(String url, Map<String, String> headers) async {
-  final audio = AudioPlayer();
-  await audio.setAudioSource(AudioSource.uri(Uri.parse(url), headers: headers));
-  await audio.play();
+  await _audio.setAudioSource(AudioSource.uri(Uri.parse(url), headers: headers));
+  await _audio.play();
 }
 
 /// The song that is playing and the ones waiting behind it. Every screen shows the
