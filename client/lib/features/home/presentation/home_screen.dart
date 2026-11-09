@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -7,6 +8,11 @@ import 'package:go_router/go_router.dart';
 import '../../../shared/widgets/saphire_logo.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/user.dart';
+import '../../library/data/library_repository.dart';
+import '../../library/domain/library_entry.dart';
+import '../../player/data/queue_repository.dart';
+import '../../player/domain/player.dart';
+import '../../player/domain/queue.dart';
 import '../../upload/data/upload_repository.dart';
 import '../../upload/domain/track.dart';
 
@@ -47,7 +53,8 @@ String greetingFor(DateTime now) {
 
 /// What the page shows. The uploaded songs are real; the playlist rows are placeholder,
 /// because they would need the real playlists from GET /api/playlists, and this page does
-/// not load them — the Playlists page is where a playlist exists.
+/// not load them — the Playlists page is where a playlist exists. The only real songs on
+/// this page are the search results, which come from GET /api/music.
 const _placeholders = [
   (title: 'Lieblingssongs', meta: 'Playlist · 150 Songs', icon: Icons.favorite),
   (title: 'Workout', meta: 'Playlist · 87 Songs', icon: Icons.local_activity),
@@ -74,16 +81,27 @@ const _uploadHint = 'Erlaubt: MP3, WAV, M4A, OGG, OPUS, FLAC, AAC · höchstens 
 /// Upload, playlists and the queue reach the server; the playlist rows below are the
 /// placeholders from the mock, because there is no data behind them until a playlist is
 /// opened on the Playlists page.
+///
+/// The search field is the one place this page shows real songs: the server has no search
+/// endpoint, so the page reads the library once and filters what it got. The bar at the
+/// bottom shows what the shared player is playing — this page does not own a player, it
+/// only puts a song into the queue the player reads.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
     required this.repository,
     required this.uploads,
+    required this.library,
+    required this.queues,
+    required this.player,
     this.pickAudio = pickAudioFiles,
   });
 
   final AuthRepository repository;
   final UploadRepository uploads;
+  final LibraryRepository library;
+  final QueueRepository queues;
+  final QueuePlayer player;
   final PickAudio pickAudio;
 
   @override
@@ -92,6 +110,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final List<_UploadFile> _files = [];
+  List<LibraryEntry> _library = [];
   final TextEditingController _search = TextEditingController();
 
   // The message from the session check. What a single file got is on its own row.
@@ -99,17 +118,30 @@ class _HomeScreenState extends State<HomeScreen> {
   User? _user;
   // While the picker is open a second tap must not open it again.
   bool _picking = false;
+  // While a queue call is running the same tap must not start it again.
+  bool _busy = false;
+  StreamSubscription<void>? _changes;
 
   @override
   void initState() {
     super.initState();
+    // The player moves on its own when a song ends. Without a listener the bar would keep
+    // showing the song that just finished.
+    _changes = widget.player.changes.listen((_) {
+      if (mounted) setState(() {});
+    });
     // The name in the greeting is the account name, so it comes from the session
     // check: the session store holds only the token, nothing that says who we are.
     _loadUser();
+    // The search has nothing to filter until the library is here, so it is read once
+    // when the page opens rather than on every keystroke.
+    _loadLibrary();
   }
 
   @override
   void dispose() {
+    // The player belongs to the whole app, so only this page's listener is dropped here.
+    _changes?.cancel();
     _search.dispose();
     super.dispose();
   }
@@ -124,6 +156,16 @@ class _HomeScreenState extends State<HomeScreen> {
       // the router guard and the page then agree on the same session.
       widget.repository.logout();
       setState(() => _note = error.message);
+    }
+  }
+
+  Future<void> _loadLibrary() async {
+    try {
+      final library = await widget.library.list();
+      if (!mounted) return;
+      setState(() => _library = library);
+    } on LibraryException catch (error) {
+      if (mounted) setState(() => _note = error.message);
     }
   }
 
@@ -178,6 +220,40 @@ class _HomeScreenState extends State<HomeScreen> {
     return query.isEmpty || title.toLowerCase().contains(query);
   }
 
+  /// What the search field finds. The server has no search endpoint (api-docs.md, Upcoming),
+  /// so this filters the library the page loaded. Without a query nothing is a result, because
+  /// without a query the page shows its sections instead of a result list.
+  List<LibraryEntry> _results() {
+    final query = _search.text.trim().toLowerCase();
+    if (query.isEmpty) return const [];
+    return [for (final entry in _library) if (_matches(entry.title)) entry];
+  }
+
+  /// One action on the shared player at a time. The page rebuilds after every one of them:
+  /// a player that is only paused does not report anything, so a page that rebuilt only on
+  /// the tap itself would keep the icon from before the tap.
+  Future<void> _control(Future<void> Function() action) async {
+    if (_busy) return;
+
+    setState(() => _busy = true);
+    try {
+      await action();
+    } catch (error) {
+      // A player that cannot open a song is not a JSON error, so the message is ours there.
+      if (mounted) setState(() => _note = error is QueueException ? error.message : 'Das Lied konnte nicht gespielt werden: $error');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// Opening a search result fills the queue with that one song and plays it, the way the
+  /// Playlists page starts a playlist. The player only ever reads a queue, so a song picked
+  /// here and a song from a playlist play exactly the same way.
+  Future<void> _play(LibraryEntry entry) => _control(() async {
+    widget.player.queue.fill(await widget.queues.fill(QueueSource.track(entry.id)));
+    await widget.player.playCurrent();
+  });
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -187,6 +263,7 @@ class _HomeScreenState extends State<HomeScreen> {
       // Below this width the sidebar has no room, the content takes the screen.
       // For a phone the upgrade would be a drawer.
       final wide = constraints.maxWidth >= 760;
+      final results = _results();
 
       return Scaffold(
         backgroundColor: scheme.surface,
@@ -225,6 +302,10 @@ class _HomeScreenState extends State<HomeScreen> {
                             if (_note != null) ...[
                               const SizedBox(height: 16),
                               Text(_note!, style: TextStyle(color: scheme.error)),
+                            ],
+                            if (results.isNotEmpty) ...[
+                              _section('Suchergebnisse'),
+                              _row([for (final entry in results) _songCard(entry)]),
                             ],
                             _section('Eigene Dateien'),
                             _row([
@@ -352,8 +433,8 @@ class _HomeScreenState extends State<HomeScreen> {
           Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
           const SizedBox(width: 16),
           Expanded(
-            // The server has no search yet, so what is typed here only filters
-            // what this page already shows.
+            // The server has no search endpoint, so what is typed here filters the library
+            // this page loaded once (see the shortcut in library/data/library_repository.dart).
             child: TextField(
               controller: _search,
               onChanged: (_) => setState(() {}),
@@ -487,6 +568,16 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  /// A real library song: the same card as the placeholder rows, but it can be opened,
+  /// because a search result is something the user means to play. The line under the title
+  /// says where the row came from, so a real song can be told apart from a mock row.
+  Widget _songCard(LibraryEntry entry) {
+    return InkWell(
+      onTap: _busy ? null : () => _play(entry),
+      child: _card((title: entry.title, meta: 'Bibliothek', icon: Icons.audio_file)),
     );
   }
 
@@ -631,11 +722,14 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// The bar at the bottom: the song the shared player is playing. This page does not own a
+  /// player, so the bar shows the same queue the Playlists page filled, and its buttons go
+  /// through the same player. What the player cannot do — seek, repeat, shuffle — is not here.
   Widget _playerBar() {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-
-    // The player has no audio yet, so the controls show nothing and stay off.
+    final current = widget.player.queue.current;
+    final playing = widget.player.playing;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       decoration: BoxDecoration(border: Border(top: BorderSide(color: scheme.outline))),
@@ -647,16 +741,30 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Nichts wird abgespielt', style: theme.textTheme.labelLarge),
                 Text(
-                  'Lade ein Lied hoch, um etwas zu hören.',
+                  current == null ? 'Nichts wird abgespielt' : current.title,
+                  style: theme.textTheme.labelLarge,
+                ),
+                Text(
+                  widget.player.failure ??
+                      (current == null
+                          ? 'Suche ein Lied und öffne es, oder fülle die Warteschlange.'
+                          : 'Warteschlange · Slot ${current.position}'),
                   style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
                 ),
               ],
             ),
           ),
-          for (final icon in [Icons.shuffle, Icons.skip_previous, Icons.play_arrow, Icons.skip_next, Icons.repeat])
-            Icon(icon, color: scheme.onSurfaceVariant),
+          IconButton(
+            tooltip: playing ? 'Pause' : 'Abspielen',
+            onPressed: _busy ? null : () => _control(() => playing ? widget.player.pause() : widget.player.playCurrent()),
+            icon: Icon(playing ? Icons.pause : Icons.play_arrow),
+          ),
+          IconButton(
+            tooltip: 'Nächstes Lied',
+            onPressed: _busy ? null : () => _control(() => widget.player.next()),
+            icon: const Icon(Icons.skip_next),
+          ),
         ],
       ),
     );

@@ -4,6 +4,7 @@ import '../core/storage/session_store.dart';
 import '../features/auth/data/auth_repository.dart';
 import '../features/auth/presentation/auth_screen.dart';
 import '../features/home/presentation/home_screen.dart';
+import '../features/library/data/library_repository.dart';
 import '../features/playlists/data/playlist_repository.dart';
 import '../features/playlists/presentation/playlists_screen.dart';
 import '../features/player/data/queue_repository.dart';
@@ -23,6 +24,7 @@ import '../features/upload/data/upload_repository.dart';
 GoRouter buildRouter({
   required AuthRepository auth,
   required UploadRepository uploads,
+  required LibraryRepository library,
   required PlaylistRepository playlists,
   required QueueRepository queues,
   required PlaybackQueue queue,
@@ -51,7 +53,15 @@ GoRouter buildRouter({
       ),
       GoRoute(
         path: '/home',
-        builder: (context, state) => HomeScreen(repository: auth, uploads: uploads),
+        // The home bar shows the same queue and player as the queue page, so they are the
+        // shared ones rather than a second set built for this page.
+        builder: (context, state) => HomeScreen(
+          repository: auth,
+          uploads: uploads,
+          library: library,
+          queues: queues,
+          player: player,
+        ),
       ),
       GoRoute(
         path: '/playlists',

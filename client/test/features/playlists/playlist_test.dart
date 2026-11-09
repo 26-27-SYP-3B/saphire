@@ -55,6 +55,7 @@ Future<Wiring> openPlaylists(WidgetTester tester, {StubAdapter? playlists, StubA
   final router = buildRouter(
     auth: auth,
     uploads: UploadRepository(Dio(), session),
+    library: wiring.library,
     playlists: wiring.playlists,
     queues: wiring.queues,
     queue: wiring.queue,

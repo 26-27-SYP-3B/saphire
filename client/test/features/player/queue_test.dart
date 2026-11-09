@@ -38,6 +38,7 @@ Future<Wiring> openQueue(WidgetTester tester, {StubAdapter? queues, SongPlayer? 
   final router = buildRouter(
     auth: auth,
     uploads: UploadRepository(Dio(), store),
+    library: wiring.library,
     // Nothing here opens the playlists page, but the app is one piece and its pages share
     // the queue, so the test builds the app as main.dart does.
     playlists: wiring.playlists,

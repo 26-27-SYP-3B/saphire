@@ -52,6 +52,7 @@ Future<void> openLogin(WidgetTester tester, AuthRepository repository) async {
     SaphireApp(
       repository: repository,
       uploads: UploadRepository(Dio(), repository.session),
+      library: wiring.library,
       playlists: wiring.playlists,
       queues: wiring.queues,
       queue: wiring.queue,
@@ -200,6 +201,7 @@ void main() {
     final router = buildRouter(
       auth: repository,
       uploads: UploadRepository(Dio(), repository.session),
+      library: wiring.library,
       playlists: wiring.playlists,
       queues: wiring.queues,
       queue: wiring.queue,

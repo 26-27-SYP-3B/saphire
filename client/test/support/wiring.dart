@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 
 import 'package:saphire_client/core/storage/session_store.dart';
+import 'package:saphire_client/features/library/data/library_repository.dart';
 import 'package:saphire_client/features/playlists/data/playlist_repository.dart';
 import 'package:saphire_client/features/player/data/queue_repository.dart';
 import 'package:saphire_client/features/player/domain/player.dart';
@@ -17,9 +18,13 @@ class Wiring {
     this.session, {
     StubAdapter? playlistAdapter,
     StubAdapter? queueAdapter,
+    StubAdapter? libraryAdapter,
     SongPlayer? audio,
   }) : playlists = PlaylistRepository(dioWith(playlistAdapter), session),
-       queues = QueueRepository(dioWith(queueAdapter), session) {
+       queues = QueueRepository(dioWith(queueAdapter), session),
+       // A page that does not look at the library still needs the repository to exist, so
+       // the default answers an empty library instead of going to the network.
+       library = LibraryRepository(dioWith(libraryAdapter ?? StubAdapter(200, const [])), session) {
     // One queue and one player, the same way main.dart shares them: the page that filled
     // the list and the page that plays it look at the same object. A test that wants to
     // say "this song ended" keeps its own reference to the player it passed in.
@@ -30,6 +35,7 @@ class Wiring {
   final SessionStore session;
   final PlaylistRepository playlists;
   final QueueRepository queues;
+  final LibraryRepository library;
 
   late final PlaybackQueue queue;
   late final QueuePlayer player;
