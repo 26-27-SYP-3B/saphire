@@ -8,9 +8,13 @@ import '../domain/user.dart';
 /// Raised when an auth call fails: the message from the server, or our own
 /// explanation when the server was not reachable.
 class AuthException implements Exception {
-  AuthException(this.message);
+  AuthException(this.message, {this.offline = false});
 
   final String message;
+
+  /// True when the server could not be reached at all. Only this is "offline":
+  /// a server that answers with an error is reachable, it just says no.
+  final bool offline;
 
   @override
   String toString() => message;
@@ -23,6 +27,11 @@ class AuthRepository {
   final Dio _dio;
   final SessionStore session;
 
+  // The same message as everywhere else, plus whether the server was reachable at
+  // all — that is what the screen shows as offline.
+  AuthException _error(DioException failure) =>
+      AuthException(serverErrorMessage(failure), offline: failure.type == DioExceptionType.connectionError);
+
   /// POST /api/register, which creates the user and returns it including its id.
   Future<User> register({required String username, required String password}) async {
     Response response;
@@ -32,7 +41,7 @@ class AuthRepository {
         'password': password,
       });
     } on DioException catch (error) {
-      throw AuthException(serverErrorMessage(error));
+      throw _error(error);
     }
 
     return User.fromJson(response.data as Map<String, dynamic>);
@@ -49,7 +58,7 @@ class AuthRepository {
         'password': password,
       });
     } on DioException catch (error) {
-      throw AuthException(serverErrorMessage(error));
+      throw _error(error);
     }
 
     final data = response.data as Map<String, dynamic>;
@@ -67,7 +76,7 @@ class AuthRepository {
       );
       return User.fromJson(response.data as Map<String, dynamic>);
     } on DioException catch (error) {
-      throw AuthException(serverErrorMessage(error));
+      throw _error(error);
     }
   }
 
