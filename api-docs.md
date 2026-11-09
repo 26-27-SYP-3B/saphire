@@ -589,6 +589,10 @@ Planned, in rough order:
   that lets a user drag a song needs. Shuffle and repeat are not here: they are a device
   choice, not something the server can answer.
 - `PATCH /api/playlists/{id}` — rename a playlist. Creating and deleting are covered.
+- Search inside the library — `GET /api/music?q=<term>`, the same rows as the list but only
+  the ones whose title contains `q`, case-insensitive, ordered by title. `q` must not be
+  empty. This is what a page that searches needs: while the list has no search, the client
+  reads the whole library and filters what it got.
 - Pagination for `GET /api/music` and `GET /api/playlists`, once one answer is too much.
   The current caps (200 songs per playlist, 200 entries per queue) keep one answer
   bounded until then.
