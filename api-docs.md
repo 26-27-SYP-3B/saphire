@@ -350,7 +350,10 @@ POST /api/playlists
 Authorization: Bearer <token>
 ```
 
-Body: one JSON object with `name`, at most 4 KiB, `DisallowUnknownFields`.
+Body: one JSON object with `name`, at most 4 KiB, `DisallowUnknownFields`. Trailing content
+after the object is a separate 400 with `{"error": "body must contain exactly one JSON
+object"}` — the same rule and the same message the register endpoint gives, and every
+playlist and queue body is read this way.
 
 **Response shape**
 
@@ -428,9 +431,8 @@ Authorization: Bearer <token>
 
 Adds one library song at the end and answers the position it got. The song must be in
 the library, and the playlist must be the caller's. Counting and inserting happen in one
-transaction, so two callers cannot be given the same position. Two writes that meet wait
-for each other briefly (`busy_timeout`), so the second gets its position instead of a
-server error.
+transaction on one connection, so two callers cannot be given the same position: a second
+write waits for the first (`busy_timeout`) instead of answering a server error.
 
 ```
 POST /api/playlists/{id}/songs

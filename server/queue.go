@@ -15,7 +15,7 @@ const maxQueueEntries = 200
 
 // ErrQueueFull is the same limit seen from the other side: adding past it is refused
 // rather than silently dropping the song.
-var ErrQueueFull = errors.New("the queue holds at most 200 songs")
+var ErrQueueFull = errors.New("the queue holds at most " + strconv.Itoa(maxQueueEntries) + " songs")
 
 // QueueEntry is one row of "queue_entry": a song at a position in one user's queue.
 // The queue stores only the order and the songs. It does not store what filled it,

@@ -12,7 +12,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-
 func main() {
 	_ = godotenv.Load()
 

@@ -20,11 +20,13 @@ const (
 
 // What a playlist function can report. Each of these is a reason the answer can name,
 // so the client is told which one it is instead of a driver error. Their text is the
-// wording in api-docs.md.
+// wording in api-docs.md, and the number in it comes from the same constant the check
+// uses — otherwise raising the cap would make the answer lie.
 var (
-	ErrPlaylistNotYours = errors.New("playlist is not in your playlists")
-	ErrSongNotInLibrary = errors.New("song is not in the library")
-	ErrPlaylistFull     = errors.New("a playlist holds at most 200 songs")
+	ErrPlaylistNotYours    = errors.New("playlist is not in your playlists")
+	ErrSongNotInLibrary    = errors.New("song is not in the library")
+	ErrPlaylistFull        = errors.New("a playlist holds at most " + strconv.Itoa(maxPlaylistSongs) + " songs")
+	ErrPlaylistNameTooLong = errors.New("a playlist name is at most " + strconv.Itoa(maxPlaylistNameLen) + " characters")
 )
 
 // positionNotThere names the slot it is about, so the answer says which position was
@@ -427,7 +429,7 @@ func createPlaylistHandler(db *sql.DB, limiter *rateLimiter) http.HandlerFunc {
 
 		name, ok := cleanPlaylistName(req.Name)
 		if !ok {
-			writeError(w, http.StatusBadRequest, "a playlist name is at most 100 characters")
+			writeError(w, http.StatusBadRequest, ErrPlaylistNameTooLong.Error())
 			return
 		}
 		if name == "" {

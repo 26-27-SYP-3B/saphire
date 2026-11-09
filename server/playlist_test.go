@@ -300,8 +300,10 @@ func TestAddPlaylistSong(t *testing.T) {
 		t.Errorf("unknown field -> %d (%s), wanted 400", rec.Code, rec.Body)
 	}
 
-	// The cap is a real limit, not a silent drop.
-	for i := 0; i < maxPlaylistSongs; i++ {
+	// The cap is a real limit, not a silent drop. Two songs are already there, so the loop
+	// fills to the cap and the request below is the one that crosses it. Positions stay 1..n,
+	// the contiguity these tests are about.
+	for i := 2; i < maxPlaylistSongs; i++ {
 		if _, err := db.Exec(`INSERT INTO playlist_song (playlist_id, track_id, position, added_at) VALUES (?, ?, ?, ?)`,
 			playlist.ID, two.ID, i+1, 1); err != nil {
 			t.Fatalf("insert row %d: %v", i+1, err)

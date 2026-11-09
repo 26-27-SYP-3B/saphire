@@ -26,14 +26,21 @@ func OpenDB() (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// One connection, on purpose. SQLite lets one writer at a time, and a ":memory:"
+	// database is a different database on every connection. With a single connection the
+	// count and the insert that give a position are one uninterrupted piece of work, so two
+	// callers cannot be handed the same number, and a pragma belongs to the connection every
+	// request uses. Requests are served one at a time, which is what this server needs.
+	db.SetMaxOpenConns(1)
+
 	if err := db.Ping(); err != nil {
 		db.Close()
 		return nil, err
 	}
 
-	// SQLite lets one writer at a time. Without this, two clients that write at the same
-	// moment (two songs added to one queue) would answer the second with a server error
-	// instead of the position it asked for. Waiting briefly is what keeps the answer honest.
+	// Two writes that meet would otherwise answer the second with a server error instead of
+	// the position it asked for; waiting briefly is what keeps the answer honest.
 	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
 		db.Close()
 		return nil, err

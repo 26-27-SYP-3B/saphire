@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -274,7 +275,9 @@ func TestAppendQueueEntry(t *testing.T) {
 		t.Errorf("two objects -> %d (%s), wanted 400", rec.Code, rec.Body)
 	}
 
-	for i := 0; i < maxQueueEntries; i++ {
+	// Two rows are already there, so the loop fills to the cap and the request below is the
+	// one that crosses it. Positions stay 1..n, the contiguity this test is about.
+	for i := 2; i < maxQueueEntries; i++ {
 		if _, err := db.Exec(`INSERT INTO queue_entry (user_id, position, track_id, added_at) VALUES (?, ?, ?, ?)`,
 			testUserID(t, db, "lukas"), i+1, track.ID, 1); err != nil {
 			t.Fatalf("insert row %d: %v", i+1, err)
@@ -284,6 +287,55 @@ func TestAppendQueueEntry(t *testing.T) {
 	rec = postJSON(t, handler, "/api/queue/songs", token, `{"track_id": `+itoa(track.ID)+`}`)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "holds at most 200 songs") {
 		t.Errorf("adding past the cap -> %d (%s), wanted 400 naming the cap", rec.Code, rec.Body)
+	}
+}
+
+// TestTwoAppendsDoNotGetTheSamePosition: counting and inserting are one piece of work, so
+// two callers writing at the same moment cannot be handed the same number. This only holds
+// while the write path has one connection — with a pool, the second goroutine gets a second
+// connection, and a ":memory:" database is a different database on each one.
+func TestTwoAppendsDoNotGetTheSamePosition(t *testing.T) {
+	db := openTestDB(t)
+	handler := queueMux(db, newRateLimiter(100, time.Second))
+	upload := uploadHandler(db, t.TempDir(), newRateLimiter(100, time.Second))
+	token := testToken(t, db, "lukas")
+	userID := testUserID(t, db, "lukas")
+
+	one := uploadTrack(t, upload, token, "a.wav")
+	two := uploadTrack(t, upload, token, "b.wav")
+
+	var wg sync.WaitGroup
+	results := make([]*QueueEntry, 2)
+	errs := make([]error, 2)
+
+	wg.Add(2)
+	for i, track := range []int64{one.ID, two.ID} {
+		go func(i int, trackID int64) {
+			defer wg.Done()
+			results[i], errs[i] = AppendQueueEntry(db, userID, trackID)
+		}(i, track)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("write %d answered %v, wanted a position", i+1, err)
+		}
+	}
+
+	positions := map[int]bool{results[0].Position: true, results[1].Position: true}
+	if len(positions) != 2 {
+		t.Errorf("both callers got position %d, wanted 1 and 2", results[0].Position)
+	}
+
+	entries := readQueue(t, handler, token)
+	if len(entries) != 2 {
+		t.Fatalf("the queue has %d rows, wanted 2", len(entries))
+	}
+	for _, entry := range entries {
+		if entry.Position < 1 || entry.Position > 2 {
+			t.Errorf("row at position %d, wanted a position in 1..2", entry.Position)
+		}
 	}
 }
 
