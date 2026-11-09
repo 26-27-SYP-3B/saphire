@@ -1,18 +1,14 @@
-import 'dart:typed_data';
-
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/utils/pick_audio.dart';
+import '../../../shared/widgets/player_bar.dart';
 import '../../../shared/widgets/saphire_logo.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/user.dart';
+import '../../player/data/player.dart';
 import '../../upload/data/upload_repository.dart';
 import '../../upload/domain/track.dart';
-
-/// A picked song: the name the server would store as the title and its bytes.
-typedef PickedAudio = ({String name, Uint8List bytes});
-typedef PickAudio = Future<List<PickedAudio>?> Function();
 
 /// One file in the upload window: what it is, how far it got, what the server
 /// said about it. Every picked file keeps its own row, so the results do not mix.
@@ -23,19 +19,6 @@ class _UploadFile {
   int percent = 0;
   String? error;
   Track? track;
-}
-
-/// The picker used when the screen is started without one. A widget test passes
-/// its own, because the plugin cannot answer there. Any file can be picked,
-/// because which formats are allowed is the server's decision (see server/music.go);
-/// a file it refuses comes back as its message and is shown on that file's row.
-Future<List<PickedAudio>?> pickAudioFiles() async {
-  final picked = await FilePicker.pickFiles(type: FileType.any);
-  if (picked.isEmpty) return null;
-
-  // shortcut: the whole file is held in memory. Upgrade: stream from the path on
-  // the platforms that give one, so a 500 MiB song is not read twice.
-  return [for (final file in picked) (name: file.name, bytes: await file.readAsBytes())];
 }
 
 /// The greeting follows the time of day.
@@ -56,9 +39,10 @@ const _placeholders = [
 ];
 
 const _navItems = [
-  (label: 'Home', icon: Icons.home, selected: true),
-  (label: 'Suche', icon: Icons.search, selected: false),
-  (label: 'Bibliothek', icon: Icons.library_books, selected: false),
+  (label: 'Home', icon: Icons.home, to: '/home'),
+  // No search screen yet, so this one stays a label.
+  (label: 'Suche', icon: Icons.search, to: ''),
+  (label: 'Bibliothek', icon: Icons.library_books, to: '/library'),
 ];
 
 /// What the server accepts (server/music.go): the client only says it up front,
@@ -73,11 +57,13 @@ class HomeScreen extends StatefulWidget {
     super.key,
     required this.repository,
     required this.uploads,
+    required this.player,
     this.pickAudio = pickAudioFiles,
   });
 
   final AuthRepository repository;
   final UploadRepository uploads;
+  final Player player;
   final PickAudio pickAudio;
 
   @override
@@ -233,7 +219,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                     ),
-                    _playerBar(),
+                    PlayerBar(player: widget.player),
                   ],
                 ),
               ),
@@ -260,7 +246,8 @@ class _HomeScreenState extends State<HomeScreen> {
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
               child: SaphireLogo(size: 44),
             ),
-            for (final item in _navItems) _navItem(item.label, item.icon, selected: item.selected),
+            for (final item in _navItems)
+              _navItem(item.label, item.icon, selected: item.to == '/home', to: item.to),
             _heading('Deine Inhalte'),
             for (final item in [
               (label: 'Eigene Dateien', icon: Icons.add),
@@ -309,19 +296,22 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _navItem(String label, IconData icon, {bool selected = false}) {
+  Widget _navItem(String label, IconData icon, {bool selected = false, String to = ''}) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
+    final row = Row(
+      children: [
+        Icon(icon, size: 20, color: selected ? scheme.primary : scheme.onSurfaceVariant),
+        const SizedBox(width: 14),
+        Flexible(child: Text(label, style: theme.textTheme.labelLarge)),
+      ],
+    );
+
+    // Only what has a screen behind it can be tapped.
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
-      child: Row(
-        children: [
-          Icon(icon, size: 20, color: selected ? scheme.primary : scheme.onSurfaceVariant),
-          const SizedBox(width: 14),
-          Flexible(child: Text(label, style: theme.textTheme.labelLarge)),
-        ],
-      ),
+      child: to.isEmpty ? row : InkWell(onTap: () => context.go(to), child: row),
     );
   }
 
@@ -615,37 +605,6 @@ class _HomeScreenState extends State<HomeScreen> {
         borderRadius: BorderRadius.circular(8),
       ),
       child: Icon(icon, size: 18, color: scheme.onSurfaceVariant),
-    );
-  }
-
-  Widget _playerBar() {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-
-    // The player has no audio yet, so the controls show nothing and stay off.
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-      decoration: BoxDecoration(border: Border(top: BorderSide(color: scheme.outline))),
-      child: Row(
-        children: [
-          Icon(Icons.audio_file, size: 22, color: scheme.onSurfaceVariant),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Nichts wird abgespielt', style: theme.textTheme.labelLarge),
-                Text(
-                  'Lade ein Lied hoch, um etwas zu hören.',
-                  style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-                ),
-              ],
-            ),
-          ),
-          for (final icon in [Icons.shuffle, Icons.skip_previous, Icons.play_arrow, Icons.skip_next, Icons.repeat])
-            Icon(icon, color: scheme.onSurfaceVariant),
-        ],
-      ),
     );
   }
 

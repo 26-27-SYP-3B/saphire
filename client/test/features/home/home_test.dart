@@ -6,8 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:saphire_client/core/storage/session_store.dart';
+import 'package:saphire_client/core/utils/pick_audio.dart';
 import 'package:saphire_client/features/auth/data/auth_repository.dart';
 import 'package:saphire_client/features/home/presentation/home_screen.dart';
+import 'package:saphire_client/features/player/data/player.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
 
 import '../../support/stub_adapter.dart';
@@ -53,6 +55,8 @@ Future<SessionStore> openHome(
       home: HomeScreen(
         repository: AuthRepository(Dio()..httpClientAdapter = StubAdapter(userStatus, userBody), session),
         uploads: UploadRepository(Dio()..httpClientAdapter = uploads ?? StubAdapter(uploadStatus, uploadBody), session),
+        // Nothing really plays in a test, so the player only records what it was given.
+        player: Player(session, (url, headers) async {}),
         pickAudio: pickAudio ?? pickedFiles,
       ),
     ),

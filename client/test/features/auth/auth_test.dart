@@ -9,6 +9,9 @@ import 'package:saphire_client/features/auth/data/auth_repository.dart';
 import 'package:saphire_client/features/auth/domain/user.dart';
 import 'package:saphire_client/features/auth/presentation/auth_screen.dart';
 import 'package:saphire_client/features/home/presentation/home_screen.dart';
+import 'package:saphire_client/features/library/data/library_repository.dart';
+import 'package:saphire_client/features/playlists/data/playlist_store.dart';
+import 'package:saphire_client/features/player/data/player.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
 
 import '../../support/stub_adapter.dart';
@@ -45,7 +48,13 @@ Future<void> openLogin(WidgetTester tester, AuthRepository repository) async {
   // Nothing uploads in these tests, the start page only needs the repository to
   // exist.
   await tester.pumpWidget(
-    SaphireApp(repository: repository, uploads: UploadRepository(Dio(), repository.session)),
+    SaphireApp(
+      repository: repository,
+      uploads: UploadRepository(Dio(), repository.session),
+      library: LibraryRepository(Dio(), repository.session),
+      playlists: PlaylistStore(),
+      player: Player(repository.session, (url, headers) async {}),
+    ),
   );
 }
 
@@ -184,7 +193,13 @@ void main() {
   // navigation stays on the login.
   testWidgets('the home screen is guarded while no session exists', (tester) async {
     final repository = FakeRepository(null);
-    final router = buildRouter(repository, UploadRepository(Dio(), repository.session));
+    final router = buildRouter(
+      repository,
+      UploadRepository(Dio(), repository.session),
+      LibraryRepository(Dio(), repository.session),
+      PlaylistStore(),
+      Player(repository.session, (url, headers) async {}),
+    );
     await tester.pumpWidget(MaterialApp.router(routerConfig: router));
     await tester.pumpAndSettle();
 

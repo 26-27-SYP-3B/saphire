@@ -3,13 +3,23 @@ import 'package:go_router/go_router.dart';
 import '../features/auth/data/auth_repository.dart';
 import '../features/auth/presentation/auth_screen.dart';
 import '../features/home/presentation/home_screen.dart';
+import '../features/library/data/library_repository.dart';
+import '../features/library/presentation/library_screen.dart';
+import '../features/player/data/player.dart';
+import '../features/playlists/data/playlist_store.dart';
 import '../features/upload/data/upload_repository.dart';
 
 /// Anmeldung und Registrierung: gleiche Felder, zwei Routen, beide Seiten
 /// verlinken sich gegenseitig. Nach einer erfolgreichen Anmeldung oder
 /// Registrierung geht es auf die Startseite – aber nur mit einer gültigen
 /// Session, ohne sie bleibt die app auf der Anmeldung.
-GoRouter buildRouter(AuthRepository repository, UploadRepository uploads) {
+GoRouter buildRouter(
+  AuthRepository repository,
+  UploadRepository uploads,
+  LibraryRepository library,
+  PlaylistStore playlists,
+  Player player,
+) {
   return GoRouter(
     initialLocation: '/login',
     redirect: (context, state) {
@@ -32,7 +42,20 @@ GoRouter buildRouter(AuthRepository repository, UploadRepository uploads) {
       ),
       GoRoute(
         path: '/home',
-        builder: (context, state) => HomeScreen(repository: repository, uploads: uploads),
+        builder: (context, state) => HomeScreen(
+          repository: repository,
+          uploads: uploads,
+          player: player,
+        ),
+      ),
+      GoRoute(
+        path: '/library',
+        builder: (context, state) => LibraryScreen(
+          library: library,
+          player: player,
+          playlists: playlists,
+          uploads: uploads,
+        ),
       ),
     ],
   );
