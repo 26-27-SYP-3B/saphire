@@ -19,6 +19,10 @@ abstract interface class SongPlayer {
   Stream<void> get completed;
 
   bool get playing;
+
+  /// Releases the audio object behind the player. The queue is the only thing that holds a
+  /// player for the life of the app, so this is where it is closed.
+  Future<void> dispose();
 }
 
 /// Plays a queue: the entry that is current, then the next one when a song ends. It
@@ -114,11 +118,12 @@ class QueuePlayer {
     _changes.add(null);
   }
 
-  void dispose() {
+  Future<void> dispose() async {
     for (final subscription in _subscriptions) {
       subscription.cancel();
     }
     _subscriptions.clear();
-    _changes.close();
+    await _changes.close();
+    await player.dispose();
   }
 }

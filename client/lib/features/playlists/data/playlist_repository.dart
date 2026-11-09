@@ -8,9 +8,13 @@ import '../domain/playlist.dart';
 /// Raised when a playlist call fails. The message is the server's own, so what the page
 /// shows is what api-docs.md describes.
 class PlaylistException implements Exception {
-  PlaylistException(this.message);
+  PlaylistException(this.message, [this.statusCode]);
 
   final String message;
+
+  /// What the server answered with. Only a 401 says the token is gone, so a page may drop
+  /// the session on that status alone — a 429 or a 400 is not a lost login.
+  final int? statusCode;
 
   @override
   String toString() => message;
@@ -41,7 +45,7 @@ class PlaylistRepository {
       );
       return Playlist.fromJson(response.data as Map<String, dynamic>);
     } on DioException catch (error) {
-      throw PlaylistException(serverErrorMessage(error));
+      throw PlaylistException(serverErrorMessage(error), error.response?.statusCode);
     }
   }
 
@@ -56,7 +60,7 @@ class PlaylistRepository {
           .map((entry) => Playlist.fromJson(entry as Map<String, dynamic>))
           .toList();
     } on DioException catch (error) {
-      throw PlaylistException(serverErrorMessage(error));
+      throw PlaylistException(serverErrorMessage(error), error.response?.statusCode);
     }
   }
 
@@ -68,7 +72,7 @@ class PlaylistRepository {
       );
       return PlaylistWithSongs.fromJson(response.data as Map<String, dynamic>);
     } on DioException catch (error) {
-      throw PlaylistException(serverErrorMessage(error));
+      throw PlaylistException(serverErrorMessage(error), error.response?.statusCode);
     }
   }
 
@@ -83,7 +87,7 @@ class PlaylistRepository {
       );
       return PlaylistSong.fromJson(response.data as Map<String, dynamic>);
     } on DioException catch (error) {
-      throw PlaylistException(serverErrorMessage(error));
+      throw PlaylistException(serverErrorMessage(error), error.response?.statusCode);
     }
   }
 
@@ -96,7 +100,7 @@ class PlaylistRepository {
         options: Options(headers: _headers),
       );
     } on DioException catch (error) {
-      throw PlaylistException(serverErrorMessage(error));
+      throw PlaylistException(serverErrorMessage(error), error.response?.statusCode);
     }
   }
 
@@ -108,7 +112,7 @@ class PlaylistRepository {
         options: Options(headers: _headers),
       );
     } on DioException catch (error) {
-      throw PlaylistException(serverErrorMessage(error));
+      throw PlaylistException(serverErrorMessage(error), error.response?.statusCode);
     }
   }
 }

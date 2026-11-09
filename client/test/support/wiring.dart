@@ -33,6 +33,11 @@ class Wiring {
 
   late final PlaybackQueue queue;
   late final QueuePlayer player;
+
+  /// Closes what a test opened: the player's subscriptions and its stream, and the audio
+  /// object behind it. A test that passed its own player in still closes it separately;
+  /// closing it twice is harmless.
+  Future<void> dispose() => player.dispose();
 }
 
 /// A session that is still valid, so the guard lets a test reach the feature pages.

@@ -65,9 +65,9 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
       });
     } on PlaylistException catch (error) {
       if (!mounted) return;
-      // The server said this token is gone, so the app must not keep it: the router
-      // guard and the page then agree on the same session.
-      widget.session.clear();
+      // Only a 401 says this token is gone; a 429 or a 400 is not a lost login. When the
+      // app does drop it, the guard and the page agree on the same session.
+      if (error.statusCode == 401) widget.session.clear();
       setState(() {
         _note = error.message;
         _busy = false;

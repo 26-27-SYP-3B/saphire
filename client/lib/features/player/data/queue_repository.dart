@@ -7,9 +7,13 @@ import '../domain/queue.dart';
 
 /// Raised when a queue call fails.
 class QueueException implements Exception {
-  QueueException(this.message);
+  QueueException(this.message, [this.statusCode]);
 
   final String message;
+
+  /// What the server answered with. Only a 401 says the token is gone, so a page may drop
+  /// the session on that status alone — a 429 or a 400 is not a lost login.
+  final int? statusCode;
 
   @override
   String toString() => message;
@@ -42,7 +46,7 @@ class QueueRepository {
       );
       return _entries(response.data);
     } on DioException catch (error) {
-      throw QueueException(serverErrorMessage(error));
+      throw QueueException(serverErrorMessage(error), error.response?.statusCode);
     }
   }
 
@@ -53,7 +57,7 @@ class QueueRepository {
       final response = await _dio.get('$apiBaseUrl/api/queue', options: Options(headers: _headers));
       return _entries(response.data);
     } on DioException catch (error) {
-      throw QueueException(serverErrorMessage(error));
+      throw QueueException(serverErrorMessage(error), error.response?.statusCode);
     }
   }
 
@@ -66,7 +70,7 @@ class QueueRepository {
       );
       return QueueEntry.fromJson(response.data as Map<String, dynamic>);
     } on DioException catch (error) {
-      throw QueueException(serverErrorMessage(error));
+      throw QueueException(serverErrorMessage(error), error.response?.statusCode);
     }
   }
 
@@ -76,7 +80,7 @@ class QueueRepository {
     try {
       await _dio.delete('$apiBaseUrl/api/queue/$position', options: Options(headers: _headers));
     } on DioException catch (error) {
-      throw QueueException(serverErrorMessage(error));
+      throw QueueException(serverErrorMessage(error), error.response?.statusCode);
     }
   }
 
@@ -84,7 +88,7 @@ class QueueRepository {
     try {
       await _dio.delete('$apiBaseUrl/api/queue', options: Options(headers: _headers));
     } on DioException catch (error) {
-      throw QueueException(serverErrorMessage(error));
+      throw QueueException(serverErrorMessage(error), error.response?.statusCode);
     }
   }
 

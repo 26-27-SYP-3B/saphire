@@ -32,7 +32,7 @@ Future<Wiring> openQueue(WidgetTester tester, {StubAdapter? queues, SongPlayer? 
 
   final store = session ?? loggedIn();
   final wiring = Wiring(store, queueAdapter: queues, audio: audio);
-  addTearDown(wiring.player.dispose);
+  addTearDown(wiring.dispose);
 
   final auth = AuthRepository(Dio(), store);
   final router = buildRouter(
@@ -399,5 +399,64 @@ void main() {
 
     expect(find.text('session is not valid or expired'), findsOneWidget);
     expect(wiring.session.isLoggedIn, isFalse);
+  });
+
+  // Only a 401 says the token is gone. A rate limit is not a lost login: the page shows the
+  // message and stays signed in.
+  testWidgets('a rate limit shows the message without signing the user out', (tester) async {
+    final wiring = await openQueue(
+      tester,
+      queues: StubAdapter(429, {'error': 'too many requests from this address, try again later'}),
+      session: loggedIn(),
+    );
+
+    expect(find.textContaining('too many requests'), findsOneWidget);
+    expect(wiring.session.isLoggedIn, isTrue);
+  });
+
+  // What a device is playing is its own, the server does not know it. A refresh may not
+  // lose it: the page keeps pointing at the same song where the server now has it.
+  testWidgets('a refresh keeps pointing at the song that is playing', (tester) async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final adapter = StubAdapter(200, queueAnswer);
+    adapter.queue.addAll([
+      (200, queueAnswer),
+      // Another device put the same song at a different slot.
+      (200, [queueAnswer.last, queueAnswer.first]),
+    ]);
+
+    final wiring = await openQueue(tester, queues: adapter, audio: fake);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Spielen'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(TextButton, 'Aktualisieren'));
+    await tester.pumpAndSettle();
+
+    expect(wiring.queue.current?.trackId, 8);
+    expect(find.textContaining('Gerade: Technogal.mp3'), findsOneWidget);
+    expect(fake.stopped, isEmpty);
+  });
+
+  // A song that is no longer in the list cannot be the current row. Then the audio stops
+  // with it, so the page and the audio say the same thing.
+  testWidgets('a refresh stops the audio when the playing song is gone from the list', (tester) async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final adapter = StubAdapter(200, queueAnswer);
+    adapter.queue.addAll([(200, queueAnswer), (200, [queueAnswer.last])]);
+
+    final wiring = await openQueue(tester, queues: adapter, audio: fake);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Spielen'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(TextButton, 'Aktualisieren'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Kein Lied wird gespielt'), findsOneWidget);
+    expect(fake.stopped, ['$apiBaseUrl/api/music/8']);
+    expect(wiring.queue.current, isNull);
   });
 }

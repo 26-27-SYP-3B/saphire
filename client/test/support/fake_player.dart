@@ -53,5 +53,6 @@ class FakePlayer implements SongPlayer {
   /// Says "this song ended", which is what moves a queue to the next entry.
   void complete() => _completed.add(null);
 
+  @override
   Future<void> dispose() => _completed.close();
 }

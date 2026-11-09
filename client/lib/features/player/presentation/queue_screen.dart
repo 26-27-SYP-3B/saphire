@@ -63,21 +63,39 @@ class _QueueScreenState extends State<QueueScreen> {
     try {
       final entries = await widget.queues.read();
       if (!mounted) return;
+
+      // What this device is playing is its own: the server keeps the order, not the slot a
+      // device is at. A refresh must not lose that. If the song is still in the list the
+      // page keeps pointing at it; if it is gone, the audio stops with it, so the page and
+      // the audio say the same thing.
+      final current = widget.player.playing ? widget.queue.current : null;
+      var keep = -1;
+      for (var i = 0; i < entries.length; i++) {
+        if (current != null && entries[i].trackId == current.trackId) {
+          keep = i;
+          break;
+        }
+      }
+
       setState(() {
         widget.queue.fill(entries);
+        widget.queue.index = keep;
         _note = entries.isEmpty ? 'Die Warteschlange ist leer. Starte eine Playlist oder füge ein Lied hinzu.' : null;
         _busy = false;
       });
+
+      if (current != null && keep < 0) await widget.player.stop();
     } on QueueException catch (error) {
       if (!mounted) return;
-      widget.session.clear();
+      // Only a 401 says this token is gone; a 429 or a 400 is not a lost login. When the
+      // app does drop it, the guard and the page agree on the same session.
+      if (error.statusCode == 401) widget.session.clear();
       setState(() {
         _note = error.message;
         _busy = false;
       });
     }
   }
-
   Future<void> _play() async {
     if (widget.queue.isEmpty) {
       setState(() => _note = 'Die Warteschlange ist leer, es gibt nichts zu spielen.');

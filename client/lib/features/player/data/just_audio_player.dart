@@ -32,5 +32,6 @@ class JustAudioPlayer implements SongPlayer {
   @override
   bool get playing => _player.playing;
 
+  @override
   Future<void> dispose() => _player.dispose();
 }

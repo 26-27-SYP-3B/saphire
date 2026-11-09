@@ -48,7 +48,7 @@ Future<Wiring> openPlaylists(WidgetTester tester, {StubAdapter? playlists, StubA
 
   final session = loggedIn();
   final wiring = Wiring(session, playlistAdapter: playlists, queueAdapter: queues);
-  addTearDown(wiring.player.dispose);
+  addTearDown(wiring.dispose);
 
   // The guard only reads the session, so a repository that is never called is enough.
   final auth = AuthRepository(Dio(), session);
@@ -123,10 +123,10 @@ void main() {
     expect(adapter.lastOptions?.data, {'track_id': 8});
   });
 
-  // A 204 has no body, so a delete must not try to read one. The stub always answers with
-  // a body; what is tested is that the repository does not look at it.
+  // A 204 has no body, so a delete must not try to read one. The stub answers with something
+  // that is not an object: a repository that looked at the body would fail on it here.
   test('a 204 delete is not read as an error', () async {
-    final adapter = StubAdapter(204, {});
+    final adapter = StubAdapter(204, 'the server sends no body for a 204');
     final repository = PlaylistRepository(Dio()..httpClientAdapter = adapter, loggedIn());
 
     await repository.removeSong(1, 2);
@@ -358,6 +358,17 @@ void main() {
     expect(find.text('lied.wav'), findsOneWidget);
     expect(wiring.queue.length, 2);
     expect(wiring.queue.entries.map((entry) => entry.trackId), [8, 4]);
+  });
+
+  testWidgets('a rate limit shows the message without signing the user out', (tester) async {
+    final wiring = await openPlaylists(
+      tester,
+      playlists: StubAdapter(429, {'error': 'too many requests from this address, try again later'}),
+    );
+
+    expect(find.textContaining('too many requests'), findsOneWidget);
+    // A rate limit is not a lost login; only a 401 drops the session.
+    expect(wiring.session.isLoggedIn, isTrue);
   });
 
   testWidgets('a playlist of another user is shown as the server explains it', (tester) async {
