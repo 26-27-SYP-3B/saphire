@@ -5,10 +5,13 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:saphire_client/core/config/api_config.dart';
 import 'package:saphire_client/features/auth/data/auth_repository.dart';
 import 'package:saphire_client/features/home/presentation/home_screen.dart';
+import 'package:saphire_client/features/player/domain/player.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
 
+import '../../support/fake_player.dart';
 import '../../support/stub_adapter.dart';
 import '../../support/wiring.dart';
 
@@ -41,8 +44,9 @@ const oneSongQueue = [
 ];
 
 /// Opens the start page with a valid session, so the greeting has a name, and hands the
-/// wiring back so a test can check what the page does with the session and the adapters it
-/// was given.
+/// wiring back so a test can check what the page does with the session, the adapters and
+/// the player it was given. The player is the one the app shares, so a test can say "this
+/// song ended" and see what the bar shows.
 Future<Wiring> openHome(
   WidgetTester tester, {
   int userStatus = 200,
@@ -53,6 +57,7 @@ Future<Wiring> openHome(
   StubAdapter? uploads,
   StubAdapter? library,
   StubAdapter? queues,
+  SongPlayer? audio,
 }) async {
   // The test font draws every glyph as wide as the font size, so this page needs
   // more room than the default test window.
@@ -60,7 +65,7 @@ Future<Wiring> openHome(
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
 
-  final wiring = Wiring(loggedIn(), libraryAdapter: library, queueAdapter: queues);
+  final wiring = Wiring(loggedIn(), libraryAdapter: library, queueAdapter: queues, audio: audio);
   addTearDown(wiring.dispose);
 
   await tester.pumpWidget(
@@ -272,5 +277,53 @@ void main() {
     expect(queues.lastOptions?.uri.path, '/api/queue');
     expect(queues.lastOptions?.data, {'source': 'track', 'source_id': 8});
     expect(wiring.queue.current?.title, 'Technogal.mp3');
+    expect(find.textContaining('Warteschlange · Slot 1'), findsOneWidget);
+  });
+
+  // While nothing is playing the bar is not an empty row; it says what would start something.
+  testWidgets('the bar says what to do while nothing is playing', (tester) async {
+    await openHome(tester);
+
+    expect(find.text('Nichts wird abgespielt'), findsOneWidget);
+    expect(find.textContaining('Suche ein Lied'), findsOneWidget);
+  });
+
+  testWidgets('the bar plays and pauses the shared player', (tester) async {
+    final audio = FakePlayer();
+    addTearDown(audio.dispose);
+    await openHome(tester, library: StubAdapter(200, libraryAnswer), queues: StubAdapter(200, oneSongQueue), audio: audio);
+
+    await tester.enterText(find.byType(TextField), 'techno');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Technogal.mp3'));
+    await tester.pumpAndSettle();
+
+    expect(audio.opened, ['$apiBaseUrl/api/music/8']);
+
+    // Playing is what the last tap did, so the bar offers pause first.
+    expect(find.widgetWithIcon(IconButton, Icons.pause), findsOneWidget);
+
+    await tester.tap(find.widgetWithIcon(IconButton, Icons.pause));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithIcon(IconButton, Icons.play_arrow), findsOneWidget);
+  });
+
+  // A song that ends on its own has no tap behind it, so the bar needs the player's
+  // listener. A page that only rebuilt on a tap would show the song that just finished.
+  testWidgets('when a song ends the bar shows the next one', (tester) async {
+    final audio = FakePlayer();
+    addTearDown(audio.dispose);
+    await openHome(tester, library: StubAdapter(200, libraryAnswer), queues: StubAdapter(200, oneSongQueue), audio: audio);
+
+    await tester.enterText(find.byType(TextField), 'techno');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Technogal.mp3'));
+    await tester.pumpAndSettle();
+
+    audio.complete();
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Warteschlange · Slot 2'), findsOneWidget);
+    expect(find.textContaining('lied.wav'), findsOneWidget);
   });
 }

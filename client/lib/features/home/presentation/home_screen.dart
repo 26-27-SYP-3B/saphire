@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -82,8 +83,9 @@ const _uploadHint = 'Erlaubt: MP3, WAV, M4A, OGG, OPUS, FLAC, AAC · höchstens 
 /// opened on the Playlists page.
 ///
 /// The search field is the one place this page shows real songs: the server has no search
-/// endpoint, so the page reads the library once and filters what it got. Opening a result
-/// does not play by itself either — it puts the song into the queue the player reads.
+/// endpoint, so the page reads the library once and filters what it got. The bar at the
+/// bottom shows what the shared player is playing — this page does not own a player, it
+/// only puts a song into the queue the player reads.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
@@ -118,10 +120,16 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _picking = false;
   // While a queue call is running the same tap must not start it again.
   bool _busy = false;
+  StreamSubscription<void>? _changes;
 
   @override
   void initState() {
     super.initState();
+    // The player moves on its own when a song ends. Without a listener the bar would keep
+    // showing the song that just finished.
+    _changes = widget.player.changes.listen((_) {
+      if (mounted) setState(() {});
+    });
     // The name in the greeting is the account name, so it comes from the session
     // check: the session store holds only the token, nothing that says who we are.
     _loadUser();
@@ -132,6 +140,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    // The player belongs to the whole app, so only this page's listener is dropped here.
+    _changes?.cancel();
     _search.dispose();
     super.dispose();
   }
@@ -219,19 +229,29 @@ class _HomeScreenState extends State<HomeScreen> {
     return [for (final entry in _library) if (_matches(entry.title)) entry];
   }
 
-  Future<void> _play(LibraryEntry entry) async {
+  /// One action on the shared player at a time. The page rebuilds after every one of them:
+  /// a player that is only paused does not report anything, so a page that rebuilt only on
+  /// the tap itself would keep the icon from before the tap.
+  Future<void> _control(Future<void> Function() action) async {
     if (_busy) return;
 
     setState(() => _busy = true);
     try {
-      widget.player.queue.fill(await widget.queues.fill(QueueSource.track(entry.id)));
-      await widget.player.playCurrent();
+      await action();
     } on QueueException catch (error) {
       if (mounted) setState(() => _note = error.message);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
+
+  /// Opening a search result fills the queue with that one song and plays it, the way the
+  /// Playlists page starts a playlist. The player only ever reads a queue, so a song picked
+  /// here and a song from a playlist play exactly the same way.
+  Future<void> _play(LibraryEntry entry) => _control(() async {
+    widget.player.queue.fill(await widget.queues.fill(QueueSource.track(entry.id)));
+    await widget.player.playCurrent();
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -701,11 +721,14 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// The bar at the bottom: the song the shared player is playing. This page does not own a
+  /// player, so the bar shows the same queue the Playlists page filled, and its buttons go
+  /// through the same player. What the player cannot do — seek, repeat, shuffle — is not here.
   Widget _playerBar() {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-
-    // The player has no audio yet, so the controls show nothing and stay off.
+    final current = widget.player.queue.current;
+    final playing = widget.player.playing;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       decoration: BoxDecoration(border: Border(top: BorderSide(color: scheme.outline))),
@@ -717,16 +740,29 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Nichts wird abgespielt', style: theme.textTheme.labelLarge),
                 Text(
-                  'Lade ein Lied hoch, um etwas zu hören.',
+                  current == null ? 'Nichts wird abgespielt' : current.title,
+                  style: theme.textTheme.labelLarge,
+                ),
+                Text(
+                  current == null
+                      ? 'Suche ein Lied und öffne es, oder fülle die Warteschlange.'
+                      : 'Warteschlange · Slot ${current.position}',
                   style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
                 ),
               ],
             ),
           ),
-          for (final icon in [Icons.shuffle, Icons.skip_previous, Icons.play_arrow, Icons.skip_next, Icons.repeat])
-            Icon(icon, color: scheme.onSurfaceVariant),
+          IconButton(
+            tooltip: playing ? 'Pause' : 'Abspielen',
+            onPressed: _busy ? null : () => _control(() => playing ? widget.player.pause() : widget.player.playCurrent()),
+            icon: Icon(playing ? Icons.pause : Icons.play_arrow),
+          ),
+          IconButton(
+            tooltip: 'Nächstes Lied',
+            onPressed: _busy ? null : () => _control(() => widget.player.next()),
+            icon: const Icon(Icons.skip_next),
+          ),
         ],
       ),
     );
