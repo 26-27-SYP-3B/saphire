@@ -8,8 +8,8 @@ import '../../upload/data/upload_repository.dart';
 import '../../upload/domain/track.dart';
 import '../data/library_repository.dart';
 
-/// The three the list can be ordered by. These are all the client can do: the
-/// answer carries a title and the order the server sent it in, nothing else.
+/// The three the list can be ordered by. There is nothing else to order by: the
+/// artist is only inside the title, and a date only comes with an upload.
 const sortKeys = ['Titel', 'Interpret', 'Hinzugefügt am'];
 
 /// The artist is only what the name itself says, "interpret - titel.mp3", because
@@ -18,7 +18,7 @@ const sortKeys = ['Titel', 'Interpret', 'Hinzugefügt am'];
 /// and duration, then this reads them instead of the name.
 String artistOf(String title) {
   final split = title.indexOf(' - ');
-  return split < 2 ? '' : title.substring(0, split);
+  return split < 1 ? '' : title.substring(0, split);
 }
 
 /// A duration is not in the answer at all, so a row shows what is known: nothing.
@@ -87,28 +87,29 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _upload() async {
+    // The button stays disabled for the whole batch, so a second click cannot send the
+    // same files again. A picker that fails must release it too.
     if (_busy) return;
     setState(() => _busy = true);
-
-    final picked = await widget.pickAudio();
-    if (!mounted) return;
-    setState(() => _busy = false);
-    if (picked == null) return;
-
-    for (final file in picked) {
-      try {
-        // The server answers with the row it stored, so the song is in the library
-        // here without reading the list again.
-        final track = await widget.uploads.upload(filename: file.name, bytes: file.bytes);
-        if (!mounted) return;
-        setState(() {
-          _tracks.add(track);
-          _note = null;
-        });
-      } on UploadException catch (error) {
-        // A file the server refused is not added; only its message is shown.
-        if (mounted) setState(() => _note = error.message);
+    try {
+      final picked = await widget.pickAudio();
+      if (picked != null) {
+        for (final file in picked) {
+          try {
+            // The server answers with the row it stored, so the song is in the library
+            // here without reading the list again.
+            final track = await widget.uploads.upload(filename: file.name, bytes: file.bytes);
+            if (!mounted) return;
+            setState(() => _tracks.add(track));
+          } on UploadException catch (error) {
+            // A file the server refused is not added. In a batch the message has to say
+            // which file it is about, and a later success must not hide it.
+            if (mounted) setState(() => _note = '${file.name}: ${error.message}');
+          }
+        }
       }
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -124,8 +125,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
           track,
     ];
 
-    // Newest first for "Hinzugefügt am"; when the answer has no date the id is the
-    // order the server already sent, so the sort does nothing.
+    // Newest first: the date when the answer has one, otherwise the id, which is
+    // the order the songs were added.
     switch (_sort) {
       case 'Interpret':
         rows.sort((a, b) => artistOf(a.title).compareTo(artistOf(b.title)));
@@ -215,14 +216,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            // The upload button is in the row above, so this only says what is
-            // missing and why the page is empty.
-            _tracks.isEmpty
-                ? 'Deine Bibliothek ist noch leer. Lade einen Song hoch, um sie zu füllen.'
-                : 'Keine Songs passen zur Suche.',
-            style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-          ),
+          // The upload button is in the row above. Where a message above already says
+          // what went wrong, nothing here claims what the library holds.
+          if (_note == null)
+            Text(
+              _tracks.isEmpty
+                  ? 'Deine Bibliothek ist noch leer. Lade einen Song hoch, um sie zu füllen.'
+                  : 'Keine Songs passen zur Suche.',
+              style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
         ],
       ),
     );

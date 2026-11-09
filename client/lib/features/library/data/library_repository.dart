@@ -24,7 +24,8 @@ class LibraryRepository {
   final Dio _dio;
   final SessionStore session;
 
-  /// An empty library answers [], so this is an empty list and never null.
+  /// An empty library answers [], so this is an empty list and never null. An
+  /// answer that is not that list is an error, not an empty library.
   Future<List<Track>> list() async {
     try {
       final response = await _dio.get(
@@ -33,10 +34,13 @@ class LibraryRepository {
       );
 
       final data = response.data;
-      if (data is! List) return [];
+      if (data is! List) throw LibraryException(unreadableAnswer);
       return [for (final row in data) Track.fromJson(row as Map<String, dynamic>)];
     } on DioException catch (error) {
       throw LibraryException(serverErrorMessage(error));
+    } on TypeError {
+      // A row that is not the documented object throws here rather than showing half a song.
+      throw LibraryException(unreadableAnswer);
     }
   }
 }

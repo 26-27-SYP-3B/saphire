@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -18,7 +19,8 @@ import 'package:saphire_client/shared/widgets/player_bar.dart';
 import '../../support/stub_adapter.dart';
 
 // The two orders must differ: by title "Alle" comes first, by the added date the
-// newer song comes first.
+// newer song comes first. The list answer has no date (api-docs.md), so this stands
+// for the dates the upload answer does send.
 const libraryAnswer = [
   {'id': 4.0, 'title': 'Kraftwerk - Technogal.mp3', 'uploaded_at': 300.0},
   {'id': 8.0, 'title': 'Alle Songs.mp3', 'uploaded_at': 100.0},
@@ -78,10 +80,19 @@ void main() {
     expect(tracks.map((track) => track.title), ['Kraftwerk - Technogal.mp3', 'Alle Songs.mp3']);
   });
 
+  // A row that is not an object cannot be half a song, so the answer is an error.
+  test('a row that is not an object is an error', () async {
+    await expectLater(
+      LibraryRepository(Dio()..httpClientAdapter = StubAdapter(200, [4.0]), loggedIn()).list(),
+      throwsA(isA<LibraryException>()),
+    );
+  });
+
   // The answer has no artist field, so the row can only show what the name itself
   // says — and nothing where the name does not say it.
   test('the artist is the part of the name before the separator', () {
     expect(artistOf('Kraftwerk - Technogal.mp3'), 'Kraftwerk');
+    expect(artistOf('A - Titel.mp3'), 'A');
     expect(artistOf('Alle Songs.mp3'), '');
   });
 
@@ -99,6 +110,15 @@ void main() {
 
     expect(find.textContaining('Bibliothek ist noch leer'), findsOneWidget);
     expect(find.widgetWithText(FilledButton, 'Song hochladen'), findsOneWidget);
+  });
+
+  // Only [] means empty. An answer that is not the documented list is an error the
+  // user is told about, not a library that looks empty.
+  testWidgets('an answer that is not the documented list shows an error', (tester) async {
+    await openLibrary(tester, libraryBody: {'id': 4.0});
+
+    expect(find.text('Die Antwort des Servers konnte nicht gelesen werden.'), findsOneWidget);
+    expect(find.textContaining('Bibliothek ist noch leer'), findsNothing);
   });
 
   testWidgets('the search field only shows what matches', (tester) async {
@@ -151,6 +171,20 @@ void main() {
     );
   });
 
+  // The message is ours, not the player's own text, so it stays readable.
+  testWidgets('a song the player cannot start says so in the bar', (tester) async {
+    await openLibrary(
+      tester,
+      libraryBody: [libraryAnswer.first],
+      player: Player(loggedIn(), (url, headers) async => throw Exception('no audio platform in a test')),
+    );
+
+    await tester.tap(find.byTooltip('Abspielen'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Der Song konnte nicht abgespielt werden.'), findsOneWidget);
+  });
+
   testWidgets('the context menu adds a song to the queue and to a playlist', (tester) async {
     final store = await openLibrary(tester, libraryBody: [libraryAnswer.first]);
 
@@ -185,6 +219,49 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('song.mp3'), findsOneWidget);
+  });
+
+  // The button stays disabled for the whole batch, and a file the server refused keeps
+  // its message even when a later file of the same batch succeeds.
+  testWidgets('the button stays disabled for the batch and a refused file keeps its message', (tester) async {
+    final adapter = StubAdapter(200, [libraryAnswer.first]);
+    adapter.queue.add((400, {'error': 'only audio files are accepted (mp3, wav, m4a, ogg, opus, flac, aac)'}));
+    adapter.queue.add((201, {
+      'id': 10.0,
+      'uploaded_by': 'lukas',
+      'title': 'second.mp3',
+      'stored_name': '18cfd7db41d243d98cc87c4ab33dded6.mp3',
+      'size': 1500000.0,
+      'content_type': 'audio/mpeg',
+      'uploaded_at': 1793974311.0,
+    }));
+    final gate = Completer<void>();
+    adapter.wait = gate.future;
+
+    await openLibrary(
+      tester,
+      libraryBody: [libraryAnswer.first],
+      uploadAdapter: adapter,
+      pickAudio: () async => [
+        (name: 'notes.txt', bytes: Uint8List.fromList([1, 2, 3])),
+        (name: 'second.mp3', bytes: Uint8List.fromList([4, 5, 6])),
+      ],
+    );
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Song hochladen'));
+    await tester.pumpAndSettle();
+
+    // The first answer is held by the gate, so the second file has not been sent and the
+    // button is still disabled.
+    expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Wird hochgeladen…')).onPressed, isNull);
+    expect(find.textContaining('only audio files are accepted'), findsNothing);
+
+    gate.complete();
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('notes.txt: only audio files are accepted'), findsOneWidget);
+    expect(find.text('second.mp3'), findsOneWidget);
+    expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Song hochladen')).onPressed, isNotNull);
   });
 
   testWidgets('a file the server refuses is not added', (tester) async {

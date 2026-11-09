@@ -44,6 +44,9 @@ class UploadRepository {
       return Track.fromJson(response.data as Map<String, dynamic>);
     } on DioException catch (error) {
       throw UploadException(serverErrorMessage(error));
+    } on TypeError {
+      // A response that is not the documented object throws here; the user is not shown the type error.
+      throw UploadException(unreadableAnswer);
     }
   }
 }

@@ -35,6 +35,7 @@ class Player extends ChangeNotifier {
   /// quietly showing nothing.
   String? error;
 
+  /// Songs waiting behind the current one; shortcut: nothing plays them, the queue itself is another part of the app.
   final List<Track> queue = [];
 
   /// A song is queued once, the same rule as in a playlist.
@@ -52,13 +53,20 @@ class Player extends ChangeNotifier {
     error = null;
     notifyListeners();
 
+    String? failed;
     try {
       await _play('$apiBaseUrl/api/music/${track.id}', {'Authorization': 'Bearer ${session.token}'});
     } on DioException catch (failure) {
-      error = serverErrorMessage(failure);
+      failed = serverErrorMessage(failure);
     } catch (failure) {
-      error = '$failure';
+      // What the player itself reports is text no user can read, so the bar only
+      // says the song could not be started.
+      failed = 'Der Song konnte nicht abgespielt werden.';
     }
+
+    // Only the song that is still current may show its error: a newer play has taken
+    // its place while this one was failing.
+    if (failed != null && current == track) error = failed;
     notifyListeners();
   }
 }
