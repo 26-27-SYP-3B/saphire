@@ -37,8 +37,9 @@ const libraryAnswer = [
   {'id': 8.0, 'title': 'Technogal.mp3'},
 ];
 
-/// A queue answer for the song the page opened: one entry, as POST /api/queue answers it.
-const oneSongQueue = [
+/// A queue answer with two entries, as POST /api/queue answers it. The second one is there
+/// so a test can watch the player move to the next song.
+const twoSongQueue = [
   {'position': 1.0, 'track_id': 8.0, 'title': 'Technogal.mp3'},
   {'position': 2.0, 'track_id': 4.0, 'title': 'lied.wav'},
 ];
@@ -266,7 +267,7 @@ void main() {
   // Opening a result does not play by itself. It fills the shared queue with that song,
   // the way the Playlists page starts a playlist, and the player reads that queue.
   testWidgets('opening a search result fills the shared queue with that song', (tester) async {
-    final queues = StubAdapter(200, oneSongQueue);
+    final queues = StubAdapter(200, twoSongQueue);
     final wiring = await openHome(tester, library: StubAdapter(200, libraryAnswer), queues: queues);
 
     await tester.enterText(find.byType(TextField), 'techno');
@@ -291,7 +292,7 @@ void main() {
   testWidgets('the bar plays and pauses the shared player', (tester) async {
     final audio = FakePlayer();
     addTearDown(audio.dispose);
-    await openHome(tester, library: StubAdapter(200, libraryAnswer), queues: StubAdapter(200, oneSongQueue), audio: audio);
+    await openHome(tester, library: StubAdapter(200, libraryAnswer), queues: StubAdapter(200, twoSongQueue), audio: audio);
 
     await tester.enterText(find.byType(TextField), 'techno');
     await tester.pumpAndSettle();
@@ -313,7 +314,7 @@ void main() {
   testWidgets('when a song ends the bar shows the next one', (tester) async {
     final audio = FakePlayer();
     addTearDown(audio.dispose);
-    await openHome(tester, library: StubAdapter(200, libraryAnswer), queues: StubAdapter(200, oneSongQueue), audio: audio);
+    await openHome(tester, library: StubAdapter(200, libraryAnswer), queues: StubAdapter(200, twoSongQueue), audio: audio);
 
     await tester.enterText(find.byType(TextField), 'techno');
     await tester.pumpAndSettle();
@@ -325,5 +326,40 @@ void main() {
 
     expect(find.textContaining('Warteschlange · Slot 2'), findsOneWidget);
     expect(find.textContaining('lied.wav'), findsOneWidget);
+  });
+
+  // A song that cannot be opened is not a JSON answer from the server, so the message here
+  // is ours. Before this was only the queue exception caught, and the tap said nothing.
+  testWidgets('a song that cannot be opened says why', (tester) async {
+    final audio = FakePlayer();
+    audio.openError = 'das Audioobjekt ist geschlossen';
+    addTearDown(audio.dispose);
+    await openHome(tester, library: StubAdapter(200, libraryAnswer), queues: StubAdapter(200, twoSongQueue), audio: audio);
+
+    await tester.enterText(find.byType(TextField), 'techno');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Technogal.mp3'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Das Lied konnte nicht gespielt werden'), findsOneWidget);
+  });
+
+  // An auto-advance has no tap behind it, so the player reports its failure itself and the
+  // bar has to show that. A bar that only showed the slot would move on silently.
+  testWidgets('an auto-advance that cannot open the next song says why', (tester) async {
+    final audio = FakePlayer();
+    addTearDown(audio.dispose);
+    await openHome(tester, library: StubAdapter(200, libraryAnswer), queues: StubAdapter(200, twoSongQueue), audio: audio);
+
+    await tester.enterText(find.byType(TextField), 'techno');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Technogal.mp3'));
+    await tester.pumpAndSettle();
+
+    audio.openError = 'das Audioobjekt ist geschlossen';
+    audio.complete();
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Das Lied konnte nicht gespielt werden'), findsOneWidget);
   });
 }

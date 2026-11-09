@@ -238,8 +238,9 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _busy = true);
     try {
       await action();
-    } on QueueException catch (error) {
-      if (mounted) setState(() => _note = error.message);
+    } catch (error) {
+      // A player that cannot open a song is not a JSON error, so the message is ours there.
+      if (mounted) setState(() => _note = error is QueueException ? error.message : 'Das Lied konnte nicht gespielt werden: $error');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -745,9 +746,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   style: theme.textTheme.labelLarge,
                 ),
                 Text(
-                  current == null
-                      ? 'Suche ein Lied und öffne es, oder fülle die Warteschlange.'
-                      : 'Warteschlange · Slot ${current.position}',
+                  widget.player.failure ??
+                      (current == null
+                          ? 'Suche ein Lied und öffne es, oder fülle die Warteschlange.'
+                          : 'Warteschlange · Slot ${current.position}'),
                   style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
                 ),
               ],

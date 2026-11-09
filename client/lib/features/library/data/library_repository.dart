@@ -8,13 +8,9 @@ import '../domain/library_entry.dart';
 /// Raised when a library call fails. The message is the server's own, so what the page
 /// shows is what api-docs.md describes.
 class LibraryException implements Exception {
-  LibraryException(this.message, [this.statusCode]);
+  LibraryException(this.message);
 
   final String message;
-
-  /// What the server answered with. Only a 401 says the token is gone, so a page may drop
-  /// the session on that status alone — a 429 or a 500 is not a lost login.
-  final int? statusCode;
 
   @override
   String toString() => message;
@@ -47,11 +43,11 @@ class LibraryRepository {
         '$apiBaseUrl/api/music',
         options: Options(headers: _headers),
       );
-      return (response.data as List)
+      return (response.data as List? ?? const [])
           .map((entry) => LibraryEntry.fromJson(entry as Map<String, dynamic>))
           .toList();
     } on DioException catch (error) {
-      throw LibraryException(serverErrorMessage(error), error.response?.statusCode);
+      throw LibraryException(serverErrorMessage(error));
     }
   }
 }
