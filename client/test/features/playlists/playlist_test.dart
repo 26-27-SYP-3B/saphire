@@ -61,6 +61,8 @@ Future<Wiring> openPlaylists(WidgetTester tester, {StubAdapter? playlists, StubA
     queue: wiring.queue,
     player: wiring.player,
     session: session,
+    settings: withServer(),
+    dio: Dio(),
   );
 
   router.go('/playlists');

@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 
 import 'package:saphire_client/core/storage/session_store.dart';
+import 'package:saphire_client/core/storage/settings_store.dart';
 import 'package:saphire_client/features/library/data/library_repository.dart';
 import 'package:saphire_client/features/playlists/data/playlist_repository.dart';
 import 'package:saphire_client/features/player/data/queue_repository.dart';
@@ -49,5 +50,9 @@ class Wiring {
 /// A session that is still valid, so the guard lets a test reach the feature pages.
 SessionStore loggedIn() =>
     SessionStore()..save('a' * 64, DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch ~/ 1000);
+
+/// The settings a returning user has: a server was saved by the first run. A test that
+/// checks the first run builds its own empty SettingsStore.
+SettingsStore withServer() => SettingsStore()..serverBase = 'http://127.0.0.1:8080';
 
 Dio dioWith(StubAdapter? adapter) => adapter == null ? Dio() : (Dio()..httpClientAdapter = adapter);

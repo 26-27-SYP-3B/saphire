@@ -46,6 +46,8 @@ Future<Wiring> openQueue(WidgetTester tester, {StubAdapter? queues, SongPlayer? 
     queue: wiring.queue,
     player: wiring.player,
     session: store,
+    settings: withServer(),
+    dio: Dio(),
   );
 
   router.go('/queue');
