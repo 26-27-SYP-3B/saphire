@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/storage/session_store.dart';
 import '../features/auth/data/auth_repository.dart';
+import '../features/library/data/library_repository.dart';
 import '../features/playlists/data/playlist_repository.dart';
 import '../features/player/data/queue_repository.dart';
 import '../features/player/domain/player.dart';
@@ -21,6 +22,7 @@ class SaphireApp extends StatefulWidget {
     super.key,
     required this.repository,
     required this.uploads,
+    required this.library,
     required this.playlists,
     required this.queues,
     required this.queue,
@@ -30,6 +32,7 @@ class SaphireApp extends StatefulWidget {
 
   final AuthRepository repository;
   final UploadRepository uploads;
+  final LibraryRepository library;
   final PlaylistRepository playlists;
   final QueueRepository queues;
   final PlaybackQueue queue;
@@ -57,6 +60,7 @@ class _SaphireAppState extends State<SaphireApp> {
       routerConfig: buildRouter(
         auth: widget.repository,
         uploads: widget.uploads,
+        library: widget.library,
         playlists: widget.playlists,
         queues: widget.queues,
         queue: widget.queue,

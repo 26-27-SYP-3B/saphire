@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'app/app.dart';
 import 'core/storage/session_store.dart';
 import 'features/auth/data/auth_repository.dart';
+import 'features/library/data/library_repository.dart';
 import 'features/playlists/data/playlist_repository.dart';
 import 'features/player/data/just_audio_player.dart';
 import 'features/player/data/queue_repository.dart';
@@ -28,6 +29,7 @@ Future<void> main() async {
     SaphireApp(
       repository: AuthRepository(dio, session),
       uploads: UploadRepository(dio, session),
+      library: LibraryRepository(dio, session),
       playlists: PlaylistRepository(dio, session),
       queues: QueueRepository(dio, session),
       queue: queue,

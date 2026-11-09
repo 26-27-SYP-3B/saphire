@@ -5,12 +5,12 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:saphire_client/core/storage/session_store.dart';
 import 'package:saphire_client/features/auth/data/auth_repository.dart';
 import 'package:saphire_client/features/home/presentation/home_screen.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
 
 import '../../support/stub_adapter.dart';
+import '../../support/wiring.dart';
 
 const uploadAnswer = {
   'id': 4.0,
@@ -27,10 +27,23 @@ const userAnswer = {'id': 7.0, 'username': 'lukas'};
 /// The plugin cannot answer in a test, so the screen is given fixed files.
 PickAudio pickedFiles = () async => [(name: 'song.mp3', bytes: Uint8List.fromList([1, 2, 3]))];
 
-/// Opens the start page with a valid session, so the greeting has a name, and hands
-/// the session store and the upload adapter back so a test can check what the page
-/// does with them.
-Future<SessionStore> openHome(
+/// The library as GET /api/music answers it. The search on this page filters exactly this,
+/// because the server has no search endpoint.
+const libraryAnswer = [
+  {'id': 4.0, 'title': 'lied.wav'},
+  {'id': 8.0, 'title': 'Technogal.mp3'},
+];
+
+/// A queue answer for the song the page opened: one entry, as POST /api/queue answers it.
+const oneSongQueue = [
+  {'position': 1.0, 'track_id': 8.0, 'title': 'Technogal.mp3'},
+  {'position': 2.0, 'track_id': 4.0, 'title': 'lied.wav'},
+];
+
+/// Opens the start page with a valid session, so the greeting has a name, and hands the
+/// wiring back so a test can check what the page does with the session and the adapters it
+/// was given.
+Future<Wiring> openHome(
   WidgetTester tester, {
   int userStatus = 200,
   Map<String, Object> userBody = userAnswer,
@@ -38,6 +51,8 @@ Future<SessionStore> openHome(
   Map<String, Object> uploadBody = uploadAnswer,
   PickAudio? pickAudio,
   StubAdapter? uploads,
+  StubAdapter? library,
+  StubAdapter? queues,
 }) async {
   // The test font draws every glyph as wide as the font size, so this page needs
   // more room than the default test window.
@@ -45,21 +60,25 @@ Future<SessionStore> openHome(
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
 
-  final session =
-      SessionStore()..save('a' * 64, DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch ~/ 1000);
+  final wiring = Wiring(loggedIn(), libraryAdapter: library, queueAdapter: queues);
+  addTearDown(wiring.dispose);
 
   await tester.pumpWidget(
     MaterialApp(
       home: HomeScreen(
-        repository: AuthRepository(Dio()..httpClientAdapter = StubAdapter(userStatus, userBody), session),
-        uploads: UploadRepository(Dio()..httpClientAdapter = uploads ?? StubAdapter(uploadStatus, uploadBody), session),
+        repository: AuthRepository(Dio()..httpClientAdapter = StubAdapter(userStatus, userBody), wiring.session),
+        uploads:
+            UploadRepository(Dio()..httpClientAdapter = uploads ?? StubAdapter(uploadStatus, uploadBody), wiring.session),
+        library: wiring.library,
+        queues: wiring.queues,
+        player: wiring.player,
         pickAudio: pickAudio ?? pickedFiles,
       ),
     ),
   );
   await tester.pumpAndSettle();
 
-  return session;
+  return wiring;
 }
 
 Future<void> upload(WidgetTester tester) async {
@@ -115,10 +134,10 @@ void main() {
 
   // The server said this token is gone, so the app must not keep it.
   testWidgets('a session the server rejects is dropped from the store', (tester) async {
-    final session = await openHome(tester, userStatus: 401, userBody: {'error': 'session is not valid or expired'});
+    final wiring = await openHome(tester, userStatus: 401, userBody: {'error': 'session is not valid or expired'});
 
     expect(find.text('session is not valid or expired'), findsOneWidget);
-    expect(session.isLoggedIn, false);
+    expect(wiring.session.isLoggedIn, false);
   });
 
   // Which format is allowed is the server's decision, so the file is sent and its
@@ -224,5 +243,34 @@ void main() {
     // The rows on the page, not the list in the sidebar.
     expect(find.descendant(of: find.byType(Wrap), matching: find.text('Techno')), findsOneWidget);
     expect(find.descendant(of: find.byType(Wrap), matching: find.text('Workout')), findsNothing);
+  });
+
+  // The search is the one place this page shows real songs: it filters the library the page
+  // read once, because the server has no search endpoint.
+  testWidgets('the search finds a song in the library', (tester) async {
+    await openHome(tester, library: StubAdapter(200, libraryAnswer));
+
+    await tester.enterText(find.byType(TextField), 'techno');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Suchergebnisse'), findsOneWidget);
+    expect(find.text('Technogal.mp3'), findsOneWidget);
+    expect(find.text('lied.wav'), findsNothing);
+  });
+
+  // Opening a result does not play by itself. It fills the shared queue with that song,
+  // the way the Playlists page starts a playlist, and the player reads that queue.
+  testWidgets('opening a search result fills the shared queue with that song', (tester) async {
+    final queues = StubAdapter(200, oneSongQueue);
+    final wiring = await openHome(tester, library: StubAdapter(200, libraryAnswer), queues: queues);
+
+    await tester.enterText(find.byType(TextField), 'techno');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Technogal.mp3'));
+    await tester.pumpAndSettle();
+
+    expect(queues.lastOptions?.uri.path, '/api/queue');
+    expect(queues.lastOptions?.data, {'source': 'track', 'source_id': 8});
+    expect(wiring.queue.current?.title, 'Technogal.mp3');
   });
 }
