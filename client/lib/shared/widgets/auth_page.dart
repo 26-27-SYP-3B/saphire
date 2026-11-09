@@ -13,10 +13,12 @@ class AuthPage extends StatelessWidget {
     required this.fields,
     required this.buttonLabel,
     required this.onSubmitted,
-    required this.linkQuestion,
-    required this.linkLabel,
-    required this.linkTo,
+    this.linkQuestion,
+    this.linkLabel,
+    this.linkTo,
+    this.linkAction,
     this.note,
+    this.noteIsError = true,
   });
 
   final String title;
@@ -24,17 +26,27 @@ class AuthPage extends StatelessWidget {
   final List<Widget> fields;
   final String buttonLabel;
   final VoidCallback? onSubmitted;
-  final String linkQuestion;
-  final String linkLabel;
-  final String linkTo;
+
+  /// Der Link zur anderen Seite. Alle drei null: die Seite zeigt keinen Link.
+  final String? linkQuestion;
+  final String? linkLabel;
+  final String? linkTo;
+
+  /// Was der Link zusätzlich zum Gehen tun muss, zum Beispiel eine Entscheidung
+  /// speichern. Null: er geht nur.
+  final VoidCallback? linkAction;
 
   /// Was nach dem Knopf passiert ist: eine Fehlermeldung oder eine Bestätigung.
   final String? note;
+
+  /// Eine Bestätigung ist keine Warnung und steht deshalb nicht in der Fehlerfarbe.
+  final bool noteIsError;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final muted = theme.colorScheme.onSurfaceVariant;
+    final label = linkLabel;
 
     return Scaffold(
       body: Center(
@@ -64,25 +76,34 @@ class AuthPage extends StatelessWidget {
                     ),
                     if (note != null) ...[
                       const SizedBox(height: 16),
-                      Text(note!, style: TextStyle(color: theme.colorScheme.error)),
+                      Text(
+                        note!,
+                        style: TextStyle(
+                          color: noteIsError
+                              ? theme.colorScheme.error
+                              : theme.colorScheme.primary,
+                        ),
+                      ),
                     ],
                     const SizedBox(height: 24),
                     FilledButton(onPressed: onSubmitted, child: Text(buttonLabel)),
-                    const SizedBox(height: 24),
-                    Wrap(
-                      spacing: 4,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        Text(
-                          linkQuestion,
-                          style: theme.textTheme.bodyMedium?.copyWith(color: muted),
-                        ),
-                        TextButton(
-                          onPressed: () => context.go(linkTo),
-                          child: Text(linkLabel),
-                        ),
-                      ],
-                    ),
+                    if (label != null) ...[
+                      const SizedBox(height: 24),
+                      Wrap(
+                        spacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text(
+                            linkQuestion ?? '',
+                            style: theme.textTheme.bodyMedium?.copyWith(color: muted),
+                          ),
+                          TextButton(
+                            onPressed: linkAction ?? (() => context.go(linkTo!)),
+                            child: Text(label),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               );

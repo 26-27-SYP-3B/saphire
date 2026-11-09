@@ -1,6 +1,8 @@
+import 'package:dio/dio.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/storage/session_store.dart';
+import '../core/storage/settings_store.dart';
 import '../features/auth/data/auth_repository.dart';
 import '../features/auth/presentation/auth_screen.dart';
 import '../features/home/presentation/home_screen.dart';
@@ -11,12 +13,17 @@ import '../features/player/data/queue_repository.dart';
 import '../features/player/domain/player.dart';
 import '../features/player/domain/queue.dart';
 import '../features/player/presentation/queue_screen.dart';
+import '../features/setup/presentation/settings_screen.dart';
+import '../features/setup/presentation/setup_screen.dart';
 import '../features/upload/data/upload_repository.dart';
 
 /// Anmeldung und Registrierung: gleiche Felder, zwei Routen, beide Seiten
 /// verlinken sich gegenseitig. Nach einer erfolgreichen Anmeldung oder
 /// Registrierung geht es auf die Startseite – aber nur mit einer gültigen
 /// Session, ohne sie bleibt die app auf der Anmeldung.
+///
+/// Der geführte Start gehört vor die Anmeldung: ohne gespeicherten Server führt
+/// kein Weg am Setup vorbei, mit ihm öffnet sich die app direkt wie früher.
 ///
 /// The queue and the player are passed in, not created here: one queue and one player
 /// belong to the whole app, so opening the queue page from a playlist keeps the list that
@@ -30,19 +37,35 @@ GoRouter buildRouter({
   required PlaybackQueue queue,
   required QueuePlayer player,
   required SessionStore session,
+  required SettingsStore settings,
+  required Dio dio,
 }) {
   return GoRouter(
-    initialLocation: '/login',
+    initialLocation: settings.serverBase == null ? '/setup' : '/login',
     redirect: (context, state) {
-      final loggedIn = auth.session.isLoggedIn;
+      // Without a stored server there is nothing to log in to, so every other
+      // address – a web reload of /login included – belongs in the setup.
+      if (settings.serverBase == null && state.matchedLocation != '/setup') return '/setup';
+      final loggedIn = session.isLoggedIn;
       final atAuthPage = state.matchedLocation == '/login' || state.matchedLocation == '/register';
       // A session restored from the last run skips the form; a browser that
       // reloads on the login page has no session left and stays there.
       if (loggedIn && atAuthPage) return '/home';
-      if (!loggedIn && !atAuthPage) return '/login';
+      // The setup is the page that finds the first server, so it stays
+      // reachable without a session.
+      if (!loggedIn && !atAuthPage && state.matchedLocation != '/setup') return '/login';
       return null;
     },
     routes: [
+      GoRoute(
+        path: '/setup',
+        builder: (context, state) =>
+            SetupScreen(settings: settings, repository: auth, dio: dio),
+      ),
+      GoRoute(
+        path: '/settings',
+        builder: (context, state) => SettingsScreen(settings: settings, repository: auth, dio: dio),
+      ),
       GoRoute(
         path: '/login',
         builder: (context, state) => AuthScreen(repository: auth, mode: AuthMode.login),

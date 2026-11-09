@@ -58,6 +58,8 @@ Future<void> openLogin(WidgetTester tester, AuthRepository repository) async {
       queue: wiring.queue,
       player: wiring.player,
       session: repository.session,
+      settings: withServer(),
+      dio: Dio(),
     ),
   );
 }
@@ -207,6 +209,8 @@ void main() {
       queue: wiring.queue,
       player: wiring.player,
       session: repository.session,
+      settings: withServer(),
+      dio: Dio(),
     );
     await tester.pumpWidget(MaterialApp.router(routerConfig: router));
     await tester.pumpAndSettle();
