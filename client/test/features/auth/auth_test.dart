@@ -12,6 +12,7 @@ import 'package:saphire_client/features/home/presentation/home_screen.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
 
 import '../../support/stub_adapter.dart';
+import '../../support/wiring.dart';
 
 /// Repository that never calls the server, so the form can be tested on its own.
 /// A successful login fills the session store like the real one would.
@@ -44,8 +45,19 @@ class FakeRepository extends AuthRepository {
 Future<void> openLogin(WidgetTester tester, AuthRepository repository) async {
   // Nothing uploads in these tests, the start page only needs the repository to
   // exist.
+  // The feature pages are part of the app, so a test that only checks the guard still
+  // needs their pieces to exist.
+  final wiring = Wiring(repository.session);
   await tester.pumpWidget(
-    SaphireApp(repository: repository, uploads: UploadRepository(Dio(), repository.session)),
+    SaphireApp(
+      repository: repository,
+      uploads: UploadRepository(Dio(), repository.session),
+      playlists: wiring.playlists,
+      queues: wiring.queues,
+      queue: wiring.queue,
+      player: wiring.player,
+      session: repository.session,
+    ),
   );
 }
 
@@ -184,7 +196,16 @@ void main() {
   // navigation stays on the login.
   testWidgets('the home screen is guarded while no session exists', (tester) async {
     final repository = FakeRepository(null);
-    final router = buildRouter(repository, UploadRepository(Dio(), repository.session));
+    final wiring = Wiring(repository.session);
+    final router = buildRouter(
+      auth: repository,
+      uploads: UploadRepository(Dio(), repository.session),
+      playlists: wiring.playlists,
+      queues: wiring.queues,
+      queue: wiring.queue,
+      player: wiring.player,
+      session: repository.session,
+    );
     await tester.pumpWidget(MaterialApp.router(routerConfig: router));
     await tester.pumpAndSettle();
 

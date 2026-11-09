@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -300,5 +301,295 @@ func TestUploadRateLimit(t *testing.T) {
 	rec = uploadFile(t, handler, "", "file", "song.wav", tinyWAV())
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("upload bucket must be separate -> %d (%s)", rec.Code, rec.Body)
+	}
+}
+
+// get sends one GET with a Bearer token, through a mux so that r.PathValue has the
+// value main.go would give it.
+func get(t *testing.T, handler http.Handler, path, token string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+func musicMux(db *sql.DB, library string, limiter *rateLimiter) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/music", listHandler(db, limiter))
+	mux.HandleFunc("GET /api/music/{id}", streamHandler(db, library, limiter))
+	return mux
+}
+
+// chunkRecorder records how many body bytes were present at each flush. It is the
+// only way a test can tell piece-by-piece delivery from one whole-file write.
+type chunkRecorder struct {
+	*httptest.ResponseRecorder
+	chunks []int
+}
+
+func (c *chunkRecorder) Flush() {
+	c.chunks = append(c.chunks, c.Body.Len())
+	c.ResponseRecorder.Flush()
+}
+
+// bigWAV is a real WAV header with enough padding to span several stream chunks.
+func bigWAV() []byte {
+	return append(tinyWAV(), bytes.Repeat([]byte{0}, 3*streamChunkBytes)...)
+}
+
+// TestListRequiresAuth: reading the shared library needs an account, with the same two
+// 401 messages as GET /api/session.
+func TestListRequiresAuth(t *testing.T) {
+	db := openTestDB(t)
+	handler := musicMux(db, t.TempDir(), newRateLimiter(100, time.Second))
+
+	rec := get(t, handler, "/api/music", "")
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "authorization header") {
+		t.Errorf("anonymous list -> %d (%s), wanted 401 with the missing-header message", rec.Code, rec.Body)
+	}
+
+	rec = get(t, handler, "/api/music", "not-a-known-token")
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "session is not valid or expired") {
+		t.Errorf("unknown token -> %d (%s), wanted 401 with the session message", rec.Code, rec.Body)
+	}
+}
+
+func TestListTracks(t *testing.T) {
+	db := openTestDB(t)
+	handler := musicMux(db, t.TempDir(), newRateLimiter(100, time.Second))
+	token := testToken(t, db, "lukas")
+
+	// An empty library answers [], not null.
+	rec := get(t, handler, "/api/music", token)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list -> %d (%s)", rec.Code, rec.Body)
+	}
+	if strings.TrimSpace(rec.Body.String()) != "[]" {
+		t.Errorf("empty library answered %s, wanted []", rec.Body)
+	}
+
+	// Rows are inserted out of insertion order. This cannot prove the sort: for
+	// INTEGER PRIMARY KEY the id is the rowid, so a plain scan already returns rows in
+	// id order. It is tested because ORDER BY id is what the answer promises, and the
+	// promise must hold if the schema ever changes.
+	user, err := GetUserByUsername(db, "lukas")
+	if err != nil {
+		t.Fatalf("load the user: %v", err)
+	}
+	now := time.Now().Unix()
+	for _, id := range []int64{5, 2} {
+		if _, err := db.Exec(`INSERT INTO track (id, user_id, title, stored_name, size, content_type, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			id, user.ID, "song-"+strconv.FormatInt(id, 10)+".wav", "file-"+strconv.FormatInt(id, 10)+".wav", 1, "audio/wav", now); err != nil {
+			t.Fatalf("insert row %d: %v", id, err)
+		}
+	}
+
+	rec = get(t, handler, "/api/music", token)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list -> %d (%s)", rec.Code, rec.Body)
+	}
+
+	var entries []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &entries); err != nil {
+		t.Fatalf("decode answer: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("list has %d entries, wanted 2 (%s)", len(entries), rec.Body)
+	}
+	if entries[0]["id"] != float64(2) || entries[1]["id"] != float64(5) {
+		t.Errorf("the list is not ordered by id: %s", rec.Body)
+	}
+	if entries[0]["title"] != "song-2.wav" || entries[1]["title"] != "song-5.wav" {
+		t.Errorf("the titles do not match the ids: %s", rec.Body)
+	}
+
+	// id and title only: the name the file has inside the library folder stays on the
+	// server.
+	for _, e := range entries {
+		if len(e) != 2 {
+			t.Errorf("an entry carries more than id and title: %v", e)
+		}
+	}
+}
+
+// TestStreamSendsChunks is the point of this endpoint: the file goes out piece by
+// piece, so a player gets the beginning of a song before the rest is read.
+func TestStreamSendsChunks(t *testing.T) {
+	db := openTestDB(t)
+	library := t.TempDir()
+	upload := uploadHandler(db, library, newRateLimiter(100, time.Second))
+	handler := musicMux(db, library, newRateLimiter(100, time.Second))
+	token := testToken(t, db, "lukas")
+
+	rec := uploadFile(t, upload, token, "file", "song.wav", bigWAV())
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload -> %d (%s)", rec.Code, rec.Body)
+	}
+	var track Track
+	if err := json.Unmarshal(rec.Body.Bytes(), &track); err != nil {
+		t.Fatalf("decode answer: %v", err)
+	}
+
+	stream := &chunkRecorder{ResponseRecorder: httptest.NewRecorder()}
+	req := httptest.NewRequest(http.MethodGet, "/api/music/"+strconv.FormatInt(track.ID, 10), nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	handler.ServeHTTP(stream, req)
+
+	if stream.Code != http.StatusOK {
+		t.Fatalf("stream -> %d (%s)", stream.Code, stream.Body)
+	}
+	if stream.Header().Get("Content-Type") != "audio/wav" {
+		t.Errorf("the stored content type must be the response content type: %q", stream.Header().Get("Content-Type"))
+	}
+	if stream.Header().Get("Content-Length") != strconv.Itoa(len(bigWAV())) {
+		t.Errorf("Content-Length %q, wanted %d", stream.Header().Get("Content-Length"), len(bigWAV()))
+	}
+	if stream.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Errorf("the stream answer must carry nosniff like every other answer: %v", stream.Header())
+	}
+	if stream.Body.Len() != len(bigWAV()) {
+		t.Errorf("streamed %d bytes, wanted %d", stream.Body.Len(), len(bigWAV()))
+	}
+
+	// The body must arrive as several chunks, each no larger than the chunk size, and
+	// the first flush must be smaller than the whole file.
+	if len(stream.chunks) < 2 {
+		t.Fatalf("the body was sent in %d piece(s), not in chunks", len(stream.chunks))
+	}
+	previous := 0
+	for i, size := range stream.chunks {
+		if size <= previous {
+			t.Errorf("flush %d did not add bytes: %v", i+1, stream.chunks)
+		}
+		if size-previous > streamChunkBytes {
+			t.Errorf("flush %d sent %d bytes, more than the %d byte chunk size", i+1, size-previous, streamChunkBytes)
+		}
+		previous = size
+	}
+	if stream.chunks[0] >= len(bigWAV()) {
+		t.Errorf("the whole file was flushed at once, so nothing was streamed")
+	}
+
+	// A file smaller than one chunk is still one flush, not zero.
+	small := uploadFile(t, upload, token, "file", "small.wav", tinyWAV())
+	if small.Code != http.StatusCreated {
+		t.Fatalf("small upload -> %d (%s)", small.Code, small.Body)
+	}
+	var smallTrack Track
+	if err := json.Unmarshal(small.Body.Bytes(), &smallTrack); err != nil {
+		t.Fatalf("decode answer: %v", err)
+	}
+	smallStream := &chunkRecorder{ResponseRecorder: httptest.NewRecorder()}
+	req = httptest.NewRequest(http.MethodGet, "/api/music/"+strconv.FormatInt(smallTrack.ID, 10), nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	handler.ServeHTTP(smallStream, req)
+	if len(smallStream.chunks) != 1 {
+		t.Errorf("a small file was flushed %d times, wanted once", len(smallStream.chunks))
+	}
+}
+
+// TestStreamRejectsBadRequests covers the answers before the first byte, which are the
+// only ones that can still use the JSON error shape.
+func TestStreamRejectsBadRequests(t *testing.T) {
+	db := openTestDB(t)
+	library := t.TempDir()
+	upload := uploadHandler(db, library, newRateLimiter(100, time.Second))
+	handler := musicMux(db, library, newRateLimiter(100, time.Second))
+	token := testToken(t, db, "lukas")
+
+	rec := uploadFile(t, upload, token, "file", "song.wav", tinyWAV())
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload -> %d (%s)", rec.Code, rec.Body)
+	}
+	var track Track
+	if err := json.Unmarshal(rec.Body.Bytes(), &track); err != nil {
+		t.Fatalf("decode answer: %v", err)
+	}
+
+	cases := []struct {
+		name   string
+		path   string
+		token  string
+		status int
+		want   string
+	}{
+		{"no header", "/api/music/1", "", http.StatusUnauthorized, "authorization header"},
+		{"unknown token", "/api/music/1", "not-a-known-token", http.StatusUnauthorized, "session is not valid or expired"},
+		{"id is not a number", "/api/music/abc", token, http.StatusBadRequest, "the song id must be a positive number"},
+		{"id is negative", "/api/music/-1", token, http.StatusBadRequest, "the song id must be a positive number"},
+		{"id is zero", "/api/music/0", token, http.StatusBadRequest, "the song id must be a positive number"},
+		{"id has leading zeros", "/api/music/0004", token, http.StatusBadRequest, "the song id must be a positive number"},
+		{"id has a plus sign", "/api/music/+4", token, http.StatusBadRequest, "the song id must be a positive number"},
+		{"id is digits but too large", "/api/music/9223372036854775808", token, http.StatusBadRequest, "the song id is too large"},
+		{"id is not in the library", "/api/music/999", token, http.StatusNotFound, "song is not in the library"},
+	}
+
+	for _, c := range cases {
+		rec := get(t, handler, c.path, c.token)
+		if rec.Code != c.status || !strings.Contains(rec.Body.String(), c.want) {
+			t.Errorf("%s -> %d (%s), wanted %d with %q", c.name, rec.Code, rec.Body, c.status, c.want)
+		}
+	}
+
+	// A row whose file is gone is a broken library: the song is listed but cannot be
+	// played, and the answer must say which.
+	if err := os.Remove(filepath.Join(library, track.StoredName)); err != nil {
+		t.Fatalf("remove the file: %v", err)
+	}
+	rec = get(t, handler, "/api/music/"+strconv.FormatInt(track.ID, 10), token)
+	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "is not in the library folder") {
+		t.Errorf("row with a missing file -> %d (%s), wanted 404 naming the missing file", rec.Code, rec.Body)
+	}
+}
+
+// TestStreamRateLimit checks that the two read buckets are separate. It uses two
+// limiter instances the way main.go wires them; that is also what it can prove — a
+// shared instance would fail here.
+func TestStreamRateLimit(t *testing.T) {
+	db := openTestDB(t)
+	library := t.TempDir()
+	token := testToken(t, db, "lukas")
+
+	// A full stream bucket must not stop the list.
+	streamFull := musicMux(db, library, newRateLimiter(2, time.Second))
+	listOpen := musicMux(db, library, newRateLimiter(2, time.Second))
+
+	for i := 0; i < 2; i++ {
+		rec := get(t, streamFull, "/api/music/1", token)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("stream %d -> %d, wanted the 404 for an empty library (%s)", i+1, rec.Code, rec.Body)
+		}
+	}
+
+	rec := get(t, streamFull, "/api/music/1", token)
+	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "too many requests from this address") {
+		t.Fatalf("third stream -> %d (%s), wanted 429", rec.Code, rec.Body)
+	}
+	checkRetryAfter(t, rec, 1)
+
+	rec = get(t, listOpen, "/api/music", token)
+	if rec.Code != http.StatusOK {
+		t.Errorf("a full stream bucket stopped the list -> %d (%s)", rec.Code, rec.Body)
+	}
+
+	// The other way round: a full list bucket must not stop playback.
+	listFull := musicMux(db, library, newRateLimiter(2, time.Second))
+	streamOpen := musicMux(db, library, newRateLimiter(2, time.Second))
+
+	for i := 0; i < 3; i++ {
+		rec = get(t, listFull, "/api/music", token)
+	}
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("third list -> %d, wanted 429 (%s)", rec.Code, rec.Body)
+	}
+
+	rec = get(t, streamOpen, "/api/music/1", token)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("a full list bucket stopped playback -> %d (%s)", rec.Code, rec.Body)
 	}
 }

@@ -104,7 +104,10 @@ async function send(method, path, { body, curl, headers = {}, useToken = true })
   }
 
   const ms = Math.round(performance.now() - started);
-  const text = await response.text();
+  let text = await response.text();
+  // A 204 has no body. Saying so is better than an empty block that looks like the
+  // page lost the answer.
+  if (response.status === 204 && text === "") text = "(no body: a 204 has none)";
   const retryAfter = response.headers.get("Retry-After");
   addEntry({ status: response.status, method, path, ms, text, curl, retryAfter });
   return { status: response.status, text, retryAfter };
@@ -250,6 +253,175 @@ $("upload-form").addEventListener("submit", async (event) => {
 
   const track = parseJSON(result.text);
   if (track) showSession("ok", "uploaded " + track.title + " as " + track.stored_name);
+});
+
+$("list-songs").addEventListener("click", () => {
+  send("GET", "/api/music", { curl: `-X GET ${location.origin}/api/music${authFlag()}` });
+});
+
+// The streaming endpoint is only worth testing when the pieces arrive one by one, so
+// this logs what came in and when instead of the bytes themselves.
+async function streamSong(id) {
+  // The id is encoded so the path in the log is the path that was sent.
+  const path = "/api/music/" + encodeURIComponent(id);
+  const started = performance.now();
+
+  let response;
+  try {
+    response = await fetch(path, { headers: state.token ? { Authorization: "Bearer " + state.token } : {} });
+  } catch (error) {
+    addEntry({ status: 0, method: "GET", path, ms: Math.round(performance.now() - started), text: "the server is not reachable at " + location.origin });
+    return;
+  }
+
+  const headers = response.headers;
+  if (response.status !== 200) {
+    addEntry({
+      status: response.status,
+      method: "GET",
+      path,
+      ms: Math.round(performance.now() - started),
+      text: await response.text(),
+      retryAfter: headers.get("Retry-After"),
+      curl: `-X GET ${location.origin}${path}${authFlag()}`,
+    });
+    return;
+  }
+
+  const maxChunkLines = 20; // a 500 MiB song is about 16000 chunks; the entry must not hold them all
+  const lines = [];
+  let total = 0;
+  let chunks = 0;
+
+  const reader = response.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks += 1;
+    total += value.length;
+    if (chunks <= maxChunkLines) lines.push(`${value.length} bytes at ${Math.round(performance.now() - started)} ms`);
+  }
+
+  const declared = Number(headers.get("Content-Length") || 0);
+  const summary = [`${chunks} chunk(s), ${total} bytes of ${declared}`, ...lines];
+  if (chunks > maxChunkLines) summary.push(`… ${chunks - maxChunkLines} more chunks`);
+  if (chunks === 1 && total === declared) summary.push("the whole file arrived in one read, so nothing was streamed");
+
+  addEntry({
+    status: response.status,
+    method: "GET",
+    path,
+    ms: Math.round(performance.now() - started),
+    text: summary.join("\n"),
+    curl: `-X GET ${location.origin}${path}${authFlag()}`,
+  });
+}
+
+$("stream-song").addEventListener("click", () => {
+  const id = $("stream-id").value.trim();
+  if (!id) {
+    addEntry({ status: null, method: "GET", path: "/api/music/{id}", ms: 0, text: "no song id was typed, so nothing was sent" });
+    return;
+  }
+  streamSong(id);
+});
+
+// The playlist and queue cards send what is typed. A value that is shaped like an
+// integer becomes a JSON number, because that is what the endpoints expect; anything
+// else stays a string so the page can show what the server says about it.
+function valueOrNumber(input) {
+  const text = input.value;
+  return /^-?[0-9]+$/.test(text) ? Number(text) : text;
+}
+
+// A path segment as typed, so the path in the log is the path that was sent.
+function segment(value) {
+  return encodeURIComponent(value);
+}
+
+// A request with a JSON body and the stored token, written the way api-docs.md
+// describes it.
+function authJSON(method, path, payload) {
+  const body = payload === undefined ? undefined : JSON.stringify(payload);
+  const curl = `-X ${method} ${location.origin}${path}${authFlag()}${body === undefined ? "" : ` -d ${shellQuote(body)}`}`;
+  return send(method, path, { headers: { "Content-Type": "application/json" }, body, curl });
+}
+
+// Nothing was typed, so nothing was sent. The page says which field is empty instead of
+// sending an empty path.
+function nothingTyped(field, path) {
+  addEntry({ status: null, method: "GET", path, ms: 0, text: `no ${field} was typed, so nothing was sent` });
+}
+
+const playlistPath = () => "/api/playlists/" + segment($("playlist-id").value);
+
+$("playlist-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  authJSON("POST", "/api/playlists", { name: $("playlist-name").value });
+});
+
+$("list-playlists").addEventListener("click", () => {
+  send("GET", "/api/playlists", { curl: `-X GET ${location.origin}/api/playlists${authFlag()}` });
+});
+
+$("show-playlist").addEventListener("click", () => {
+  if (!$("playlist-id").value) return nothingTyped("playlist id", "/api/playlists/{id}");
+  const path = playlistPath();
+  send("GET", path, { curl: `-X GET ${location.origin}${path}${authFlag()}` });
+});
+
+$("add-to-playlist").addEventListener("click", () => {
+  if (!$("playlist-id").value) return nothingTyped("playlist id", "/api/playlists/{id}/songs");
+  const path = playlistPath() + "/songs";
+  authJSON("POST", path, { track_id: valueOrNumber($("add-track-id")) });
+});
+
+$("remove-from-playlist").addEventListener("click", () => {
+  if (!$("playlist-id").value) return nothingTyped("playlist id", "/api/playlists/{id}/songs/{position}");
+  if (!$("remove-position").value) return nothingTyped("position", "/api/playlists/" + segment($("playlist-id").value) + "/songs/{position}");
+
+  const path = playlistPath() + "/songs/" + segment($("remove-position").value);
+  send("DELETE", path, { curl: `-X DELETE ${location.origin}${path}${authFlag()}` });
+});
+
+$("delete-playlist").addEventListener("click", () => {
+  if (!$("playlist-id").value) return nothingTyped("playlist id", "/api/playlists/{id}");
+  const path = playlistPath();
+  send("DELETE", path, { curl: `-X DELETE ${location.origin}${path}${authFlag()}` });
+});
+
+// The queue is what a player reads, so this card shows it as the server keeps it: fill
+// from a source, read it, add one song, remove one, clear it.
+$("fill-queue").addEventListener("click", () => {
+  const source = $("queue-source").value;
+  if (!source) return nothingTyped("source", "/api/queue");
+
+  const payload = { source };
+  // source_id is only part of the body for a source that names something; sending it
+  // for the whole library is refused by the server, so the page does not send it there.
+  if (source !== "library" && $("queue-source-id").value) {
+    payload.source_id = valueOrNumber($("queue-source-id"));
+  }
+
+  authJSON("POST", "/api/queue", payload);
+});
+
+$("read-queue").addEventListener("click", () => {
+  send("GET", "/api/queue", { curl: `-X GET ${location.origin}/api/queue${authFlag()}` });
+});
+
+$("append-queue").addEventListener("click", () => {
+  authJSON("POST", "/api/queue/songs", { track_id: valueOrNumber($("queue-append-id")) });
+});
+
+$("remove-queue").addEventListener("click", () => {
+  if (!$("queue-position").value) return nothingTyped("position", "/api/queue/{position}");
+  const path = "/api/queue/" + segment($("queue-position").value);
+  send("DELETE", path, { curl: `-X DELETE ${location.origin}${path}${authFlag()}` });
+});
+
+$("clear-queue").addEventListener("click", () => {
+  send("DELETE", "/api/queue", { curl: `-X DELETE ${location.origin}/api/queue${authFlag()}` });
 });
 
 $("clear-log").addEventListener("click", () => {

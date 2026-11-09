@@ -45,8 +45,9 @@ String greetingFor(DateTime now) {
   return 'Guten Abend';
 }
 
-/// What the page shows. The uploaded songs are real; the rest is placeholder,
-/// because playlists and mixes have no endpoints yet (api-docs.md, Upcoming).
+/// What the page shows. The uploaded songs are real; the playlist rows are placeholder,
+/// because they would need the real playlists from GET /api/playlists, and this page does
+/// not load them — the Playlists page is where a playlist exists.
 const _placeholders = [
   (title: 'Lieblingssongs', meta: 'Playlist · 150 Songs', icon: Icons.favorite),
   (title: 'Workout', meta: 'Playlist · 87 Songs', icon: Icons.local_activity),
@@ -56,9 +57,13 @@ const _placeholders = [
 ];
 
 const _navItems = [
-  (label: 'Home', icon: Icons.home, selected: true),
-  (label: 'Suche', icon: Icons.search, selected: false),
-  (label: 'Bibliothek', icon: Icons.library_books, selected: false),
+  (label: 'Home', icon: Icons.home, selected: true, route: ''),
+  (label: 'Suche', icon: Icons.search, selected: false, route: ''),
+  (label: 'Bibliothek', icon: Icons.library_books, selected: false, route: ''),
+  // Playlists and the queue are the two areas that have endpoints now, so they can be
+  // opened. The others stay labels.
+  (label: 'Playlists', icon: Icons.playlist_play, selected: false, route: '/playlists'),
+  (label: 'Warteschlange', icon: Icons.queue_music, selected: false, route: '/queue'),
 ];
 
 /// What the server accepts (server/music.go): the client only says it up front,
@@ -66,8 +71,9 @@ const _navItems = [
 const _uploadHint = 'Erlaubt: MP3, WAV, M4A, OGG, OPUS, FLAC, AAC · höchstens 500 MiB pro Datei';
 
 /// The home screen: the app on the left, the greeting and the rows on the right.
-/// Only the upload reaches the server. The other areas have no endpoints yet, so
-/// they are labels and pictures, not buttons.
+/// Upload, playlists and the queue reach the server; the playlist rows below are the
+/// placeholders from the mock, because there is no data behind them until a playlist is
+/// opened on the Playlists page.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
@@ -260,7 +266,7 @@ class _HomeScreenState extends State<HomeScreen> {
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
               child: SaphireLogo(size: 44),
             ),
-            for (final item in _navItems) _navItem(item.label, item.icon, selected: item.selected),
+            for (final item in _navItems) _navItem(item.label, item.icon, selected: item.selected, route: item.route),
             _heading('Deine Inhalte'),
             for (final item in [
               (label: 'Eigene Dateien', icon: Icons.add),
@@ -309,18 +315,25 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _navItem(String label, IconData icon, {bool selected = false}) {
+  Widget _navItem(String label, IconData icon, {bool selected = false, String route = ''}) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
+    // A row with no route behind it stays a label. Only what has an endpoint can be
+    // opened, and that is what the routes in app/router.dart are.
+    final canOpen = route.isNotEmpty;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
-      child: Row(
-        children: [
-          Icon(icon, size: 20, color: selected ? scheme.primary : scheme.onSurfaceVariant),
-          const SizedBox(width: 14),
-          Flexible(child: Text(label, style: theme.textTheme.labelLarge)),
-        ],
+      child: InkWell(
+        onTap: canOpen ? () => context.go(route) : null,
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: selected ? scheme.primary : scheme.onSurfaceVariant),
+            const SizedBox(width: 14),
+            Flexible(child: Text(label, style: theme.textTheme.labelLarge)),
+          ],
+        ),
       ),
     );
   }

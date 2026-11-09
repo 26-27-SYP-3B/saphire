@@ -2,8 +2,10 @@
 
 Base URL: `http://localhost:8080` (port configurable via `PORT` in `.env`).
 
-All responses are JSON with `Content-Type: application/json` and
-`X-Content-Type-Options: nosniff`. Errors use a single shape:
+Every API answer is JSON with `Content-Type: application/json` and
+`X-Content-Type-Options: nosniff`, except `GET /api/music/{id}`, which sends the file
+itself with the content type stored for that song — there the JSON error shape applies
+only to the answers sent before the first byte. Errors use a single shape:
 
 ```json
 { "error": "human readable description of what went wrong" }
@@ -214,8 +216,8 @@ curl -X POST localhost:8080/api/music/upload \
   cannot make the server read 500 MiB it would throw away.
 - The file is written before the row is inserted; if the insert fails, the file
   is removed again, so a library entry never points at a missing file.
-- `stored_name` is what the file is called inside the library folder. There is no
-  download endpoint yet — see **Upcoming**.
+- `stored_name` is what the file is called inside the library folder. It is not sent
+  by `GET /api/music`; a client reads a song through `GET /api/music/{id}`.
 - Database schema:
 
   ```sql
@@ -232,22 +234,365 @@ curl -X POST localhost:8080/api/music/upload \
 
 ---
 
+### `GET /api/music`
+
+Lists the shared library: every song as `id` and `title`, ordered by `id`. Only a
+logged-in user may read it, with the same two 401 messages as `GET /api/session`.
+An empty library answers `[]`, never `null`.
+
+```
+GET /api/music
+Authorization: Bearer <token>
+```
+
+**Response shape**
+
+```json
+[
+  { "id": 4, "title": "lied.wav" },
+  { "id": 8, "title": "Technogal.mp3" }
+]
+```
+
+`stored_name` is not in this response: the name the file has inside the library
+folder stays on the server, and a client reaches a song through `GET /api/music/{id}`.
+
+**Responses**
+
+| Status | When | Example body |
+|---|---|---|
+| `200 OK` | Library listed, ordered by `id` | `[{ "id": 4, "title": "lied.wav" }]` |
+| `401 Unauthorized` | Missing `Authorization: Bearer` header | `{"error": "authorization header with a Bearer token is missing"}` |
+| `401 Unauthorized` | Unknown or expired token (the row is dropped), or the token's user no longer exists | `{"error": "session is not valid or expired"}` |
+| `429 Too Many Requests` | Rate limit reached (10 requests per IP, refilling 1 token every 12 s — its own bucket). Includes a `Retry-After` header. | `{"error": "too many requests from this address, try again later"}` |
+| `500 Internal Server Error` | Database failure while reading the library | `{"error": "could not list the library"}` |
+| `500 Internal Server Error` | Database failure while checking the token, with the same answers as `GET /api/session` | `{"error": "could not load session"}` or `{"error": "could not load user"}` |
+
+No pagination yet: every row is returned in one answer.
+
+### `GET /api/music/{id}`
+
+Sends the file of one song. Only a logged-in user may read it, with the same two 401
+messages as `GET /api/session`. The file is **streamed in chunks**: the server reads
+32 KiB at a time (`streamChunkBytes`) and flushes after each chunk, so a player gets
+the start of a song before the rest of the file is read, and a large song is never
+held in memory as a whole.
+
+```
+GET /api/music/{id}
+Authorization: Bearer <token>
+```
+
+**Headers on a successful answer**
+
+| Header | Value |
+|---|---|
+| `Content-Type` | the type stored for that song (`audio/mpeg`, `audio/wav`, …) |
+| `Content-Length` | the size of the file on disk, so a player can show progress |
+| `X-Content-Type-Options` | `nosniff`, like every other answer from this server |
+
+`Content-Length` is known because the file is in the library, so the transfer is not
+chunk-encoded — but the bytes still leave piece by piece. `Range` is not implemented:
+a `Range` request is ignored and answers `200` with the whole file, so a player that
+seeks still needs it (see **Upcoming**).
+
+**Responses**
+
+| Status | When | Example body |
+|---|---|---|
+| `200 OK` | The file, in 32 KiB chunks with a flush after each | the file bytes |
+| `400 Bad Request` | `id` is not a plain positive number (`-1`, `0`, `0004`, `+4`, `abc`) | `{"error": "the song id must be a positive number"}` |
+| `400 Bad Request` | Digits, but too large to be an id | `{"error": "the song id is too large"}` |
+| `401 Unauthorized` | Missing `Authorization: Bearer` header | `{"error": "authorization header with a Bearer token is missing"}` |
+| `401 Unauthorized` | Unknown or expired token | `{"error": "session is not valid or expired"}` |
+| `404 Not Found` | No row with that id | `{"error": "song is not in the library"}` |
+| `404 Not Found` | The row exists but its file is gone (a broken library) | `{"error": "the file for this song is not in the library folder"}` |
+| `429 Too Many Requests` | Rate limit reached (10 requests per IP, refilling 1 token every 10 s — its own bucket). Includes a `Retry-After` header. | `{"error": "too many requests from this address, try again later"}` |
+| `500 Internal Server Error` | Database failure, or the file could not be opened | `{"error": "could not load the song"}` or `{"error": "could not read the file"}` |
+| `500 Internal Server Error` | Database failure while checking the token, with the same answers as `GET /api/session` | `{"error": "could not load session"}` or `{"error": "could not load user"}` |
+
+**Notes**
+
+- Every error above is answered **before the first byte**. Once `200` and the audio
+  content type are sent, the status is fixed: a read failure that happens mid-stream
+  cannot become a JSON error, it only ends the body. A client must treat a body that
+  stops early as a failed read, not as a complete song. In practice that looks like
+  fewer bytes than `Content-Length` and a connection that is not reused — with
+  `net/http` the client sees `unexpected EOF` while reading.
+- The client's `Accept` header does not matter here — the content type comes from the
+  record written at upload time.
+
+---
+
+### Playlists
+
+A playlist belongs to the user who created it — unlike the library, which is shared.
+Every playlist endpoint reads only the caller's own playlists, so a playlist of another
+user is answered as **not in your playlists** rather than as forbidden: from the
+caller's view it does not exist.
+
+Positions inside a playlist are 1-based and always contiguous: adding puts a song at the
+end, and removing a song renumbers the songs after it, so a client can address a slot
+without knowing the history. A song can be in a playlist more than once, at different
+positions, because a playlist is an order, not a set.
+
+Name rules: control characters are dropped, at most 100 characters (characters, not
+bytes), and a name past that is refused rather than cut — a playlist keeps the name it was
+given, the same way the 200 songs cap is a refusal and not a silent drop. A name is not
+unique. A rate-limited answer here uses the playlist bucket (10 requests per IP, one token
+every 12 s), separate from the library and queue buckets, so building a playlist cannot
+stop playback.
+
+#### `POST /api/playlists`
+
+```
+POST /api/playlists
+Authorization: Bearer <token>
+```
+
+Body: one JSON object with `name`, at most 4 KiB, `DisallowUnknownFields`. Trailing content
+after the object is a separate 400 with `{"error": "body must contain exactly one JSON
+object"}` — the same rule and the same message the register endpoint gives, and every
+playlist and queue body is read this way.
+
+**Response shape**
+
+```json
+{ "id": 1, "name": "Favoriten", "created_at": 1794180269, "song_count": 0 }
+```
+
+| Status | When | Example body |
+|---|---|---|
+| `201 Created` | Playlist created | the record above |
+| `400 Bad Request` | Body is not one JSON object with `name` | `{"error": "body must be one JSON object with \"name\""}` |
+| `400 Bad Request` | Name is empty, or only control characters | `{"error": "the playlist needs a name"}` |
+| `400 Bad Request` | Name is past 100 characters; nothing is stored | `{"error": "a playlist name is at most 100 characters"}` |
+| `401 Unauthorized` | Missing `Authorization: Bearer` header | `{"error": "authorization header with a Bearer token is missing"}` |
+| `401 Unauthorized` | Unknown or expired token | `{"error": "session is not valid or expired"}` |
+| `429 Too Many Requests` | Playlist bucket reached. Includes `Retry-After`. | `{"error": "too many requests from this address, try again later"}` |
+| `500 Internal Server Error` | Database failure, or a failure while checking the token | `{"error": "the playlist could not be read"}`, or the two `GET /api/session` messages |
+
+#### `GET /api/playlists`
+
+The caller's playlists, ordered by `id`. An empty list answers `[]`, never `null`.
+`song_count` is a count; the songs come from `GET /api/playlists/{id}`, so a client that
+shows playlists does not get every song of every playlist in one answer.
+
+```
+GET /api/playlists
+Authorization: Bearer <token>
+```
+
+**Response shape**
+
+```json
+[
+  { "id": 1, "name": "Favoriten", "created_at": 1794180269, "song_count": 2 }
+]
+```
+
+Statuses are as in `POST /api/playlists`, with `200 OK` for the list.
+
+#### `GET /api/playlists/{id}`
+
+One playlist with its songs in position order. The title comes from the library row: a
+playlist stores references, not copies. An empty playlist answers `[]` for `songs`.
+
+```
+GET /api/playlists/{id}
+Authorization: Bearer <token>
+```
+
+**Response shape**
+
+```json
+{
+  "id": 1,
+  "name": "Favoriten",
+  "created_at": 1794180269,
+  "song_count": 2,
+  "songs": [
+    { "position": 1, "track_id": 8, "title": "Technogal.mp3" },
+    { "position": 2, "track_id": 4, "title": "lied.wav" }
+  ]
+}
+```
+
+| Status | When | Example body |
+|---|---|---|
+| `200 OK` | The caller's playlist with its songs | the shape above |
+| `400 Bad Request` | `{id}` is not a plain positive number (`-1`, `0`, `0004`, `+4`, `abc`) | `{"error": "the playlist id must be a positive number"}` |
+| `400 Bad Request` | Digits, but too large to be an id | `{"error": "the playlist id is too large"}` |
+| `401 Unauthorized` | Same two messages as `GET /api/session` | |
+| `404 Not Found` | No playlist with that id, or it belongs to another user | `{"error": "playlist is not in your playlists"}` |
+| `429` / `500` | As in `POST /api/playlists` | |
+
+#### `POST /api/playlists/{id}/songs`
+
+Adds one library song at the end and answers the position it got. The song must be in
+the library, and the playlist must be the caller's. Counting and inserting happen in one
+transaction on one connection, so two callers cannot be given the same position: a second
+write waits for the first (`busy_timeout`) instead of answering a server error.
+
+```
+POST /api/playlists/{id}/songs
+Authorization: Bearer <token>
+```
+
+Body: one JSON object with `track_id` (a library id, the same number `GET /api/music`
+shows).
+
+**Response shape** — `201 Created` with `{"position": 3, "track_id": 8, "title": "Technogal.mp3"}`.
+
+| Status | When | Example body |
+|---|---|---|
+| `201 Created` | Song added at the end | the shape above |
+| `400 Bad Request` | Body is not one JSON object with `track_id` | `{"error": "body must be one JSON object with \"track_id\""}` |
+| `400 Bad Request` | `track_id` is not a positive number | `{"error": "track_id must be a positive number"}` |
+| `400 Bad Request` | The playlist already holds 200 songs; nothing is dropped | `{"error": "a playlist holds at most 200 songs"}` |
+| `401` | Same two messages as `GET /api/session` | |
+| `404 Not Found` | Playlist is not yours | `{"error": "playlist is not in your playlists"}` |
+| `404 Not Found` | The song is not in the library | `{"error": "song is not in the library"}` |
+| `429` / `500` | As in `POST /api/playlists` | |
+
+#### `DELETE /api/playlists/{id}/songs/{position}`
+
+Removes one slot and renumbers the songs after it, so the positions stay 1..n. A `204`
+has no body and sets no `Content-Type`.
+
+| Status | When | Body |
+|---|---|---|
+| `204 No Content` | The slot was removed | none |
+| `400 Bad Request` | `{position}` is not a plain positive number | `{"error": "the position must be a positive number"}` |
+| `400 Bad Request` | Digits, but too large to be a position (past int64) | `{"error": "the position is too large"}` |
+| `401` | Same two messages as `GET /api/session` | JSON |
+| `404 Not Found` | Playlist is not yours | `{"error": "playlist is not in your playlists"}` |
+| `404 Not Found` | Nothing at that position; the answer names it | `{"error": "no song at position 3 in this playlist"}` |
+| `429` / `500` | As in `POST /api/playlists` | JSON |
+
+#### `DELETE /api/playlists/{id}`
+
+Deletes the playlist and its song rows. **The songs stay in the shared library** — a
+playlist is a list of references, not a copy of the file. `204 No Content`, no body. The
+other statuses are as above.
+
+---
+
+### Queue
+
+A queue is one user's ordered list of songs. It stores only which songs and in which
+order — nothing about what filled it, so any source produces the same shape. That is the
+point: filling it from a playlist is one source, and a plain queue feature later is
+another source, not a different queue.
+
+The queue is per user, positions are 1-based and contiguous like inside a playlist, a
+song may appear twice, and one queue holds at most 200 entries so one answer stays
+bounded. What is *currently playing* is not stored here: playback position is device
+state, and the server only knows the order.
+
+The queue has its own rate-limit bucket (10 requests per IP, one token every 12 s),
+separate from the playlists and the library, so a player reading its queue cannot stop a
+client from building a playlist.
+
+**Sources** — `POST /api/queue` takes `source` and, for a source that names something,
+`source_id`:
+
+| Source | What it fills the queue with | Needs `source_id` |
+|---|---|---|
+| `playlist` | The songs of one playlist, in the playlist's position order | yes, and the playlist must be yours |
+| `library` | Every song in the shared library, ordered by `id` | no — sending one is refused |
+| `track` | One song by itself | yes |
+
+Adding a source later (search results, "songs you uploaded") is one branch in
+`queueSongIDs`; nothing else about a queue changes.
+
+#### `POST /api/queue`
+
+Replaces the queue with the songs of one source. Filling is not adding: starting a second
+playlist must not keep the songs of the first.
+
+```
+POST /api/queue
+Authorization: Bearer <token>
+```
+
+Body: one JSON object with `source` (and `source_id` where the source needs it).
+
+**Response shape** — `200 OK` with the queue as it now is:
+
+```json
+[
+  { "position": 1, "track_id": 8, "title": "Technogal.mp3" },
+  { "position": 2, "track_id": 4, "title": "lied.wav" }
+]
+```
+
+| Status | When | Example body |
+|---|---|---|
+| `200 OK` | Queue replaced. A source with no songs (`playlist` with none, an empty library) fills an empty queue, which is `[]` and is not error. | the shape above |
+| `400 Bad Request` | Body is not one JSON object with `source` | `{"error": "body must be one JSON object with \"source\""}` |
+| `400 Bad Request` | `source` is not `playlist`, `library` or `track` | `{"error": "source must be \"playlist\", \"library\" or \"track\""}` |
+| `400 Bad Request` | `source_id` sent for `library` — sent is sent, so `0` counts as sent | `{"error": "source_id is not used for the whole library"}` |
+| `400 Bad Request` | `source_id` is missing or not a positive number for `playlist` or `track` | `{"error": "source_id must be a positive number"}` |
+| `400 Bad Request` | The source has more songs than the queue holds; the queue is not left half filled, because the refusal happens before anything is deleted | `{"error": "the queue holds at most 200 songs"}` |
+| `401` | Same two messages as `GET /api/session` | |
+| `404 Not Found` | The playlist named by `source_id` is not yours | `{"error": "playlist is not in your playlists"}` |
+| `404 Not Found` | The song named by `source_id` is not in the library. A `track` source names exactly one song, so it cannot be an empty queue here. | `{"error": "song is not in the library"}` |
+| `429` / `500` | As in `POST /api/playlists`, with the queue messages | |
+
+#### `GET /api/queue`
+
+The caller's queue in position order. An empty queue answers `[]`, never `null`. `200 OK`
+with the shape above; `401`, `429` and `500` as in `POST /api/queue`.
+
+#### `POST /api/queue/songs`
+
+Adds one song at the end without a source — the plain queue feature. `201 Created` with
+`{"position": 3, "track_id": 8, "title": "Technogal.mp3"}`. `track_id` must be in the
+library; the limit is a real limit, not a silent drop. Statuses as in
+`POST /api/playlists/{id}/songs`.
+
+#### `DELETE /api/queue/{position}`
+
+Removes one slot and renumbers the rest. `204 No Content`, no body. An empty slot names
+the position: `{"error": "no song at position 3 in this queue"}`. A position that is digits
+but past int64 is `400` with `{"error": "the position is too large"}` — the same rule as an
+id. Other statuses as above.
+
+#### `DELETE /api/queue`
+
+Empties the queue. `204 No Content`, no body. The songs stay in the library.
+
+**What a client has to know**
+
+- The server never says which song a device is playing. A client that plays keeps its own
+  position in the list; the server only keeps the order. Two devices reading the same
+  queue see the same list, not the same playback.
+- The audio for an entry comes from `GET /api/music/{track_id}`. A queue entry is a
+  reference, so the title and the file can change under it.
+
+---
+
 ## Upcoming
 
-Beyond the endpoints above, nothing exists yet. Planned, in rough order:
+Planned, in rough order:
 
-- `GET /api/music` — list the library for any logged-in user, and
-  `GET /api/music/{id}` — send one stored file back. Upload is implemented, so
-  the next step is reading the library; both need the same `Authorization: Bearer`
-  rule as `GET /api/session`, and an unauthenticated reader must be refused with
-  the same 401 messages.
+- `Range` on `GET /api/music/{id}` — serve one byte range with `206 Partial Content`,
+  which is what a player needs for seeking. A client that only reads the whole stream
+  works with the endpoint as it is now.
 - `POST /api/logout` — delete the session row for the presented token and
   answer `204 No Content`. Same `Authorization: Bearer` rule as
   `GET /api/session`; a client that keeps the token after logout should be
   refused with the same 401 message as an expired session.
-- The client features (playlists, player, equalizer) have no API yet. When their
-  endpoints are designed, they go under **Implemented** here — same status
-  tables, same error shape.
+- Reordering inside a playlist or a queue — move a song to another position
+  (`PUT /api/playlists/{id}/songs/{position}` with a `target`), which is what a client
+  that lets a user drag a song needs. Shuffle and repeat are not here: they are a device
+  choice, not something the server can answer.
+- `PATCH /api/playlists/{id}` — rename a playlist. Creating and deleting are covered.
+- Pagination for `GET /api/music` and `GET /api/playlists`, once one answer is too much.
+  The current caps (200 songs per playlist, 200 entries per queue) keep one answer
+  bounded until then.
+- The equalizer has no API yet. Playlists and the queue do — see **Implemented** above.
 
 ---
 
@@ -286,3 +631,8 @@ current tab and shows it from there — the raw token is still only ever returne
 `POST /api/login`, and the database still stores only its hash. On load the page calls
 `GET /api/session` with the stored token, so the 401 path is visible
 without logging in again.
+
+There is one card per implemented endpoint group: register, login, session check,
+upload, list, stream, playlists, queue. For the stream the log shows which chunks
+arrived and when, because that is the point of that endpoint; for the playlist and queue
+cards the responses are JSON, so they are shown as they come.

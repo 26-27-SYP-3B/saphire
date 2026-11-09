@@ -65,9 +65,73 @@
       </form>
     </section>
 
+    <section>
+      <h2><span class="method">GET</span> /api/music</h2>
+      <p class="rules">id and title for every song, ordered by id · 10 requests per IP, one token every 12 s</p>
+      <button type="button" id="list-songs">List songs</button>
+    </section>
+
+    <section>
+      <h2><span class="method">GET</span> /api/music/{id}</h2>
+      <p class="rules">a positive song id (digits only) · the file in 32 KiB chunks with a flush after each · 10 requests per IP, one token every 10 s · errors only before the first byte</p>
+      <label for="stream-id">song id</label>
+      <input id="stream-id" inputmode="numeric" placeholder="4">
+      <button type="button" id="stream-song">Stream it</button>
+    </section>
+
+    <section>
+      <h2><span class="method">POST</span> /api/playlists</h2>
+      <p class="rules">a playlist belongs to you, not to the shared library · name max 100 characters, control characters dropped, names are not unique · 10 requests per IP, one token every 12 s</p>
+      <form id="playlist-form">
+        <label for="playlist-name">name</label>
+        <input id="playlist-name" spellcheck="false" autocomplete="off">
+        <button type="submit">Create playlist</button>
+      </form>
+      <div class="actions">
+        <button type="button" id="list-playlists" class="secondary">List my playlists</button>
+      </div>
+    </section>
+
+    <section>
+      <h2><span class="method">GET</span> /api/playlists/{id}</h2>
+      <p class="rules">only your own · another user's playlist answers 404 as "not in your playlists" · positions are 1..n and stay contiguous after a remove · titles come from the library row</p>
+      <label for="playlist-id">playlist id</label>
+      <input id="playlist-id" inputmode="numeric" placeholder="1">
+      <label for="add-track-id">track id to add</label>
+      <input id="add-track-id" inputmode="numeric" placeholder="4">
+      <label for="remove-position">position to remove</label>
+      <input id="remove-position" inputmode="numeric" placeholder="1">
+      <div class="actions">
+        <button type="button" id="show-playlist">Show it</button>
+        <button type="button" id="add-to-playlist" class="secondary">Add the track id</button>
+        <button type="button" id="remove-from-playlist" class="secondary">Remove the position</button>
+        <button type="button" id="delete-playlist" class="secondary">Delete the playlist</button>
+      </div>
+    </section>
+
+    <section>
+      <h2><span class="method">POST</span> /api/queue</h2>
+      <p class="rules">source is <code>playlist</code>, <code>library</code> or <code>track</code> · filling <em>replaces</em> the queue · a queue stores only songs and order, never what filled it · 10 requests per IP, one token every 12 s, its own bucket</p>
+      <label for="queue-source">source</label>
+      <input id="queue-source" spellcheck="false" autocomplete="off" placeholder="playlist">
+      <label for="queue-source-id">source id (not used for library)</label>
+      <input id="queue-source-id" inputmode="numeric" placeholder="1">
+      <label for="queue-append-id">track id to append</label>
+      <input id="queue-append-id" inputmode="numeric" placeholder="4">
+      <label for="queue-position">position to remove</label>
+      <input id="queue-position" inputmode="numeric" placeholder="1">
+      <div class="actions">
+        <button type="button" id="fill-queue">Fill from the source</button>
+        <button type="button" id="read-queue" class="secondary">Read the queue</button>
+        <button type="button" id="append-queue" class="secondary">Append one song</button>
+        <button type="button" id="remove-queue" class="secondary">Remove the position</button>
+        <button type="button" id="clear-queue" class="secondary">Clear the queue</button>
+      </div>
+    </section>
+
     <section class="planned">
-      <h2>No endpoints yet</h2>
-      <p class="rules">GET /api/music · GET /api/music/{id} · POST /api/logout — planned in api-docs.md, so a request to any of them answers 404.</p>
+      <h2>Not implemented yet</h2>
+      <p class="rules"><code>POST /api/logout</code> answers 404. <code>Range</code> on GET /api/music/{id} is not implemented, so a Range request gets the whole file with 200 — a player that seeks needs it. Renaming a playlist and moving a song to another position are planned in api-docs.md.</p>
     </section>
 
   </div>
