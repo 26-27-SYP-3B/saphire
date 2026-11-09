@@ -50,6 +50,22 @@ id. `GET /api/music/{id}` — one song, streamed in 32 KiB chunks with a flush a
 each, so a player gets the start of a file before the rest is read. Both need the
 same `Authorization: Bearer` rule as `GET /api/session`.
 
+`POST /api/playlists` and `GET /api/playlists` — playlists belong to the user who
+created them (the library is shared, so this is the one place the server keeps user
+data). `GET /api/playlists/{id}` shows one playlist with its songs,
+`POST /api/playlists/{id}/songs` adds one, `DELETE /api/playlists/{id}/songs/{position}`
+removes one, `DELETE /api/playlists/{id}` deletes the playlist. Positions are 1..n and
+stay contiguous, so a client can address a slot directly. Deleting a playlist leaves the
+songs in the library.
+
+`POST /api/queue` fills one user's queue from a source and answers it; `GET /api/queue`
+reads it, `POST /api/queue/songs` adds one song, `DELETE /api/queue/{position}` removes
+one, `DELETE /api/queue` clears it. A queue stores only which songs in which order and
+nothing about what filled it — `playlist`, `library` and `track` are the sources, and a
+new source is one branch in `queueSongIDs`. Starting a playlist means filling the queue
+from it; the plain queue feature later is the same endpoints with another source. What a
+device is currently playing is not stored on the server, because that is device state.
+
 ## Development frontend
 
 Run the server from `server/` and open <http://localhost:8080/> (it forwards to

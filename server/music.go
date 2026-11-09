@@ -45,9 +45,10 @@ const (
 	streamChunkBytes = 32 << 10 // 32 KiB
 )
 
-// songIDPattern is the id as the database writes it: digits only, no sign, no leading
-// zeros. "0" and "-1" are not ids, and "0004" would be the same song under two names.
-var songIDPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
+// positiveIDPattern is an id as the database writes it: digits only, no sign, no
+// leading zeros. "0" and "-1" are not ids, and "0004" would be the same song or the
+// same slot under two names. It is used for song ids and for positions.
+var positiveIDPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
 
 // audioExtensions are the formats the library accepts, with the content type
 // they are reported as. http.DetectContentType cannot sniff every audio
@@ -194,24 +195,30 @@ func storedFileName(ext string) (string, error) {
 	return hex.EncodeToString(buf) + ext, nil
 }
 
-// sanitizeTitle makes the name the client sent safe to show in the shared
-// library: base name only, no control characters, at most maxTitleLen characters.
-func sanitizeTitle(name string) string {
-	name = path.Base(strings.ReplaceAll(name, "\x00", ""))
-
+// withoutControlChars copies value without control characters, at most maxLen
+// characters. A name is shown to a person, so this counts characters, not bytes —
+// counting bytes would cut a multi-byte letter in half. Both a title and a playlist
+// name are cleaned this way, so they agree on what is acceptable.
+func withoutControlChars(value string, maxLen int) string {
 	var b strings.Builder
 	count := 0
-	for _, r := range name {
+	for _, r := range value {
 		if r < 0x20 || r == 0x7f {
 			continue
 		}
-		if count >= maxTitleLen {
+		if count >= maxLen {
 			break
 		}
 		b.WriteRune(r)
 		count++
 	}
 	return strings.TrimSpace(b.String())
+}
+
+// sanitizeTitle makes the name the client sent safe to show in the shared library:
+// base name only, no control characters, at most maxTitleLen characters.
+func sanitizeTitle(name string) string {
+	return withoutControlChars(path.Base(strings.ReplaceAll(name, "\x00", "")), maxTitleLen)
 }
 
 // uploadHandler answers POST /api/music/upload for a logged-in user.
@@ -385,7 +392,7 @@ func streamHandler(db *sql.DB, library string, limiter *rateLimiter) http.Handle
 		// Ids are positive integers as the database produces them, so a form like "-1",
 		// "0", "0004" or "+4" is not an id even though it parses as a number.
 		idText := r.PathValue("id")
-		if !songIDPattern.MatchString(idText) {
+		if !positiveIDPattern.MatchString(idText) {
 			writeError(w, http.StatusBadRequest, "the song id must be a positive number")
 			return
 		}

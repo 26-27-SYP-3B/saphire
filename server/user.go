@@ -31,6 +31,14 @@ func OpenDB() (*sql.DB, error) {
 		return nil, err
 	}
 
+	// SQLite lets one writer at a time. Without this, two clients that write at the same
+	// moment (two songs added to one queue) would answer the second with a server error
+	// instead of the position it asked for. Waiting briefly is what keeps the answer honest.
+	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
+		db.Close()
+		return nil, err
+	}
+
 	// Note: the schema changed (name/email -> username/password_hash). If an
 	// old saphire.db exists, delete it or migrate it manually.
 	_, err = db.Exec(`
@@ -56,8 +64,17 @@ func OpenDB() (*sql.DB, error) {
 		return nil, err
 	}
 
-	// The library table lives in music.go, its domain file.
+	// The library table lives in music.go, its domain file. The same for playlists
+	// and the queue.
 	if err := ensureTrackTable(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := ensurePlaylistTables(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := ensureQueueTable(db); err != nil {
 		db.Close()
 		return nil, err
 	}

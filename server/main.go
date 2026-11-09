@@ -46,6 +46,11 @@ func main() {
 	// songs cannot starve the session checks.
 	libraryLimiter := newRateLimiter(10, 12*time.Second)
 	streamLimiter := newRateLimiter(10, 10*time.Second)
+	// Playlists and the queue are separate from each other and from the library: a
+	// client that builds a playlist should not be able to stop playback, and a player
+	// that reads its queue should not be able to stop the library.
+	playlistLimiter := newRateLimiter(10, 12*time.Second)
+	queueLimiter := newRateLimiter(10, 12*time.Second)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/register", registerHandler(db, registerLimiter))
@@ -54,6 +59,22 @@ func main() {
 	mux.HandleFunc("POST /api/music/upload", uploadHandler(db, library, uploadLimiter))
 	mux.HandleFunc("GET /api/music", listHandler(db, libraryLimiter))
 	mux.HandleFunc("GET /api/music/{id}", streamHandler(db, library, streamLimiter))
+
+	// Playlists belong to the user who created them. The queue is the same shape for
+	// every source: filling it from a playlist is one of its sources, so a plain queue
+	// feature later is another branch in queueSongIDs, not a new endpoint.
+	mux.HandleFunc("POST /api/playlists", createPlaylistHandler(db, playlistLimiter))
+	mux.HandleFunc("GET /api/playlists", listPlaylistsHandler(db, playlistLimiter))
+	mux.HandleFunc("GET /api/playlists/{id}", getPlaylistHandler(db, playlistLimiter))
+	mux.HandleFunc("POST /api/playlists/{id}/songs", addPlaylistSongHandler(db, playlistLimiter))
+	mux.HandleFunc("DELETE /api/playlists/{id}/songs/{position}", removePlaylistSongHandler(db, playlistLimiter))
+	mux.HandleFunc("DELETE /api/playlists/{id}", deletePlaylistHandler(db, playlistLimiter))
+
+	mux.HandleFunc("POST /api/queue", fillQueueHandler(db, queueLimiter))
+	mux.HandleFunc("GET /api/queue", getQueueHandler(db, queueLimiter))
+	mux.HandleFunc("POST /api/queue/songs", appendQueueEntryHandler(db, queueLimiter))
+	mux.HandleFunc("DELETE /api/queue/{position}", removeQueueEntryHandler(db, queueLimiter))
+	mux.HandleFunc("DELETE /api/queue", clearQueueHandler(db, queueLimiter))
 
 	// The development frontend in static/, mounted under its own prefix so it cannot
 	// take over a path an API pattern owns. See static.go.
@@ -82,4 +103,11 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // writeError sends the {"error": "…"} body that the client form shows below its fields.
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+// writeNoContent answers a successful delete. There is no body, so the JSON content
+// type must not be set: a 204 with Content-Type: application/json and no body is what
+// a client has to read as "nothing to parse".
+func writeNoContent(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusNoContent)
 }
