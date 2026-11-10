@@ -6,7 +6,6 @@ const invalidMessage = 'Server-Adresse: http:// oder https:// mit Host';
 const unreachableMessage = 'Der Server ist nicht erreichbar.';
 const busyMessage = 'Der Server ist erreichbar, aber gerade ausgelastet. Versuche es gleich noch einmal.';
 const notSaphireMessage = 'Die Adresse antwortet nicht wie ein Saphire-Server.';
-const confirmedMessage = 'Server bestätigt.';
 
 /// The base without trailing slashes: every path is built as base + '/api/...',
 /// and with a slash the server would see '//api/...' instead of the check.

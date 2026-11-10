@@ -61,17 +61,24 @@ Future<App> openApp(
   final stub = adapter ?? saphireServer();
   final dio = Dio()..httpClientAdapter = stub;
 
-  // main.dart does this too, and each test starts from the launch default rather
-  // than from whatever the previous test saved.
-  apiBaseUrl = store.serverBase ?? launchBase;
+  // Each test starts from the launch default rather than from whatever the previous
+  // test saved; a stored server is applied the way SettingsStore applies it.
+  if (store.serverBase == null) {
+    apiBaseUrl = launchBase;
+  } else {
+    await store.save(store.serverBase!);
+  }
 
   final wiring = Wiring(current);
-  addTearDown(wiring.dispose);
+  // The app's State.dispose releases the player when the test tears the tree down, the
+  // same way a run ends. Disposing it here as well made the test hang (tried with
+  // addTearDown(wiring.dispose)), so this helper leaves it to the app.
 
   await tester.pumpWidget(
     SaphireApp(
       repository: AuthRepository(dio, current),
       uploads: UploadRepository(dio, current),
+      library: wiring.library,
       playlists: wiring.playlists,
       queues: wiring.queues,
       queue: wiring.queue,
@@ -138,7 +145,9 @@ void main() {
     expect(find.text('Gib die Adresse deines Saphire-Servers ein.'), findsOneWidget);
   });
 
-  test('without a stored server even /login leads to the setup', () async {
+  // The guard is only read when a route is resolved, so this has to run inside a
+  // widget: a router that was never built has no current location to redirect.
+  testWidgets('without a stored server even /login leads to the setup', (tester) async {
     final settings = SettingsStore();
     final session = SessionStore();
     final dio = Dio()..httpClientAdapter = saphireServer();
@@ -148,6 +157,7 @@ void main() {
     final router = buildRouter(
       auth: AuthRepository(dio, session),
       uploads: UploadRepository(dio, session),
+      library: wiring.library,
       playlists: wiring.playlists,
       queues: wiring.queues,
       queue: wiring.queue,
@@ -158,24 +168,25 @@ void main() {
     );
     addTearDown(router.dispose);
 
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
     router.go('/login');
+    await tester.pumpAndSettle();
 
     expect(router.routerDelegate.currentConfiguration.uri.path, '/setup');
   });
 
-  testWidgets('a reachable address is confirmed and the check really goes to the server', (tester) async {
+  testWidgets('a reachable address is confirmed and leads straight to the login', (tester) async {
     final app = await openApp(tester);
 
     await connect(tester, 'https://musik.meinserver.at/');
 
-    expect(find.text('Server bestätigt.'), findsOneWidget);
     // The check goes to the typed host, not to the launch default.
     expect(app.adapter.lastOptions?.uri.host, 'musik.meinserver.at');
     expect(app.adapter.lastOptions?.uri.path, '/api/session');
 
-    // Nothing is stored yet, the address is only saved when the setup is finished.
-    expect(app.settings.serverBase, isNull);
-    expect(find.widgetWithText(TextButton, 'Weiter'), findsOneWidget);
+    // One button, no second step: the confirmed address is stored and the login follows.
+    expect(app.settings.serverBase, 'https://musik.meinserver.at');
+    expect(find.byType(AuthScreen), findsOneWidget);
   });
 
   testWidgets('an empty field is stopped before any request', (tester) async {
@@ -199,8 +210,7 @@ void main() {
 
     await connect(tester, 'https://musik.meinserver.at');
 
-    expect(find.text('Server bestätigt.'), findsOneWidget);
-    expect(find.byType(SetupScreen), findsOneWidget);
+    expect(find.byType(AuthScreen), findsOneWidget);
   });
 
   testWidgets('an address with a path is refused before any request', (tester) async {
@@ -210,21 +220,6 @@ void main() {
 
     expect(find.text('Server-Adresse: http:// oder https:// mit Host'), findsOneWidget);
     expect(app.adapter.requests, isEmpty);
-  });
-
-  testWidgets('an address edited after the check is not saved unchecked', (tester) async {
-    final app = await openApp(tester);
-
-    await connect(tester, 'https://musik.meinserver.at/');
-    expect(find.widgetWithText(TextButton, 'Weiter'), findsOneWidget);
-
-    await tester.enterText(find.byType(TextFormField), 'https://musik.anders.at');
-    await tester.pumpAndSettle();
-
-    // The confirmation belonged to the old address, so the way on is gone again.
-    expect(find.widgetWithText(TextButton, 'Weiter'), findsNothing);
-    expect(find.text('Server bestätigt.'), findsNothing);
-    expect(app.settings.serverBase, isNull);
   });
 
   testWidgets('the finished setup saves the server, the login follows, the home screen ends it', (tester) async {
@@ -240,8 +235,6 @@ void main() {
     );
 
     await connect(tester, 'https://musik.meinserver.at/');
-    await tester.tap(find.widgetWithText(TextButton, 'Weiter'));
-    await tester.pumpAndSettle();
 
     expect(find.byType(AuthScreen), findsOneWidget);
     await tester.enterText(find.byType(TextFormField).first, 'lukas');
@@ -262,8 +255,6 @@ void main() {
     expect(find.byType(SetupScreen), findsOneWidget);
 
     await connect(tester, 'https://musik.meinserver.at/');
-    await tester.tap(find.widgetWithText(TextButton, 'Weiter'));
-    await tester.pumpAndSettle();
 
     expect(app.session.isLoggedIn, false);
     expect(find.byType(AuthScreen), findsOneWidget);
@@ -317,5 +308,33 @@ void main() {
     expect(app.settings.serverBase, 'https://musik.anders.at');
     expect(app.session.isLoggedIn, false);
     expect(find.byType(AuthScreen), findsOneWidget);
+  });
+
+  // The same address is nothing to change: no request, and the session stays.
+  testWidgets('the settings page with the address it already has keeps the session', (tester) async {
+    final app = await openApp(
+      tester,
+      settings: SettingsStore()..serverBase = 'https://musik.meinserver.at',
+      session: loggedIn(),
+      // The library asks who the session belongs to, and the page asks for nothing.
+      adapter: StubAdapter(200, {'id': 7.0, 'username': 'lukas'}),
+    );
+
+    expect(find.byType(HomeScreen), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Konto'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Einstellungen'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SettingsScreen), findsOneWidget);
+
+    await connect(tester, 'https://musik.meinserver.at', 'Server ändern');
+
+    // Both calls are the library's session check with the token. The page sent no check
+    // of the address, which is what keeping the address means.
+    expect(app.adapter.requests.where((r) => r.headers['Authorization'] == null), isEmpty);
+    expect(app.session.isLoggedIn, true);
+    expect(find.byType(HomeScreen), findsOneWidget);
   });
 }

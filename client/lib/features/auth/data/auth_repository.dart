@@ -71,5 +71,5 @@ class AuthRepository {
     }
   }
 
-  void logout() => session.clear();
+  Future<void> logout() => session.clear();
 }

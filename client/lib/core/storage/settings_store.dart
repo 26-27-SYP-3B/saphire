@@ -25,6 +25,9 @@ class SettingsStore {
       if (saved != null) {
         final data = jsonDecode(saved) as Map<String, dynamic>;
         store.serverBase = data['server'] as String?;
+        // The only place the address the app talks to is set, so the store and the
+        // repositories cannot disagree.
+        if (store.serverBase != null) apiBaseUrl = store.serverBase!;
       }
     } catch (_) {
       return SettingsStore(storage);
@@ -32,13 +35,19 @@ class SettingsStore {
     return store;
   }
 
-  void save(String serverBase) {
+  Future<void> save(String serverBase) async {
     this.serverBase = serverBase;
 
     // The repositories read apiBaseUrl while they work, so a new server takes
     // effect without rebuilding them.
     apiBaseUrl = serverBase;
 
-    _storage?.write(key: _key, value: jsonEncode({'server': serverBase})).ignore();
+    // Awaited, unlike the session write: remembering the server is what this store is
+    // for, and the login write that follows can otherwise run in parallel with it,
+    // which the web plugin cannot handle (see session_store.dart). A broken keychain
+    // must not block the caller: the address works in memory for this run.
+    try {
+      await _storage?.write(key: _key, value: jsonEncode({'server': serverBase}));
+    } catch (_) {}
   }
 }

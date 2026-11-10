@@ -8,8 +8,8 @@ import '../../../shared/widgets/server_url_field.dart';
 import '../../auth/data/auth_repository.dart';
 import '../data/server_check.dart';
 
-/// Der geführte Start beim ersten Aufruf: einen Server hinzufügen. Der Knopf
-/// prüft die Adresse, 'Weiter' geht erst nach der Bestätigung zum Anmelden.
+/// Der geführte Start beim ersten Aufruf: einen Server hinzufügen. 'Verbinden' prüft
+/// die Adresse und führt bei einer Bestätigung direkt zur Anmeldung.
 class SetupScreen extends StatefulWidget {
   const SetupScreen({
     super.key,
@@ -31,25 +31,7 @@ class _SetupScreenState extends State<SetupScreen> {
   final _url = TextEditingController();
 
   bool _isChecking = false;
-
-  /// Die Adresse, die die Prüfung bestätigt hat. 'Weiter' speichert genau diese,
-  /// nicht das, was inzwischen im Feld steht.
-  String? _confirmedBase;
   String? _note;
-
-  @override
-  void initState() {
-    super.initState();
-    // Jede Änderung am Feld macht die Bestätigung ungültig, damit 'Weiter' nie
-    // eine ungeprüfte Adresse speichert.
-    _url.addListener(() {
-      if (_confirmedBase == null && _note == null) return;
-      setState(() {
-        _confirmedBase = null;
-        _note = null;
-      });
-    });
-  }
 
   @override
   void dispose() {
@@ -65,25 +47,24 @@ class _SetupScreenState extends State<SetupScreen> {
     setState(() {
       _isChecking = true;
       _note = null;
-      _confirmedBase = null;
     });
 
     final base = normalizeBase(_url.text.trim());
     final message = await checkServer(widget.dio, base);
     if (!mounted) return;
-    setState(() {
-      _isChecking = false;
-      _confirmedBase = message == null ? base : null;
-      _note = message ?? confirmedMessage;
-    });
-  }
 
-  void _next() {
-    final base = _confirmedBase;
-    if (base == null) return;
+    if (message != null) {
+      setState(() {
+        _isChecking = false;
+        _note = message;
+      });
+      return;
+    }
+
     // Eine Session von einem früheren Server darf den Wechsel nicht überleben.
-    widget.repository.logout();
-    widget.settings.save(base);
+    await widget.repository.logout();
+    await widget.settings.save(base);
+    if (!mounted) return;
     context.go('/login');
   }
 
@@ -96,15 +77,10 @@ class _SetupScreenState extends State<SetupScreen> {
         Text('Gib die Adresse deines Saphire-Servers ein.'),
         const SizedBox(height: 16),
         ServerUrlField(controller: _url, enabled: !_isChecking),
-        if (_confirmedBase != null) ...[
-          const SizedBox(height: 16),
-          TextButton(onPressed: _next, child: const Text('Weiter')),
-        ],
       ],
       buttonLabel: _isChecking ? 'Wird geprüft…' : 'Verbinden',
       onSubmitted: _isChecking ? null : _connect,
       note: _note,
-      noteIsError: _confirmedBase == null,
     );
   }
 }

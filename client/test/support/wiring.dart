@@ -51,8 +51,9 @@ class Wiring {
 SessionStore loggedIn() =>
     SessionStore()..save('a' * 64, DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch ~/ 1000);
 
-/// The settings a returning user has: a server was saved by the first run. A test that
-/// checks the first run builds its own empty SettingsStore.
-SettingsStore withServer() => SettingsStore()..serverBase = 'http://127.0.0.1:8080';
+/// The settings a returning user has: a server was saved by the first run. Through
+/// save(), so the value the repositories read is set the way the app sets it. A test
+/// that checks the first run builds its own empty SettingsStore.
+SettingsStore withServer() => SettingsStore()..save('http://127.0.0.1:8080');
 
 Dio dioWith(StubAdapter? adapter) => adapter == null ? Dio() : (Dio()..httpClientAdapter = adapter);

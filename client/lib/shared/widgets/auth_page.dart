@@ -16,9 +16,7 @@ class AuthPage extends StatelessWidget {
     this.linkQuestion,
     this.linkLabel,
     this.linkTo,
-    this.linkAction,
     this.note,
-    this.noteIsError = true,
   });
 
   final String title;
@@ -32,15 +30,8 @@ class AuthPage extends StatelessWidget {
   final String? linkLabel;
   final String? linkTo;
 
-  /// Was der Link zusätzlich zum Gehen tun muss, zum Beispiel eine Entscheidung
-  /// speichern. Null: er geht nur.
-  final VoidCallback? linkAction;
-
-  /// Was nach dem Knopf passiert ist: eine Fehlermeldung oder eine Bestätigung.
+  /// Was nach dem Knopf passiert ist: die Meldung des Servers.
   final String? note;
-
-  /// Eine Bestätigung ist keine Warnung und steht deshalb nicht in der Fehlerfarbe.
-  final bool noteIsError;
 
   @override
   Widget build(BuildContext context) {
@@ -76,14 +67,7 @@ class AuthPage extends StatelessWidget {
                     ),
                     if (note != null) ...[
                       const SizedBox(height: 16),
-                      Text(
-                        note!,
-                        style: TextStyle(
-                          color: noteIsError
-                              ? theme.colorScheme.error
-                              : theme.colorScheme.primary,
-                        ),
-                      ),
+                      Text(note!, style: TextStyle(color: theme.colorScheme.error)),
                     ],
                     const SizedBox(height: 24),
                     FilledButton(onPressed: onSubmitted, child: Text(buttonLabel)),
@@ -98,7 +82,7 @@ class AuthPage extends StatelessWidget {
                             style: theme.textTheme.bodyMedium?.copyWith(color: muted),
                           ),
                           TextButton(
-                            onPressed: linkAction ?? (() => context.go(linkTo!)),
+                            onPressed: () => context.go(linkTo!),
                             child: Text(label),
                           ),
                         ],
