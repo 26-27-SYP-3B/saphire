@@ -15,9 +15,10 @@ class LibraryException implements Exception {
   String toString() => message;
 }
 
-/// Reads the library. GET /api/music is only planned on the server
-/// (api-docs.md, Upcoming), so this reads exactly the shape that is documented:
-/// every song as its id and its title.
+/// Reads the library. GET /api/music is the shared library of the server
+/// (api-docs.md, Implemented), so this reads exactly the shape that is documented:
+/// every song as its id, its title, the artist its tags name and the length the
+/// server worked out.
 class LibraryRepository {
   LibraryRepository(this._dio, this.session);
 

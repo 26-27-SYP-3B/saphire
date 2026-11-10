@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/utils/pick_audio.dart';
 import '../../../shared/widgets/player_bar.dart';
+import '../../../shared/widgets/nav_bar.dart';
 import '../../../shared/widgets/saphire_logo.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/user.dart';
@@ -38,12 +39,8 @@ const _placeholders = [
   (title: 'Good Times', meta: 'Playlist · 78 Songs', icon: Icons.west),
 ];
 
-const _navItems = [
-  (label: 'Home', icon: Icons.home, to: '/home'),
-  // No search screen yet, so this one stays a label.
-  (label: 'Suche', icon: Icons.search, to: ''),
-  (label: 'Bibliothek', icon: Icons.library_books, to: '/library'),
-];
+// The navigation items themselves are in shared/widgets/nav_bar.dart, so the library
+// screen shows the same list. Only the rest of the sidebar belongs to this page.
 
 /// What the server accepts (server/music.go): the client only says it up front,
 /// the upload itself is still checked on the server.
@@ -246,8 +243,7 @@ class _HomeScreenState extends State<HomeScreen> {
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
               child: SaphireLogo(size: 44),
             ),
-            for (final item in _navItems)
-              _navItem(item.label, item.icon, selected: item.to == '/home', to: item.to),
+            NavBar(selected: '/home'),
             _heading('Deine Inhalte'),
             for (final item in [
               (label: 'Eigene Dateien', icon: Icons.add),
@@ -296,22 +292,21 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _navItem(String label, IconData icon, {bool selected = false, String to = ''}) {
+  // Nothing is behind these, so they stay labels; the items that have a screen are
+  // in NavBar.
+  Widget _navItem(String label, IconData icon) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
-    final row = Row(
-      children: [
-        Icon(icon, size: 20, color: selected ? scheme.primary : scheme.onSurfaceVariant),
-        const SizedBox(width: 14),
-        Flexible(child: Text(label, style: theme.textTheme.labelLarge)),
-      ],
-    );
-
-    // Only what has a screen behind it can be tapped.
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
-      child: to.isEmpty ? row : InkWell(onTap: () => context.go(to), child: row),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 14),
+          Flexible(child: Text(label, style: theme.textTheme.labelLarge)),
+        ],
+      ),
     );
   }
 
