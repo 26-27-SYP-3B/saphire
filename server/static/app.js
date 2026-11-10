@@ -252,6 +252,22 @@ $("upload-form").addEventListener("submit", async (event) => {
   if (track) showSession("ok", "uploaded " + track.title + " as " + track.stored_name);
 });
 
+$("list-library").addEventListener("click", () => {
+  send("GET", "/api/music", { curl: `-X GET ${location.origin}/api/music${authFlag()}` });
+});
+
+$("get-track").addEventListener("click", () => {
+  const id = $("track-id").value.trim();
+  if (!id) {
+    addEntry({ status: null, method: "GET", path: "/api/music/{id}", ms: 0, text: "no id was typed, so nothing was sent" });
+    return;
+  }
+
+  // The answer is the file itself, so the body here is its bytes as text: enough to
+  // see the status, the content type and the length, not a playable audio stream.
+  send("GET", "/api/music/" + id, { curl: `-X GET ${location.origin}/api/music/${id}${authFlag()}` });
+});
+
 $("clear-log").addEventListener("click", () => {
   $("log").textContent = "";
 });

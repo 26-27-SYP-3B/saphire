@@ -65,9 +65,27 @@
       </form>
     </section>
 
+    <section>
+      <h2><span class="method">GET</span> /api/music</h2>
+      <p class="rules">Authorization: Bearer &lt;token&gt; · the shared library, in the order songs were added · an empty library answers <code>[]</code> · 10 requests per IP, one token every 12 s (its own bucket, shared with the file route)</p>
+      <div class="actions">
+        <button type="button" id="list-library">List the library</button>
+      </div>
+    </section>
+
+    <section>
+      <h2><span class="method">GET</span> /api/music/{id}</h2>
+      <p class="rules">the stored file, with the content type recorded on the row · a Range header answers 206, so a player can start before the whole file is read · the same library bucket</p>
+      <label for="track-id">song id</label>
+      <input id="track-id" spellcheck="false" autocomplete="off" placeholder="4">
+      <div class="actions">
+        <button type="button" id="get-track">Fetch the file</button>
+      </div>
+    </section>
+
     <section class="planned">
       <h2>No endpoints yet</h2>
-      <p class="rules">GET /api/music · GET /api/music/{id} · POST /api/logout — planned in api-docs.md, so a request to any of them answers 404.</p>
+      <p class="rules">POST /api/logout — planned in api-docs.md, so a request to it answers 404.</p>
     </section>
 
   </div>

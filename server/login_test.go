@@ -27,7 +27,7 @@ func TestLogin(t *testing.T) {
 	}{
 		{`{"username": "lukas", "password": "wrong-password"}`, http.StatusUnauthorized}, // unknown user and wrong password answer the same
 		{`{"username": "LUKAS", "password": "wrong-password"}`, http.StatusUnauthorized}, // normalized before lookup
-		{`{"username": "ab", "password": "valid-password"}`, http.StatusBadRequest},       // same field rules as registration
+		{`{"username": "ab", "password": "valid-password"}`, http.StatusBadRequest},      // same field rules as registration
 		{`{"username": "lukas", "password": "short"}`, http.StatusBadRequest},
 		{`not json`, http.StatusBadRequest},
 	}

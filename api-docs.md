@@ -194,13 +194,13 @@ curl -X POST localhost:8080/api/music/upload \
 | Part | Rules |
 |---|---|
 | `file` | Not empty, at most 500 MiB. Accepted audio extensions: `mp3`, `wav`, `m4a`, `ogg`, `opus`, `flac`, `aac`. If the content can be sniffed it must actually be audio, so a text file renamed `.mp3` is refused; formats the sniffer cannot name (M4A, Ogg, FLAC) are accepted on their extension. |
-| name | The name the client sends becomes the display title: base name only, no control characters, at most 200 characters. The file itself is stored under a generated name (16 random bytes as hex + the extension), so no client name can escape the library folder and no upload overwrites another song. |
+| name | Base name only, no control characters, at most 200 characters. An MP3 whose tags name a title (`TIT2`) uses that instead, so a file is titled by what it says about itself; the name is the fallback. The file itself is stored under a generated name (16 random bytes as hex + the extension), so no client name can escape the library folder and no upload overwrites another song. |
 
 **Responses**
 
 | Status | When | Example body |
 |---|---|---|
-| `201 Created` | File saved in the library and the row inserted | `{"id": 4, "uploaded_by": "lukas", "title": "song.mp3", "stored_name": "18cfd7db41d243d98cc87c4ab33dded6.wav", "size": 32, "content_type": "audio/wav", "uploaded_at": 1793974311}` |
+| `201 Created` | File saved in the library and the row inserted | `{"id": 4, "uploaded_by": "lukas", "title": "Neutrone (Remix)", "artist": "Kraftwerk", "duration_ms": 261, "stored_name": "18cfd7db41d243d98cc87c4ab33dded6.mp3", "size": 4237, "content_type": "audio/mpeg", "uploaded_at": 1793974311}` |
 | `401 Unauthorized` | Missing `Authorization: Bearer` header | `{"error": "authorization header with a Bearer token is missing"}` |
 | `401 Unauthorized` | Unknown or expired token | `{"error": "session is not valid or expired"}` |
 | `400 Bad Request` | Not `multipart/form-data`, no file, the field is not named `file`, an empty file, a name with no usable characters, or content that is not audio | `{"error": "only audio files are accepted (mp3, wav, m4a, ogg, opus, flac, aac)"}` |
@@ -214,8 +214,12 @@ curl -X POST localhost:8080/api/music/upload \
   cannot make the server read 500 MiB it would throw away.
 - The file is written before the row is inserted; if the insert fails, the file
   is removed again, so a library entry never points at a missing file.
-- `stored_name` is what the file is called inside the library folder. There is no
-  download endpoint yet — see **Upcoming**.
+- `stored_name` is what the file is called inside the library folder;
+  `GET /api/music/{id}` sends it back.
+- `artist` and `duration_ms` are what the file says about itself (`server/metadata.go`):
+  the `TPE1` tag and the length from the frame headers. Only MP3 can be measured from
+  the bytes, so the other accepted containers keep `0`, and a file with no tags keeps an
+  empty artist. A client shows a dash for those rather than a guess.
 - Database schema:
 
   ```sql
@@ -223,6 +227,8 @@ curl -X POST localhost:8080/api/music/upload \
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL REFERENCES user(id),
       title TEXT NOT NULL,
+      artist TEXT NOT NULL DEFAULT '',
+      duration_ms INTEGER NOT NULL DEFAULT 0,
       stored_name TEXT NOT NULL UNIQUE,
       size INTEGER NOT NULL,
       content_type TEXT NOT NULL,
@@ -230,24 +236,93 @@ curl -X POST localhost:8080/api/music/upload \
   )
   ```
 
+  A `saphire.db` created before these columns get them: `ensureTrackColumns` reads
+  `PRAGMA table_info(track)` and adds the missing ones, so an old row keeps reading as
+  an untagged file instead of failing.
+
+### `GET /api/music`
+
+Lists the library for a logged-in user. Every row is a track as `POST /api/music/upload`
+answered it, including `uploaded_by`; the library is shared, so the list is the same for
+every account.
+
+```
+GET /api/music
+Authorization: Bearer <token>
+```
+
+**Responses**
+
+| Status | When | Example body |
+|---|---|---|
+| `200 OK` | Rows read | `[{"id": 1, "uploaded_by": "lukas", "title": "Neutrone (Remix)", "artist": "Kraftwerk", "duration_ms": 261, "stored_name": "18cfd7db…mp3", "size": 4237, "content_type": "audio/mpeg", "uploaded_at": 1793974311}]` |
+| `401 Unauthorized` | Missing `Authorization: Bearer` header | `{"error": "authorization header with a Bearer token is missing"}` |
+| `401 Unauthorized` | Unknown or expired token | `{"error": "session is not valid or expired"}` |
+| `429 Too Many Requests` | Library rate limit reached (10 requests per IP, refilling 1 token every 12 s — its own bucket, shared with `GET /api/music/{id}`). Includes a `Retry-After` header. | `{"error": "too many requests from this address, try again later"}` |
+| `500 Internal Server Error` | Database failure | `{"error": "could not load the library"}` |
+
+**Notes**
+
+- An empty library answers `[]`, never `null`, so a client can tell an empty library
+  apart from an answer it could not read.
+- Rows come in the order they were added. Filtering and sorting are the client's job
+  (the library screen does them), so there is no `?q=` or `?sort=` here, and nothing is
+  paginated: one account's songs are a few hundred at most.
+- Reading the library is a protected request: an anonymous caller gets the same two 401
+  answers as `GET /api/session`, because the list shows account names.
+
+```bash
+curl localhost:8080/api/music -H "Authorization: Bearer <token>"
+```
+
+### `GET /api/music/{id}`
+
+Serves the stored file for one row. This is what the player streams, so a successful
+answer is the file itself — the only route here that does not answer the JSON shape —
+while every error uses `{"error": "…"}`. Only the range error is different: that one is
+written by `http.ServeFile` itself, as plain text.
+
+```
+GET /api/music/{id}
+Authorization: Bearer <token>
+```
+
+**Responses**
+
+| Status | When | What the answer is |
+|---|---|---|
+| `200 OK` | Row found and the file is in the library | the bytes, with the `Content-Type` recorded on the row, `Content-Length`, `Accept-Ranges: bytes`, and `Content-Disposition: inline; filename="<stored_name>"` |
+| `206 Partial Content` | Request with a `Range` header | that part of the file, so a player can start before the whole song is read, plus `Content-Range: bytes <from>-<to>/<size>`. `Content-Disposition` is on this answer too |
+| `400 Bad Request` | `id` is not a number | `{"error": "the song id must be a number"}` |
+| `401 Unauthorized` | Missing `Authorization: Bearer` header | `{"error": "authorization header with a Bearer token is missing"}` |
+| `401 Unauthorized` | Unknown or expired token | `{"error": "session is not valid or expired"}` |
+| `404 Not Found` | No row with that id | `{"error": "no song with that id"}` |
+| `404 Not Found` | Row points at a file the library does not have | `{"error": "the file for this song is not in the library"}` |
+| `416 Requested Range Not Satisfiable` | `Range` that cannot be read as a byte range (`bytes=abc`), or a range outside the file | plain text, not the JSON shape (`invalid range`), with `Content-Range: bytes */<size>` when the size is known |
+| `429 Too Many Requests` | Library rate limit reached (the same bucket as `GET /api/music`) | `{"error": "too many requests from this address, try again later"}` |
+| `500 Internal Server Error` | Database failure, or a stored name that is not a plain library file name | `{"error": "could not load the song"}` |
+
+```bash
+curl localhost:8080/api/music/4 -H "Authorization: Bearer <token>"
+curl -D - localhost:8080/api/music/4 -H "Authorization: Bearer <token>" -H 'Range: bytes=0-100'
+# a range outside the file answers 416, as plain text:
+curl -i localhost:8080/api/music/4 -H "Authorization: Bearer <token>" -H 'Range: bytes=99999-100000'
+```
+
 ---
 
 ## Upcoming
 
 Beyond the endpoints above, nothing exists yet. Planned, in rough order:
 
-- `GET /api/music` — list the library for any logged-in user, and
-  `GET /api/music/{id}` — send one stored file back. Upload is implemented, so
-  the next step is reading the library; both need the same `Authorization: Bearer`
-  rule as `GET /api/session`, and an unauthenticated reader must be refused with
-  the same 401 messages.
 - `POST /api/logout` — delete the session row for the presented token and
   answer `204 No Content`. Same `Authorization: Bearer` rule as
   `GET /api/session`; a client that keeps the token after logout should be
   refused with the same 401 message as an expired session.
-- The client features (playlists, player, equalizer) have no API yet. When their
-  endpoints are designed, they go under **Implemented** here — same status
-  tables, same error shape.
+- The client features (playlists, equalizer) have no API yet: a playlist is kept in the
+  app (`client/lib/features/playlists/data/playlist_store.dart`), and the queue lives
+  only in the player. When their endpoints are designed, they go under **Implemented**
+  here — same status tables, same error shape.
 
 ---
 

@@ -302,3 +302,50 @@ func TestUploadRateLimit(t *testing.T) {
 		t.Fatalf("upload bucket must be separate -> %d (%s)", rec.Code, rec.Body)
 	}
 }
+
+// The artist and the playing time come from the file itself, so the library can show
+// what a song says instead of guessing from its name. A file without tags keeps the
+// name as its title and has no artist.
+func TestUploadStoresTagsAndDuration(t *testing.T) {
+	db := openTestDB(t)
+	library := t.TempDir()
+	handler := uploadHandler(db, library, newRateLimiter(100, time.Second))
+	token := testToken(t, db, "lukas")
+
+	rec := uploadFile(t, handler, token, "file", "Mein Song.mp3", taggedMP3())
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload -> %d (%s)", rec.Code, rec.Body)
+	}
+
+	var tagged Track
+	if err := json.Unmarshal(rec.Body.Bytes(), &tagged); err != nil {
+		t.Fatalf("decode answer: %v", err)
+	}
+	if tagged.Title != "Neutrone (Remix)" || tagged.Artist != "Kraftwerk" || tagged.DurationMS != 360 {
+		t.Fatalf("the answer does not show what the file says: %s", rec.Body)
+	}
+
+	// The row holds the same values the answer shows.
+	var stored Track
+	err := db.QueryRow(`SELECT id, title, artist, duration_ms FROM track WHERE id = ?`, tagged.ID).
+		Scan(&stored.ID, &stored.Title, &stored.Artist, &stored.DurationMS)
+	if err != nil {
+		t.Fatalf("read the row: %v", err)
+	}
+	if stored.Title != tagged.Title || stored.Artist != tagged.Artist || stored.DurationMS != tagged.DurationMS {
+		t.Errorf("the row does not hold what the answer shows: %+v", stored)
+	}
+
+	// An untagged file is measured but not named, so the name stays the title.
+	rec = uploadFile(t, handler, token, "file", "ohne tags.mp3", audioOf(10))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("untagged upload -> %d (%s)", rec.Code, rec.Body)
+	}
+	var plain Track
+	if err := json.Unmarshal(rec.Body.Bytes(), &plain); err != nil {
+		t.Fatalf("decode answer: %v", err)
+	}
+	if plain.Title != "ohne tags.mp3" || plain.Artist != "" || plain.DurationMS != 360 {
+		t.Errorf("an untagged file is answered as: %s", rec.Body)
+	}
+}

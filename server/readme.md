@@ -44,12 +44,26 @@ curl -X POST localhost:8080/api/music/upload \
 
 Returns `201 Created` with the track record, `401` for anonymous requests,
 `400` for a non-audio or empty file, `413` above 500 MiB, `429` when rate limited.
+An MP3's title, artist and length come from its tags and frame headers
+(`metadata.go`); what a file does not say stays empty, and the client shows a dash.
+
+Reading the library is the other half of this feature (`library.go`):
+
+```bash
+curl localhost:8080/api/music -H "Authorization: Bearer <token>"      # the list
+curl localhost:8080/api/music/4 -H "Authorization: Bearer <token>"    # one stored file
+```
+
+Both need a session and share their own rate-limit bucket. Every error answers the
+JSON error shape; the file route answers the file itself on success and supports
+`Range`, so a player can start a song before the whole file is read.
 
 ## Development frontend
 
 Run the server from `server/` and open <http://localhost:8080/> (it forwards to
 `/static/`) — `main.go` serves a plain HTML page (`static/`) for calling these
-endpoints from a browser: register, login, session check, upload. It prints the status
+endpoints from a browser: register, login, session check, upload, the library list and
+one stored file. It prints the status
 code, the elapsed time, `Retry-After`, and the same request as a `curl` command.
 Nothing on the page checks the fields first (the file picker is filtered to the
 accepted extensions), so what shows is what the server answered. The page is served
