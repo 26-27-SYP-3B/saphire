@@ -1,0 +1,199 @@
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:dio/dio.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:saphire_client/app/app.dart';
+import 'package:saphire_client/core/storage/session_store.dart';
+import 'package:saphire_client/core/storage/settings_store.dart';
+import 'package:saphire_client/features/auth/data/auth_repository.dart';
+import 'package:saphire_client/features/home/presentation/home_screen.dart';
+import 'package:saphire_client/features/library/data/local_library.dart';
+import 'package:saphire_client/features/upload/data/upload_repository.dart';
+
+import '../../support/fake_player.dart';
+import '../../support/wiring.dart';
+
+const mp3Bytes = [0x49, 0x44, 0x33, 4, 0, 0, 0, 0, 0, 0];
+
+/// A real file on disk, so the "is the file still there" check answers like on a device.
+Future<String> tempMp3(WidgetTester tester) async {
+  final directory = await Directory.systemTemp.createTemp('saphire_local');
+  addTearDown(() => directory.delete(recursive: true));
+  final file = File('${directory.path}/song.mp3');
+  await file.writeAsBytes(mp3Bytes);
+  return file.path;
+}
+
+/// Opens the start page in local mode: no session, no server to ask.
+Future<(Wiring, SettingsStore, LocalLibrary, FakePlayer)> openLocalHome(
+  WidgetTester tester, {
+  LocalLibrary? library,
+  PickLocalAudio? pickLocal,
+}) async {
+  tester.view..physicalSize = const Size(1600, 1200)..devicePixelRatio = 1.0;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+
+  final settings = SettingsStore()..localMode = true;
+  final local = library ?? LocalLibrary();
+  final audio = FakePlayer();
+  final wiring = Wiring(SessionStore(), audio: audio);
+  addTearDown(wiring.dispose);
+
+  await tester.pumpWidget(
+    MaterialApp(
+      home: HomeScreen(
+        repository: AuthRepository(Dio(), wiring.session),
+        uploads: UploadRepository(Dio(), wiring.session),
+        library: wiring.library,
+        queues: wiring.queues,
+        player: wiring.player,
+        pickLocal: pickLocal ?? () async => null,
+        settings: settings,
+        localLibrary: local,
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+
+  return (wiring, settings, local, audio);
+}
+
+Future<void> addLocal(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('Lokale Songs hinzufügen'));
+  await tester.pumpAndSettle();
+}
+
+void main() {
+  testWidgets('local mode shows the songs from the device and asks no server', (tester) async {
+    final path = await tempMp3(tester);
+    final library = LocalLibrary()..add(name: 'song.mp3', path: path, bytes: Uint8List.fromList(mp3Bytes));
+
+    await openLocalHome(tester, library: library);
+
+    expect(find.text('song.mp3'), findsOneWidget);
+    // The home screen did not try to reach the server, so nothing says it is offline.
+    expect(find.textContaining('offline'), findsNothing);
+    expect(find.textContaining('Guten'), findsOneWidget);
+  });
+
+  testWidgets('a picked MP3 lands in the local library', (tester) async {
+    final path = await tempMp3(tester);
+    final (_, _, library, _) = await openLocalHome(
+      tester,
+      pickLocal: () async => [(name: 'song.mp3', path: path, bytes: Uint8List.fromList(mp3Bytes))],
+    );
+
+    await addLocal(tester);
+
+    expect(library.tracks, hasLength(1));
+    expect(find.text('song.mp3'), findsOneWidget);
+  });
+
+  // A file that is not an MP3 must not end up in the library, and the page has to say why.
+  testWidgets('a file that is not an MP3 says why and is not added', (tester) async {
+    final (_, _, library, _) = await openLocalHome(
+      tester,
+      pickLocal: () async => [(name: 'notes.txt', path: null, bytes: Uint8List.fromList([1, 2, 3]))],
+    );
+
+    await addLocal(tester);
+
+    expect(library.tracks, isEmpty);
+    expect(find.textContaining('nur MP3-Dateien werden übernommen'), findsOneWidget);
+  });
+
+  testWidgets('playing a local song opens its file and shows it in the bar', (tester) async {
+    final path = await tempMp3(tester);
+    final library = LocalLibrary()..add(name: 'song.mp3', path: path, bytes: Uint8List.fromList(mp3Bytes));
+
+    final (_, _, _, audio) = await openLocalHome(tester, library: library);
+
+    await tester.tap(find.text('song.mp3'));
+    await tester.pumpAndSettle();
+
+    expect(audio.opened.single, Uri.file(path).toString());
+    expect(audio.played, isNotEmpty);
+    // The card and the bar both name the song that is playing.
+    expect(find.text('song.mp3'), findsNWidgets(2));
+    expect(find.textContaining('Lokal'), findsWidgets);
+  });
+
+  // The library keeps the path and not the file, so a file the user deleted is only
+  // noticed when it is played.
+  testWidgets('a song whose file is gone says it is not found', (tester) async {
+    final library = LocalLibrary()
+      ..add(name: 'weg.mp3', path: '/gibt/es/nicht/weg.mp3', bytes: Uint8List.fromList(mp3Bytes));
+
+    final (_, _, _, audio) = await openLocalHome(tester, library: library);
+
+    await tester.tap(find.text('weg.mp3'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Die Datei wurde nicht gefunden'), findsOneWidget);
+    expect(audio.opened, isEmpty);
+  });
+
+  // The way in: no account, no server, the songs from the device.
+  testWidgets('without a server the login can be skipped', (tester) async {
+    tester.view..physicalSize = const Size(1600, 1200)..devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final settings = SettingsStore();
+    final wiring = Wiring(SessionStore());
+    addTearDown(wiring.dispose);
+
+    await tester.pumpWidget(
+      SaphireApp(
+        repository: AuthRepository(Dio(), wiring.session),
+        uploads: UploadRepository(Dio(), wiring.session),
+        library: wiring.library,
+        playlists: wiring.playlists,
+        queues: wiring.queues,
+        queue: wiring.queue,
+        player: wiring.player,
+        session: wiring.session,
+        settings: settings,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Ohne Server fortfahren'));
+    await tester.pumpAndSettle();
+
+    expect(settings.localMode, true);
+    expect(find.textContaining('Guten'), findsOneWidget);
+  });
+
+  // A restart in local mode must not ask for a password, because there is no account.
+  testWidgets('local mode starts on the home screen without a session', (tester) async {
+    tester.view..physicalSize = const Size(1600, 1200)..devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final wiring = Wiring(SessionStore());
+    addTearDown(wiring.dispose);
+
+    await tester.pumpWidget(
+      SaphireApp(
+        repository: AuthRepository(Dio(), wiring.session),
+        uploads: UploadRepository(Dio(), wiring.session),
+        library: wiring.library,
+        playlists: wiring.playlists,
+        queues: wiring.queues,
+        queue: wiring.queue,
+        player: wiring.player,
+        session: wiring.session,
+        settings: SettingsStore()..localMode = true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Guten'), findsOneWidget);
+    expect(find.text('Ohne Server fortfahren'), findsNothing);
+  });
+}

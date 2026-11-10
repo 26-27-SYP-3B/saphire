@@ -5,6 +5,7 @@ import '../core/storage/session_store.dart';
 import '../core/storage/settings_store.dart';
 import '../features/auth/data/auth_repository.dart';
 import '../features/library/data/library_repository.dart';
+import '../features/library/data/local_library.dart';
 import '../features/playlists/data/playlist_repository.dart';
 import '../features/player/data/queue_repository.dart';
 import '../features/player/domain/player.dart';
@@ -30,7 +31,8 @@ class SaphireApp extends StatefulWidget {
     required this.queue,
     required this.player,
     required this.session,
-    required this.settings,
+    SettingsStore? settings,
+    LocalLibrary? localLibrary,
     required this.dio,
   });
 
@@ -42,7 +44,8 @@ class SaphireApp extends StatefulWidget {
   final PlaybackQueue queue;
   final QueuePlayer player;
   final SessionStore session;
-  final SettingsStore settings;
+  final SettingsStore? settings;
+  final LocalLibrary? localLibrary;
   final Dio dio;
 
   @override
@@ -73,6 +76,7 @@ class _SaphireAppState extends State<SaphireApp> {
         player: widget.player,
         session: widget.session,
         settings: widget.settings,
+        localLibrary: widget.localLibrary,
         dio: widget.dio,
       ),
     );

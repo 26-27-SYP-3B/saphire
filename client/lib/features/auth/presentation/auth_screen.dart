@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/storage/settings_store.dart';
 import '../../../shared/widgets/auth_page.dart';
 import '../../../shared/widgets/credential_fields.dart';
 import '../data/auth_repository.dart';
@@ -10,10 +11,14 @@ enum AuthMode { register, login }
 
 /// The register and login window.
 class AuthScreen extends StatefulWidget {
-  const AuthScreen({super.key, required this.repository, required this.mode});
+  const AuthScreen({super.key, required this.repository, required this.mode, this.settings});
 
   final AuthRepository repository;
   final AuthMode mode;
+
+  /// What the app remembers about running without a server. A test that only checks the
+  /// form can leave it out; the store then stays in memory.
+  final SettingsStore? settings;
 
   @override
   State<AuthScreen> createState() => _AuthScreenState();
@@ -55,6 +60,9 @@ class _AuthScreenState extends State<AuthScreen> {
       } else {
         await widget.repository.login(username: username, password: _password.text);
       }
+      // A login is the way out of local mode, so the guard lets the next restart start
+      // on the login form again instead of opening the home screen without an account.
+      widget.settings?.save(localMode: false);
       if (mounted) context.go('/home');
     } on AuthException catch (error) {
       if (mounted) setState(() => _note = error.message);
@@ -77,6 +85,15 @@ class _AuthScreenState extends State<AuthScreen> {
       linkQuestion: isRegister ? 'Schon ein Konto?' : 'Noch kein Konto?',
       linkLabel: isRegister ? 'Anmelden' : 'Registrieren',
       linkTo: isRegister ? '/login' : '/register',
+      // The way into local mode: no account, no server, the songs from the device. The
+      // guided setup (a later screen) lands in the same place.
+      footer: TextButton(
+        onPressed: () {
+          widget.settings?.save(localMode: true);
+          context.go('/home');
+        },
+        child: const Text('Ohne Server fortfahren'),
+      ),
     );
   }
 }

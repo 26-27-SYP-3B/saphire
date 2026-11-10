@@ -3,11 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/storage/settings_store.dart';
 import '../../../core/utils/pick_audio.dart';
 import '../../../shared/widgets/saphire_logo.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/user.dart';
 import '../../library/data/library_repository.dart';
+import '../../library/data/local_library.dart';
+import '../../library/domain/local_track.dart';
 import '../../player/data/queue_repository.dart';
 import '../../player/domain/player.dart';
 import '../../player/domain/queue.dart';
@@ -58,6 +61,10 @@ const _navItems = [
 /// the upload itself is still checked on the server.
 const _uploadHint = 'Erlaubt: MP3, WAV, M4A, OGG, OPUS, FLAC, AAC · höchstens 500 MiB pro Datei';
 
+/// What the local library takes: the files stay where the user keeps them, which is why
+/// a moved file is only noticed when it is played.
+const _localHint = 'MP3-Dateien von diesem Gerät · sie bleiben, wo sie sind, und spielen auch ohne Server';
+
 /// The home screen: the app on the left, the greeting and the rows on the right.
 /// Upload, playlists and the queue reach the server; the playlist rows below are the
 /// placeholders from the mock, because there is no data behind them until a playlist is
@@ -76,6 +83,9 @@ class HomeScreen extends StatefulWidget {
     required this.queues,
     required this.player,
     this.pickAudio = pickAudioFiles,
+    this.pickLocal = pickLocalAudioFiles,
+    this.settings,
+    this.localLibrary,
   });
 
   final AuthRepository repository;
@@ -84,6 +94,11 @@ class HomeScreen extends StatefulWidget {
   final QueueRepository queues;
   final QueuePlayer player;
   final PickAudio pickAudio;
+  final PickLocalAudio pickLocal;
+
+  /// Null in a test that does not care about local mode: the stores then stay in memory.
+  final SettingsStore? settings;
+  final LocalLibrary? localLibrary;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -93,6 +108,9 @@ class _HomeScreenState extends State<HomeScreen> {
   final List<_UploadFile> _files = [];
   List<Track> _library = [];
   final TextEditingController _search = TextEditingController();
+
+  late final SettingsStore _settings = widget.settings ?? SettingsStore();
+  late final LocalLibrary _local = widget.localLibrary ?? LocalLibrary();
 
   // The message from the session check. What a single file got is on its own row.
   String? _note;
@@ -113,10 +131,13 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     // The name in the greeting is the account name, so it comes from the session
     // check: the session store holds only the token, nothing that says who we are.
-    _loadUser();
-    // The search has nothing to filter until the library is here, so it is read once
-    // when the page opens rather than on every keystroke.
-    _loadLibrary();
+    // Local mode has no account and no server to ask, so both reads are skipped there.
+    if (!_settings.localMode) {
+      _loadUser();
+      // The search has nothing to filter until the library is here, so it is read once
+      // when the page opens rather than on every keystroke.
+      _loadLibrary();
+    }
   }
 
   @override
@@ -185,6 +206,29 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// Adds picked files to the local library. Each file is checked on its own, so a
+  /// refused one says why and the rest still land in the library.
+  Future<void> _addLocal() async {
+    if (_picking) return;
+
+    setState(() => _picking = true);
+    final List<PickedLocal>? picked;
+    try {
+      picked = await widget.pickLocal();
+    } finally {
+      if (mounted) setState(() => _picking = false);
+    }
+    if (picked == null || !mounted) return;
+
+    setState(() {
+      for (final file in picked!) {
+        final refused = _local.add(name: file.name, path: file.path, bytes: file.bytes);
+        // The message names the file, so with a batch it is clear which one was refused.
+        if (refused != null) _note = '${file.name}: $refused';
+      }
+    });
+  }
+
   /// The name the row shows: before the answer the picked name, after it the title
   /// the server stored (base name only, see api-docs.md).
   String _title(_UploadFile file) => file.track?.title ?? file.name;
@@ -220,8 +264,17 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       await action();
     } catch (error) {
-      // A player that cannot open a song is not a JSON error, so the message is ours there.
-      if (mounted) setState(() => _note = error is QueueException ? error.message : 'Das Lied konnte nicht gespielt werden: $error');
+      // A player that cannot open a song is not a JSON error, so the message is ours
+      // there. A missing local file already says what is wrong.
+      if (mounted) {
+        setState(() {
+          _note = switch (error) {
+            QueueException(:final message) => message,
+            PlaybackException(:final message) => message,
+            _ => 'Das Lied konnte nicht gespielt werden: $error',
+          };
+        });
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -234,6 +287,10 @@ class _HomeScreenState extends State<HomeScreen> {
     widget.player.queue.fill(await widget.queues.fill(QueueSource.track(entry.id)));
     await widget.player.playCurrent();
   });
+
+  /// A local song plays straight from the device: no queue call and no token, so it works
+  /// with no server and no account.
+  Future<void> _playLocal(LocalTrack track) => _control(() => widget.player.playLocal(track));
 
   @override
   Widget build(BuildContext context) {
@@ -271,26 +328,47 @@ class _HomeScreenState extends State<HomeScreen> {
                               _section('Suchergebnisse'),
                               _row([for (final entry in results) _songCard(entry)]),
                             ],
-                            _section('Zuletzt gehört'),
-                            _row([
-                              for (final item in _placeholders.where((item) => _matches(item.title))) _card(item),
-                            ]),
                             _section(
-                              'In aktueller Sitzung hinzugefügt',
+                              'Lokale Songs',
                               action: IconButton(
-                                tooltip: 'Datei auswählen',
-                                onPressed: _picking ? null : _upload,
+                                tooltip: 'Lokale Songs hinzufügen',
+                                onPressed: _picking ? null : _addLocal,
                                 icon: Icon(Icons.add, color: scheme.primary),
                               ),
                             ),
                             Text(
-                              _uploadHint,
+                              _localHint,
                               style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
                             ),
                             const SizedBox(height: 12),
                             _row([
-                              for (final file in _files.where((file) => _matches(_title(file)))) _fileCard(file),
+                              for (final track in _local.tracks.where((track) => _matches(track.title)))
+                                _localCard(track),
                             ]),
+                            _section('Zuletzt gehört'),
+                            _row([
+                              for (final item in _placeholders.where((item) => _matches(item.title))) _card(item),
+                            ]),
+                            // Local mode has no server to upload to, so only the songs on
+                            // this device are shown.
+                            if (!_settings.localMode) ...[
+                              _section(
+                                'In aktueller Sitzung hinzugefügt',
+                                action: IconButton(
+                                  tooltip: 'Datei auswählen',
+                                  onPressed: _picking ? null : _upload,
+                                  icon: Icon(Icons.add, color: scheme.primary),
+                                ),
+                              ),
+                              Text(
+                                _uploadHint,
+                                style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                              ),
+                              const SizedBox(height: 12),
+                              _row([
+                                for (final file in _files.where((file) => _matches(_title(file)))) _fileCard(file),
+                              ]),
+                            ],
                           ],
                         ),
                       ),
@@ -397,15 +475,26 @@ class _HomeScreenState extends State<HomeScreen> {
                 context.go('/settings');
                 return;
               }
+              // Local mode ends with a login: the form saves that choice, so the next
+              // start asks for the password again instead of opening the home screen.
+              if (value == 'connect') {
+                context.go('/login');
+                return;
+              }
+                return;
+              }
               if (value != 'logout') return;
               // There is no logout endpoint yet (api-docs.md, Upcoming), so
               // dropping the token here is the whole logout on this side.
               widget.repository.logout();
               context.go('/login');
             },
-            itemBuilder: (context) => const [
-              PopupMenuItem(value: 'settings', child: Text('Einstellungen')),
-              PopupMenuItem(value: 'logout', child: Text('Abmelden')),
+            itemBuilder: (context) => [
+              const PopupMenuItem(value: 'settings', child: Text('Einstellungen')),
+              if (_settings.localMode)
+                const PopupMenuItem(value: 'connect', child: Text('Mit Server verbinden'))
+              else
+                const PopupMenuItem(value: 'logout', child: Text('Abmelden')),
             ],
             child: Container(
               width: 34,
@@ -439,8 +528,9 @@ class _HomeScreenState extends State<HomeScreen> {
             style: theme.textTheme.displayLarge,
             children: [
               TextSpan(
-                // The session check is still running on the first frames.
-                text: name ?? '…',
+                // The session check is still running on the first frames. Local mode has
+                // no account, so there is nobody to name.
+                text: _settings.localMode ? 'du' : (name ?? '…'),
                 style: TextStyle(color: theme.colorScheme.primary),
               ),
             ],
@@ -539,6 +629,15 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// A local song: the same card as a library song, but the line under the title says it
+  /// comes from this device and not from the server.
+  Widget _localCard(LocalTrack track) {
+    return InkWell(
+      onTap: _busy ? null : () => _playLocal(track),
+      child: _card((title: track.title, meta: 'Lokal', icon: Icons.audiotrack)),
+    );
+  }
+
   /// One picked file: its name and the answer for this file only, so the results
   /// of a batch do not mix into one message.
   Widget _fileCard(_UploadFile file) {
@@ -592,6 +691,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final current = widget.player.queue.current;
+    // A local file has no slot in the server queue, so the bar follows what the player
+    // opened last rather than the queue alone.
+    final localTitle = widget.player.localTitle;
     final playing = widget.player.playing;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -605,14 +707,16 @@ class _HomeScreenState extends State<HomeScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  current == null ? 'Nichts wird abgespielt' : current.title,
+                  localTitle ?? current?.title ?? 'Nichts wird abgespielt',
                   style: theme.textTheme.labelLarge,
                 ),
                 Text(
                   widget.player.failure ??
-                      (current == null
-                          ? 'Suche ein Lied und öffne es, oder fülle die Warteschlange.'
-                          : 'Warteschlange · Slot ${current.position}'),
+                      (localTitle != null
+                          ? 'Lokal · dieses Gerät'
+                          : current == null
+                              ? 'Suche ein Lied und öffne es, oder fülle die Warteschlange.'
+                              : 'Warteschlange · Slot ${current.position}'),
                   style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
                 ),
               ],
@@ -620,7 +724,15 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           IconButton(
             tooltip: playing ? 'Pause' : 'Abspielen',
-            onPressed: _busy ? null : () => _control(() => playing ? widget.player.pause() : widget.player.playCurrent()),
+            onPressed: _busy
+                ? null
+                : () => _control(
+                      () => playing
+                          ? widget.player.pause()
+                          // A local song was opened directly, so there is no queue entry to
+                          // start again; the same file is simply resumed.
+                          : (localTitle != null ? widget.player.resume() : widget.player.playCurrent()),
+                    ),
             icon: Icon(playing ? Icons.pause : Icons.play_arrow),
           ),
           IconButton(
