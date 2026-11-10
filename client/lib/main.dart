@@ -6,6 +6,7 @@ import 'core/storage/session_store.dart';
 import 'core/storage/settings_store.dart';
 import 'features/auth/data/auth_repository.dart';
 import 'features/library/data/library_repository.dart';
+import 'features/library/data/local_library.dart';
 import 'features/playlists/data/playlist_repository.dart';
 import 'features/player/data/just_audio_player.dart';
 import 'features/player/data/queue_repository.dart';
@@ -19,11 +20,15 @@ import 'features/upload/data/upload_repository.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // A session from the last run means the app opens on the home screen instead
-  // of asking for the password again.
+  // of asking for the password again. The settings say whether the user chose to run
+  // without a server, and the local library is what that home screen then shows.
   final session = await SessionStore.restore();
   // A server the guided setup saved on the first run is the server of this run; the
-  // launch default only stands in until the setup has stored one.
+  // launch default only stands in until the setup has stored one. The settings also say
+  // whether the user chose to run without a server, and the local library is what that
+  // home screen then shows.
   final settings = await SettingsStore.restore();
+  final localLibrary = await LocalLibrary.restore();
   final dio = Dio();
 
   final queue = PlaybackQueue();
@@ -40,6 +45,7 @@ Future<void> main() async {
       player: QueuePlayer(queue: queue, player: player, session: session),
       session: session,
       settings: settings,
+      localLibrary: localLibrary,
       dio: dio,
     ),
   );

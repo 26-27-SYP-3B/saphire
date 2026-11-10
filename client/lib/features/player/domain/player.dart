@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import '../../../core/config/api_config.dart';
+import '../../../core/storage/file_exists.dart';
 import '../../../core/storage/session_store.dart';
+import '../../library/domain/local_track.dart';
 import 'queue.dart';
 
 /// What a player needs from the audio plugin: open one song, play, pause, stop, and be
@@ -23,6 +25,17 @@ abstract interface class SongPlayer {
   /// Releases the audio object behind the player. The queue is the only thing that holds a
   /// player for the life of the app, so this is where it is closed.
   Future<void> dispose();
+}
+
+/// A song that could not be opened. The message is what the page shows, so a missing
+/// file says that it is missing and not that the player failed.
+class PlaybackException implements Exception {
+  PlaybackException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
 }
 
 /// Plays a queue: the entry that is current, then the next one when a song ends. It
@@ -52,10 +65,41 @@ class QueuePlayer {
   /// the screen would keep showing the song that just finished.
   Stream<void> get changes => _changes.stream;
 
+  /// The local song that is playing, if the last thing started was a file from the
+  /// device. A local song has no slot in the server queue, so the bar shows this
+  /// instead of queue.current.
+  String? localTitle;
+
   /// A queue entry is a reference to a library song, so the bytes come from the
   /// streaming endpoint. The endpoint sends the file in chunks, which is what a player
   /// needs: the first piece arrives before the rest of the file is read.
   String urlFor(int trackId) => '$apiBaseUrl/api/music/$trackId';
+
+  /// Plays a file that is on the device: from its path when the pick gave one, from the
+  /// bytes when it came from a browser. This is the whole local mode — no server, no
+  /// queue, just the player and the file.
+  Future<void> playLocal(LocalTrack track) async {
+    final path = track.path;
+    final bytes = track.bytes;
+    if (path == null && bytes == null) {
+      throw PlaybackException('Die Datei wurde nicht gefunden: ${track.title}');
+    }
+    // A file the user deleted or moved is only noticed here, because the library keeps
+    // the path and not the file.
+    if (path != null && !fileExists(path)) {
+      throw PlaybackException('Die Datei wurde nicht gefunden: ${track.title}');
+    }
+
+    failure = null;
+    // What plays now is the file, not a slot of a list the server still has.
+    queue.clear();
+    await player.open(
+      path != null ? Uri.file(path).toString() : Uri.dataFromBytes(bytes!, mimeType: 'audio/mpeg').toString(),
+    );
+    localTitle = track.title;
+    _changes.add(null);
+    await player.play();
+  }
 
   Future<void> playCurrent() async {
     // Nothing is current until a player starts one. A queue that was just filled plays
@@ -64,6 +108,7 @@ class QueuePlayer {
     if (entry == null) return;
 
     failure = null;
+    localTitle = null;
 
     // The token is only sent when there is one. "Bearer null" would be answered as an
     // unknown session, and the message the user sees would be about a token they never
@@ -76,10 +121,15 @@ class QueuePlayer {
     await player.play();
   }
 
+  /// Starts the song that was opened last again. A local file has no queue entry, so the
+  /// play button cannot mean playCurrent for it.
+  Future<void> resume() => player.play();
+
   /// Moves to the next song and plays it. Returns false when the queue is finished, so
   /// the page can say so instead of waiting for a song that is not there. Pressing next
   /// at the end ends playback: there is nothing left to play.
   Future<bool> next() async {
+    localTitle = null;
     if (queue.advance() == null) {
       _changes.add(null);
       await player.stop();
@@ -100,6 +150,7 @@ class QueuePlayer {
   bool get playing => player.playing;
 
   Future<void> _onCompleted() async {
+    localTitle = null;
     if (queue.advance() == null) {
       _changes.add(null);
       await player.stop();

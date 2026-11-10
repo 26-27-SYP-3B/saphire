@@ -17,8 +17,10 @@ String serverErrorMessage(DioException error) {
     }
     return message;
   }
+  // A request without an answer means the server is not there; what is stored on the
+  // device can still be played, so the message says that instead of only the URL.
   if (error.type == DioExceptionType.connectionError) {
-    return 'Server ist nicht erreichbar unter $apiBaseUrl.';
+    return 'Du bist offline: der Server antwortet nicht unter $apiBaseUrl. Deine lokalen Songs kannst du weiter abspielen.';
   }
   return 'Anfrage fehlgeschlagen (${error.response?.statusCode ?? 'unbekannter Status'}).';
 }

@@ -17,6 +17,7 @@ class AuthPage extends StatelessWidget {
     this.linkLabel,
     this.linkTo,
     this.note,
+    this.footer,
   });
 
   final String title;
@@ -32,6 +33,9 @@ class AuthPage extends StatelessWidget {
 
   /// Was nach dem Knopf passiert ist: die Meldung des Servers.
   final String? note;
+
+  /// Was unter dem Link zur anderen Seite steht: der Weg ohne Konto und ohne Server.
+  final Widget? footer;
 
   @override
   Widget build(BuildContext context) {
@@ -87,6 +91,10 @@ class AuthPage extends StatelessWidget {
                           ),
                         ],
                       ),
+                    ],
+                    if (footer != null) ...[
+                      const SizedBox(height: 8),
+                      footer!,
                     ],
                   ],
                 ),

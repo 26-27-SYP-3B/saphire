@@ -18,3 +18,15 @@ Future<List<PickedAudio>?> pickAudioFiles() async {
   // the platforms that give one, so a 500 MiB song is not read twice.
   return [for (final file in picked) (name: file.name, bytes: await file.readAsBytes())];
 }
+
+/// A picked file for the local library: the bytes to check the format and, on a device,
+/// the path that survives a restart. A browser gives no path.
+typedef PickedLocal = ({String name, String? path, Uint8List? bytes});
+typedef PickLocalAudio = Future<List<PickedLocal>?> Function();
+
+Future<List<PickedLocal>?> pickLocalAudioFiles() async {
+  final picked = await FilePicker.pickFiles(type: FileType.any);
+  if (picked.isEmpty) return null;
+
+  return [for (final file in picked) (name: file.name, path: file.path, bytes: await file.readAsBytes())];
+}

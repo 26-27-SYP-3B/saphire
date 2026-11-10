@@ -66,7 +66,7 @@ Future<App> openApp(
   if (store.serverBase == null) {
     apiBaseUrl = launchBase;
   } else {
-    await store.save(store.serverBase!);
+    await store.save(server: store.serverBase!);
   }
 
   final wiring = Wiring(current);

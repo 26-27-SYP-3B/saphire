@@ -63,7 +63,7 @@ class _SetupScreenState extends State<SetupScreen> {
 
     // Eine Session von einem früheren Server darf den Wechsel nicht überleben.
     await widget.repository.logout();
-    await widget.settings.save(base);
+    await widget.settings.save(server: base);
     if (!mounted) return;
     context.go('/login');
   }
