@@ -57,6 +57,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
 
     final base = normalizeBase(_url.text.trim());
+
+    // Die gleiche Adresse ist keine Änderung: es geht keine Anfrage weg, und die
+    // Session bleibt, wo sie ist.
+    if (base.toLowerCase() == widget.settings.serverBase?.toLowerCase()) {
+      context.go('/home');
+      return;
+    }
+
     final message = await checkServer(widget.dio, base);
     if (!mounted) return;
     setState(() => _isChecking = false);
@@ -67,8 +75,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
 
     // Die alte Session gehört zum alten Server, also meldet man sich neu an.
-    widget.repository.logout();
-    widget.settings.save(base);
+    await widget.repository.logout();
+    await widget.settings.save(base);
+    if (!mounted) return;
     context.go('/login');
   }
 
