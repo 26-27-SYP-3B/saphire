@@ -2,9 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/utils/pick_audio.dart';
-import '../../../shared/widgets/player_bar.dart';
-import '../../../shared/widgets/nav_bar.dart';
-import '../../../shared/widgets/saphire_logo.dart';
+import '../../../shared/widgets/app_shell.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/user.dart';
 import '../../player/data/player.dart';
@@ -39,16 +37,17 @@ const _placeholders = [
   (title: 'Good Times', meta: 'Playlist · 78 Songs', icon: Icons.west),
 ];
 
-// The navigation items themselves are in shared/widgets/nav_bar.dart, so the library
-// screen shows the same list. Only the rest of the sidebar belongs to this page.
+// The frame — the mark, the navigation, the bar — is in shared/widgets/app_shell.dart,
+// so the library page draws the same frame. Only the list below the navigation belongs
+// to this page.
 
 /// What the server accepts (server/music.go): the client only says it up front,
 /// the upload itself is still checked on the server.
 const _uploadHint = 'Erlaubt: MP3, WAV, M4A, OGG, OPUS, FLAC, AAC · höchstens 500 MiB pro Datei';
 
-/// The home screen: the app on the left, the greeting and the rows on the right.
-/// Only the upload reaches the server. The other areas have no endpoints yet, so
-/// they are labels and pictures, not buttons.
+/// The home screen: the greeting and the rows inside the app's frame. Only the upload
+/// reaches the server. The other areas have no endpoints yet, so they are labels and
+/// pictures, not buttons.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
@@ -160,127 +159,94 @@ class _HomeScreenState extends State<HomeScreen> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
-    return LayoutBuilder(builder: (context, constraints) {
-      // Below this width the sidebar has no room, the content takes the screen.
-      // For a phone the upgrade would be a drawer.
-      final wide = constraints.maxWidth >= 760;
-
-      return Scaffold(
-        backgroundColor: scheme.surface,
-        body: SafeArea(
-          child: Row(
-            children: [
-              if (wide) _sidebar(constraints.maxHeight),
-              Expanded(
-                child: Column(
-                  children: [
-                    _topBar(),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _greeting(),
-                            const SizedBox(height: 24),
-                            Wrap(
-                              spacing: 10,
-                              runSpacing: 10,
-                              children: [
-                                _chip('Dein Mix', Icons.equalizer),
-                                _chip('Charts', Icons.star),
-                                _chip('Radio', Icons.radio),
-                                _chip('Eigene Dateien hochladen', Icons.upload, onPressed: _picking ? null : _upload),
-                                _chip('Entdecken', Icons.explore),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              _uploadHint,
-                              style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-                            ),
-                            if (_note != null) ...[
-                              const SizedBox(height: 16),
-                              Text(_note!, style: TextStyle(color: scheme.error)),
-                            ],
-                            _section('Eigene Dateien'),
-                            _row([
-                              for (final file in _files.where((file) => _matches(_title(file)))) _fileCard(file),
-                              if (_files.isEmpty && _matches('Eigene Dateien')) _uploadCard(),
-                            ]),
-                            _section('Zuletzt gehört'),
-                            _row([
-                              for (final item in _placeholders.where((item) => _matches(item.title))) _card(item),
-                            ]),
-                          ],
-                        ),
-                      ),
-                    ),
-                    PlayerBar(player: widget.player),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    });
-  }
-
-  Widget _sidebar(double height) {
-    final theme = Theme.of(context);
-
-    return SizedBox(
-      width: 248,
-      height: height,
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // The lines in the logo asset are thin, so at this size they come out
-            // soft — that is the small mark the mock shows.
+    return AppShell(
+      selected: '/home',
+      player: widget.player,
+      // What only belongs to this page: the list below the navigation. The items here
+      // have no screen behind them, so they stay labels.
+      sidebarExtra: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _heading('Deine Inhalte'),
+          for (final item in [
+            (label: 'Eigene Dateien', icon: Icons.add),
+            (label: 'Playlists', icon: Icons.playlist_play),
+            (label: 'Alben', icon: Icons.album),
+            (label: 'Künstler*innen', icon: Icons.people),
+          ])
+            _navItem(item.label, item.icon),
+          _heading('Playlists'),
+          // The sidebar is the list of what is there, the search field above
+          // only filters the page.
+          for (final item in _placeholders)
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-              child: SaphireLogo(size: 44),
-            ),
-            NavBar(selected: '/home'),
-            _heading('Deine Inhalte'),
-            for (final item in [
-              (label: 'Eigene Dateien', icon: Icons.add),
-              (label: 'Playlists', icon: Icons.playlist_play),
-              (label: 'Alben', icon: Icons.album),
-              (label: 'Künstler*innen', icon: Icons.people),
-            ])
-              _navItem(item.label, item.icon),
-            _heading('Playlists'),
-            // The sidebar is the list of what is there, the search field above
-            // only filters the page.
-            for (final item in _placeholders)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 6, 20, 6),
-                child: Row(
-                  children: [
-                    _thumb(item.icon),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(item.title, style: theme.textTheme.labelLarge),
-                          Text(
-                            item.meta,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
-                      ),
+              padding: const EdgeInsets.fromLTRB(20, 6, 20, 6),
+              child: Row(
+                children: [
+                  _thumb(item.icon),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(item.title, style: theme.textTheme.labelLarge),
+                        Text(
+                          item.meta,
+                          style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-          ],
-        ),
+            ),
+        ],
+      ),
+      child: Column(
+        children: [
+          _topBar(),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _greeting(),
+                  const SizedBox(height: 24),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      _chip('Dein Mix', Icons.equalizer),
+                      _chip('Charts', Icons.star),
+                      _chip('Radio', Icons.radio),
+                      _chip('Eigene Dateien hochladen', Icons.upload, onPressed: _picking ? null : _upload),
+                      _chip('Entdecken', Icons.explore),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    _uploadHint,
+                    style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                  if (_note != null) ...[
+                    const SizedBox(height: 16),
+                    Text(_note!, style: TextStyle(color: scheme.error)),
+                  ],
+                  _section('Eigene Dateien'),
+                  _row([
+                    for (final file in _files.where((file) => _matches(_title(file)))) _fileCard(file),
+                    if (_files.isEmpty && _matches('Eigene Dateien')) _uploadCard(),
+                  ]),
+                  _section('Zuletzt gehört'),
+                  _row([
+                    for (final item in _placeholders.where((item) => _matches(item.title))) _card(item),
+                  ]),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

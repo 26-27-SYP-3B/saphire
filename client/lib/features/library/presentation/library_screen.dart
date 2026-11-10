@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/utils/pick_audio.dart';
-import '../../../shared/widgets/nav_bar.dart';
-import '../../../shared/widgets/player_bar.dart';
+import '../../../shared/widgets/app_shell.dart';
 import '../../player/data/player.dart';
 import '../../playlists/data/playlist_store.dart';
 import '../../upload/data/upload_repository.dart';
@@ -36,20 +35,24 @@ String artistFromName(String title) {
   return split < 1 ? '' : title.substring(0, split);
 }
 
-/// A row shows the length as mm:ss. A file the server could not measure shows a
-/// dash, which is honest rather than a guessed number.
-const unknownDuration = '–';
+/// What a row shows where nothing is known: no artist, no length. A dash is honest
+/// where a guess would not be.
+const unknownValue = '–';
+
+/// A row shows the length as mm:ss. A file the server could not measure shows the
+/// dash, because the server can only know it for MPEG Layer III (see server/metadata.go).
 String durationOf(Track track) {
-  if (track.durationMs <= 0) return unknownDuration;
+  if (track.durationMs <= 0) return unknownValue;
 
   final seconds = track.durationMs ~/ 1000;
   final minutes = seconds ~/ 60;
   return '$minutes:${(seconds % 60).toString().padLeft(2, '0')}';
 }
 
-/// The library screen: the songs the server has, filtered and sorted, with the
-/// same actions the rest of the app uses — play, add to a playlist, add to the
-/// queue, upload a new song.
+/// The library: the songs the server has, filtered and sorted, with the same actions
+/// the rest of the app uses — play, add to a playlist, add to the queue, upload a new
+/// song. It draws the app's frame through AppShell, so it is the same page shape as
+/// the start page.
 class LibraryScreen extends StatefulWidget {
   const LibraryScreen({
     super.key,
@@ -83,7 +86,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
   // would make the button say "Wird hochgeladen…" while nothing is being uploaded, and
   // a batch could be sent into a list that is still on its way.
   bool _loading = false;
+  // Choosing the files and sending them are two phases as well: while the picker is
+  // open nothing has been sent yet, so the label cannot claim it is.
+  bool _picking = false;
   bool _uploading = false;
+
+  // What the message is about. Only a failed read can be retried here; a file the
+  // server refused has to be chosen again, so its message must not offer a retry. The
+  // flag belongs to the message, so it is set wherever the message is set.
+  bool _noteIsReadError = false;
 
   @override
   void initState() {
@@ -98,6 +109,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _load() async {
+    // A second read while one is on its way would let the earlier answer overwrite the
+    // later one, so the retry cannot be started twice.
+    if (_loading) return;
     setState(() => _loading = true);
 
     try {
@@ -106,9 +120,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
       setState(() {
         _tracks = tracks;
         _note = null;
+        _noteIsReadError = false;
       });
     } on LibraryException catch (error) {
-      if (mounted) setState(() => _note = error.message);
+      if (mounted) {
+        setState(() {
+          _note = error.message;
+          _noteIsReadError = true;
+        });
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -117,12 +137,31 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Future<void> _upload() async {
     // The button stays disabled for the whole batch, so a second click cannot send the
     // same files again. A picker that fails must release it too.
-    if (_uploading) return;
+    if (_picking) return;
+    setState(() => _picking = true);
+
+    final List<PickedAudio>? picked;
+    try {
+      picked = await widget.pickAudio();
+    } catch (error) {
+      // The picker itself failing is not a file the server refused, so the row above
+      // cannot name a file. The message says what the user can do next.
+      if (mounted) {
+        setState(() {
+          _note = 'Die Dateien konnten nicht gelesen werden. Versuch es erneut.';
+          _noteIsReadError = false;
+        });
+      }
+      return;
+    } finally {
+      if (mounted) setState(() => _picking = false);
+    }
+
+    if (picked == null) return;
+
+    // Only now is a file actually on its way, so only now can the button say so.
     setState(() => _uploading = true);
     try {
-      final picked = await widget.pickAudio();
-      if (picked == null) return;
-
       for (final file in picked) {
         try {
           // The server answers with the row it stored, so the song is in the library
@@ -132,21 +171,23 @@ class _LibraryScreenState extends State<LibraryScreen> {
           setState(() => _tracks.add(track));
         } on UploadException catch (error) {
           // A file the server refused is not added. In a batch the message has to say
-          // which file it is about, and a later success must not hide it.
-          if (mounted) setState(() => _note = '${file.name}: ${error.message}');
+          // which file it is about, and a later success must not hide it. This message
+          // is not about a read, so it must not get the retry that belongs to one.
+          if (mounted) {
+            setState(() {
+              _note = '${file.name}: ${error.message}';
+              _noteIsReadError = false;
+            });
+          }
         }
       }
-    } catch (error) {
-      // The picker itself failing is not a file the server refused, so the row above
-      // cannot name a file. The message says what the user can do next.
-      if (mounted) setState(() => _note = 'Die Dateien konnten nicht gelesen werden. Versuch es erneut.');
     } finally {
       if (mounted) setState(() => _uploading = false);
     }
   }
 
   /// What the page shows now: the rows that match the search, in the order the
-  /// dropdown asks for.
+  /// sort was picked.
   List<Track> _visible() {
     final query = _search.text.trim().toLowerCase();
     final rows = [
@@ -189,70 +230,161 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final scheme = theme.colorScheme;
     final rows = _visible();
 
-    return Scaffold(
-      backgroundColor: scheme.surface,
-      body: SafeArea(
-        child: Column(
-          children: [
-            // The same navigation as the home page, drawn as the row this page has room
-            // for: it marks which screen this is and lets the user go back. A heading
-            // would only repeat what the marked item already says.
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 8, 24, 8),
-              child: NavBar(selected: '/library', vertical: false),
+    return AppShell(
+      selected: '/library',
+      player: widget.player,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Bibliothek', style: theme.textTheme.titleLarge),
+                const SizedBox(height: 4),
+                // What the page holds right now. While the list is on its way there is
+                // nothing to count, and a row that is not shown cannot be counted either,
+                // so this line says nothing until something is actually there.
+                if (!_loading && _tracks.isNotEmpty)
+                  Text(
+                    _search.text.trim().isEmpty
+                        ? '${_tracks.length} Songs'
+                        : '${rows.length} von ${_tracks.length} Songs passen zur Suche',
+                    style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+              ],
             ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _search,
+                        onChanged: (_) => setState(() {}),
+                        decoration: const InputDecoration(
+                          hintText: 'Songs suchen',
+                          prefixIcon: Icon(Icons.search, size: 18),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    // One button for the whole page, so uploading works whether the
+                    // library is empty or already has songs in it. Its label follows what
+                    // is actually happening, and it is not usable while a batch is on its
+                    // way or while the list it would add to is still being read.
+                    FilledButton(
+                      onPressed: _loading || _picking || _uploading ? null : _upload,
+                      // The theme's minimum size asks for the whole width, which a row
+                      // cannot give; this button takes only its label and the theme's height.
+                      style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
+                      child: Text(_uploading ? 'Wird hochgeladen…' : 'Song hochladen'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [for (final key in sortKeys) _sortChip(key)],
+                ),
+              ],
+            ),
+          ),
+          // A message about a read is not shown while a new read is on its way: the page
+          // would be reporting what an earlier answer said and what it is doing at the
+          // same time.
+          if (_note != null && !_loading)
             Padding(
-              padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
               child: Row(
                 children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _search,
-                      onChanged: (_) => setState(() {}),
-                      decoration: const InputDecoration(hintText: 'Songs suchen'),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  DropdownButton<String>(
-                    value: _sort,
-                    items: [
-                      for (final key in sortKeys)
-                        DropdownMenuItem(value: key, child: Text('Sortieren: $key')),
-                    ],
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setState(() => _sort = value);
-                    },
-                  ),
-                  const SizedBox(width: 16),
-                  // One button for the whole page, so uploading works whether the
-                  // library is empty or already has songs in it. Its label follows what
-                  // is actually happening, and it is not usable while a batch is on its
-                  // way or while the list it would add to is still being read.
-                  FilledButton(
-                    onPressed: _loading || _uploading ? null : _upload,
-                    child: Text(_uploading ? 'Wird hochgeladen…' : 'Song hochladen'),
-                  ),
+                  Expanded(child: Text(_note!, style: TextStyle(color: scheme.error))),
+                  // Only a read can be started again from here.
+                  if (_noteIsReadError)
+                    TextButton(onPressed: _load, child: const Text('Erneut versuchen')),
                 ],
               ),
             ),
-            if (_note != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
-                child: Text(_note!, style: TextStyle(color: scheme.error)),
-              ),
-            Expanded(
-              child: rows.isEmpty
-                  ? _empty()
-                  : ListView.builder(
-                      padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
-                      itemCount: rows.length,
-                      itemBuilder: (context, index) => _row(rows[index]),
-                    ),
-            ),
-            PlayerBar(player: widget.player),
-          ],
+          // While the list is on its way the page says that. It cannot claim what the
+          // library holds before it has an answer, and an empty message here read as
+          // "there is nothing" while the request was still open.
+          Expanded(
+            child: _loading
+                ? _loadingState()
+                : rows.isEmpty
+                ? _empty()
+                : ListenableBuilder(
+                    listenable: widget.player,
+                    builder: (context, _) {
+                      final current = widget.player.current;
+                      return ListView.builder(
+                        padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                        itemCount: rows.length,
+                        itemBuilder: (context, index) => _row(rows[index], current?.id == rows[index].id),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sortChip(String key) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final picked = key == _sort;
+
+    // The selected one is shown by color alone, so it is said again for anyone who does
+    // not see the fill, and the row is tall enough to be a target, not a line.
+    return Semantics(
+      button: true,
+      selected: picked,
+      child: InkWell(
+        onTap: () => setState(() => _sort = key),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
+          decoration: BoxDecoration(
+            color: picked ? scheme.primary : scheme.surfaceContainer,
+            border: Border.all(color: picked ? scheme.primary : scheme.outline),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            key,
+            style: theme.textTheme.labelLarge?.copyWith(color: picked ? scheme.onPrimary : scheme.onSurfaceVariant),
+          ),
         ),
+      ),
+    );
+  }
+
+  /// While the list is on its way the page says what it is doing, because it cannot
+  /// claim anything about a library it has not read.
+  Widget _loadingState() {
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          LinearProgressIndicator(
+            minHeight: 2,
+            color: theme.colorScheme.primary,
+            backgroundColor: theme.colorScheme.outline,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Songs werden geladen.',
+            style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+        ],
       ),
     );
   }
@@ -261,12 +393,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final theme = Theme.of(context);
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // The upload button is in the row above. Where a message above already says
-          // what went wrong, nothing here claims what the library holds.
+          // Where a message above already says what went wrong, nothing here claims what
+          // the library holds — that would be the page lying about an answer it never got.
           if (_note == null)
             Text(
               _tracks.isEmpty
@@ -281,37 +413,60 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   /// One song: its name, what the file says about it, and the actions the menu has.
   /// The whole row can be tapped, so playing a song does not need the small icon.
-  Widget _row(Track track) {
+  Widget _row(Track track, bool current) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final artist = artistOf(track);
 
     return InkWell(
       onTap: () => widget.player.play(track),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-        decoration: BoxDecoration(border: Border(bottom: BorderSide(color: theme.colorScheme.outline))),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        decoration: BoxDecoration(
+          // The current song is the one place on this page where the accent marks what
+          // is active; nothing else on the page is accent-colored.
+          color: current ? scheme.surfaceContainer : null,
+          border: Border(
+            left: BorderSide(color: current ? scheme.primary : Colors.transparent, width: 2),
+            bottom: BorderSide(color: scheme.outline),
+          ),
+        ),
         child: Row(
           children: [
             IconButton(
               tooltip: 'Abspielen',
               onPressed: () => widget.player.play(track),
-              icon: const Icon(Icons.play_arrow),
+              icon: Icon(Icons.play_arrow, color: current ? scheme.primary : scheme.onSurfaceVariant),
             ),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(track.title, style: theme.textTheme.labelLarge),
                   Text(
-                    // What is known about the song: the artist its tags name, or what
-                    // its own says when they do not, and the length the server worked
-                    // out. Where nothing is known, the row shows a dash.
-                    '${artist.isEmpty ? '–' : artist} · ${durationOf(track)}',
-                    style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                    track.title,
+                    style: theme.textTheme.labelLarge?.copyWith(color: current ? scheme.primary : null),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    // What is known about the song: the artist its tags name, or what its
+                    // own name says when they do not. Where nothing is known, the row shows
+                    // a dash.
+                    artist.isEmpty ? unknownValue : artist,
+                    style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ],
               ),
             ),
+            // The length is put at the end of the row, so a list can be read top to
+            // bottom without reading every line.
+            Text(
+              durationOf(track),
+              style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+            const SizedBox(width: 12),
             PopupMenuButton<String>(
               tooltip: 'Aktionen für ${track.title}',
               onSelected: (value) {

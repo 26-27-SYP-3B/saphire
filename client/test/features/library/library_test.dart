@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:saphire_client/app/router.dart';
+import 'package:saphire_client/app/theme.dart';
 import 'package:saphire_client/core/storage/session_store.dart';
 import 'package:saphire_client/core/utils/pick_audio.dart';
 import 'package:saphire_client/features/auth/data/auth_repository.dart';
@@ -39,8 +40,14 @@ SessionStore loggedIn() =>
 
 /// The library screen with a session, so the repository sends a token. The screen is
 /// pumped on its own here, so the router guard is not part of these tests; the
-/// navigation test below covers the guard. Every answer a test needs comes from the
-/// stub adapter: the list first, then the upload.
+/// navigation test below covers the guard.
+///
+/// Two adapters, because the stub answers one fixed body or a queue of bodies: the list
+/// is answered by `libraryAdapter` (or `libraryBody`), the upload by `uploadAdapter`.
+/// A test that needs both a failing read and a failing upload gives both.
+///
+/// `settle` is off for the test that looks at the page while the request is still
+/// open: the loading bar repeats its animation, so settling would never finish.
 Future<PlaylistStore> openLibrary(
   WidgetTester tester, {
   Object libraryBody = libraryAnswer,
@@ -48,6 +55,7 @@ Future<PlaylistStore> openLibrary(
   StubAdapter? uploadAdapter,
   PickAudio? pickAudio,
   Player? player,
+  bool settle = true,
 }) async {
   // The test font draws every glyph as wide as the font size, so this page needs
   // more room than the default test window.
@@ -60,7 +68,10 @@ Future<PlaylistStore> openLibrary(
   final playlists = PlaylistStore();
 
   await tester.pumpWidget(
+    // The app's own theme, so a test that looks at a color sees the color the app
+    // really paints.
     MaterialApp(
+      theme: buildTheme(),
       home: LibraryScreen(
         library: LibraryRepository(Dio()..httpClientAdapter = adapter, session),
         player: player ?? Player(session, (url, headers) async {}),
@@ -70,7 +81,7 @@ Future<PlaylistStore> openLibrary(
       ),
     ),
   );
-  await tester.pumpAndSettle();
+  if (settle) await tester.pumpAndSettle();
 
   return playlists;
 }
@@ -80,10 +91,9 @@ Future<void> openMenu(WidgetTester tester, String title) async {
   await tester.pumpAndSettle();
 }
 
+// The sort is a row of chips, so the one that is picked is tapped directly.
 Future<void> pickSort(WidgetTester tester, String key) async {
-  await tester.tap(find.byType(DropdownButton<String>));
-  await tester.pumpAndSettle();
-  await tester.tap(find.text('Sortieren: $key'));
+  await tester.tap(find.text(key));
   await tester.pumpAndSettle();
 }
 
@@ -138,11 +148,17 @@ void main() {
     await openLibrary(tester);
 
     expect(find.text('Neutrone (Remix)'), findsOneWidget);
-    expect(find.text('Kraftwerk · 3:35'), findsOneWidget);
+    expect(find.text('Kraftwerk'), findsOneWidget);
+    expect(find.text('3:35'), findsOneWidget);
     expect(find.text('Alle Songs'), findsOneWidget);
     // A file the server could not measure shows a dash, not a guessed number.
-    expect(find.text('Zukunft · –'), findsOneWidget);
-    expect(find.text('Anna · 2:01'), findsOneWidget);
+    expect(find.text('Zukunft'), findsOneWidget);
+    expect(find.text('–'), findsOneWidget);
+    expect(find.text('Anna'), findsOneWidget);
+    expect(find.text('2:01'), findsOneWidget);
+
+    // The page says what it shows, so the list can be read without counting it.
+    expect(find.text('3 Songs'), findsOneWidget);
   });
 
   testWidgets('an empty library says so and offers an upload', (tester) async {
@@ -159,6 +175,67 @@ void main() {
 
     expect(find.text('Die Antwort des Servers konnte nicht gelesen werden.'), findsOneWidget);
     expect(find.textContaining('Bibliothek ist noch leer'), findsNothing);
+  });
+
+  // A page that got an error says what happened and offers the one thing that can
+  // still work: reading the list again. Showing "the library is empty" here would be
+  // the page claiming something about an answer it never received.
+  testWidgets('a failed read says what happened and can be started again', (tester) async {
+    final adapter = StubAdapter(401, {'error': 'session is not valid or expired'});
+
+    await openLibrary(tester, libraryAdapter: adapter);
+
+    expect(find.text('session is not valid or expired'), findsOneWidget);
+    expect(find.textContaining('Bibliothek ist noch leer'), findsNothing);
+
+    // The next answer is the documented list, so the retry has something to show.
+    adapter.statusCode = 200;
+    adapter.body = libraryAnswer;
+
+    await tester.tap(find.text('Erneut versuchen'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Erneut versuchen'), findsNothing);
+    expect(find.text('Neutrone (Remix)'), findsOneWidget);
+  });
+
+  // A message that is not about a read must not offer the retry that belongs to one.
+  // Here the read failed and a file was refused afterwards, so the message names that
+  // file and nothing would be fixed by reading the list again.
+  testWidgets('the retry only belongs to a failed read', (tester) async {
+    await openLibrary(
+      tester,
+      libraryAdapter: StubAdapter(401, {'error': 'session is not valid or expired'}),
+      uploadAdapter: StubAdapter(400, {'error': 'only audio files are accepted'}),
+    );
+
+    expect(find.text('Erneut versuchen'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Song hochladen'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('only audio files are accepted'), findsOneWidget);
+    expect(find.text('Erneut versuchen'), findsNothing);
+  });
+
+  // While the list is still on its way the page says so, instead of claiming the
+  // library is empty — that is what a slow server looked like before.
+  testWidgets('the page says what it is doing while the list is on its way', (tester) async {
+    final adapter = StubAdapter(200, libraryAnswer);
+    final gate = Completer<void>();
+    adapter.wait = gate.future;
+
+    await openLibrary(tester, libraryAdapter: adapter, settle: false);
+    await tester.pump();
+
+    expect(find.text('Songs werden geladen.'), findsOneWidget);
+    expect(find.textContaining('Bibliothek ist noch leer'), findsNothing);
+
+    gate.complete();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Songs werden geladen.'), findsNothing);
+    expect(find.text('Neutrone (Remix)'), findsOneWidget);
   });
 
   testWidgets('the search field only shows what matches', (tester) async {
@@ -201,42 +278,47 @@ void main() {
     expect(shownOrder(tester, titles), ['Neutrone (Remix)', 'Alle Songs', 'Bohne']);
   });
 
-  // The comparison is case-insensitive, so a name that starts with a small letter
-  // comes before one that starts with a capital. With the code points alone the
-  // capital would win, and this test would pass for the wrong reason.
+  // The comparison is case-insensitive, so a name that starts with a small letter comes
+  // before one that starts with a capital. With the code points alone the capital would
+  // win, so both orders here are only what they claim to be if case is ignored — and the
+  // two keys answer differently, so the test shows which key decided.
   testWidgets('the sort does not care about case', (tester) async {
     await openLibrary(
       tester,
       libraryBody: [
-        {'id': 1.0, 'title': 'Zeh', 'artist': 'Berta', 'duration_ms': 0.0, 'uploaded_at': 1.0},
-        {'id': 2.0, 'title': 'ahn', 'artist': 'yta', 'duration_ms': 0.0, 'uploaded_at': 2.0},
+        {'id': 1.0, 'title': 'Zeh', 'artist': 'ahn', 'duration_ms': 0.0, 'uploaded_at': 1.0},
+        {'id': 2.0, 'title': 'qhn', 'artist': 'Zeta', 'duration_ms': 0.0, 'uploaded_at': 2.0},
       ],
     );
 
-    expect(shownOrder(tester, ['Zeh', 'ahn']), ['ahn', 'Zeh']);
+    // Titel: 'qhn' before 'Zeh'.
+    expect(shownOrder(tester, ['Zeh', 'qhn']), ['qhn', 'Zeh']);
 
     await pickSort(tester, 'Interpret');
-    expect(shownOrder(tester, ['Zeh', 'ahn']), ['Zeh', 'ahn']);
+
+    // Interpret: 'ahn' before 'Zeta', the other order than the names gave.
+    expect(shownOrder(tester, ['Zeh', 'qhn']), ['Zeh', 'qhn']);
   });
 
-  // What the sort key cannot decide is decided by the id, so the same rows keep the
-  // same order on every rebuild. Here both titles are the same when case is ignored
-  // and both artists and dates are equal, so only the id can tell them apart:
-  // ascending for the names, descending for the date, which is the direction that
-  // key already reads in.
+  // What the sort key cannot decide is decided by the id, so the same rows keep the same
+  // order on every rebuild. Here the titles are the same when case is ignored and the
+  // artists and dates are equal, so only the id can tell them apart: ascending for the
+  // names, descending for the date, which is the direction that key already reads in. The
+  // ids are the other way round than the capitals, so a comparison that did care about
+  // case would answer differently.
   testWidgets('rows the sort key cannot tell apart are ordered by id', (tester) async {
     await openLibrary(
       tester,
       libraryBody: [
-        {'id': 4.0, 'title': 'Gleich', 'artist': 'Zukunft', 'duration_ms': 0.0, 'uploaded_at': 5.0},
-        {'id': 8.0, 'title': 'gleich', 'artist': 'Zukunft', 'duration_ms': 0.0, 'uploaded_at': 5.0},
+        {'id': 8.0, 'title': 'Gleich', 'artist': 'Zukunft', 'duration_ms': 0.0, 'uploaded_at': 5.0},
+        {'id': 4.0, 'title': 'gleich', 'artist': 'Zukunft', 'duration_ms': 0.0, 'uploaded_at': 5.0},
       ],
     );
 
-    expect(shownOrder(tester, ['Gleich', 'gleich']), ['Gleich', 'gleich']);
+    expect(shownOrder(tester, ['Gleich', 'gleich']), ['gleich', 'Gleich']);
 
     await pickSort(tester, 'Hinzugefügt am');
-    expect(shownOrder(tester, ['Gleich', 'gleich']), ['gleich', 'Gleich']);
+    expect(shownOrder(tester, ['Gleich', 'gleich']), ['Gleich', 'gleich']);
   });
 
   testWidgets('playing a song shows it in the bar', (tester) async {
@@ -278,6 +360,38 @@ void main() {
     );
   });
 
+  // The row of the song that is playing is marked, so the page and the bar agree on
+  // what is current. The marker is the row's own box, so the test reads it there.
+  testWidgets('the row of the song that is playing is marked', (tester) async {
+    final player = Player(loggedIn(), (url, headers) async {});
+    await openLibrary(tester, player: player);
+
+    // The bar at the bottom shows the same title once a song is playing, so a row is
+    // looked for inside the list rather than anywhere on the screen.
+    BoxDecoration decorationOf(String title) {
+      final row = tester.widget<Container>(
+        find.descendant(
+          of: find.byType(ListView),
+          matching: find.ancestor(of: find.text(title), matching: find.byType(Container)),
+        ),
+      );
+      return row.decoration! as BoxDecoration;
+    }
+
+    // Nothing is playing yet, so no row is marked.
+    expect(decorationOf('Alle Songs').color, isNull);
+
+    await tester.tap(find.text('Alle Songs'));
+    await tester.pumpAndSettle();
+
+    expect(decorationOf('Alle Songs').color, fieldBackground);
+    // The left edge is what marks the row, so it is read as the Border it is.
+    expect((decorationOf('Alle Songs').border! as Border).left.color, accent);
+
+    // A row that is not the current one stays unmarked.
+    expect(decorationOf('Bohne').color, isNull);
+  });
+
   // The message is ours, not the player's own text, so it stays readable.
   testWidgets('a song the player cannot start says so in the bar', (tester) async {
     await openLibrary(
@@ -316,7 +430,9 @@ void main() {
       'id': 9.0,
       'uploaded_by': 'lukas',
       'title': 'song.mp3',
-      'artist': 'Kraftwerk',
+      // An artist and a length that differ from the listed song, so the row that came
+      // from this answer can be told apart from the one that came from the list.
+      'artist': 'Neu',
       'duration_ms': 61000.0,
       'stored_name': '18cfd7db41d243d98cc87c4ab33dded6.mp3',
       'size': 1500000.0,
@@ -331,7 +447,8 @@ void main() {
     expect(find.text('song.mp3'), findsOneWidget);
     // The row shows what the answer says about the file it just stored. This artist
     // and length differ from the listed song, so the new row can be told apart.
-    expect(find.text('Kraftwerk · 1:01'), findsOneWidget);
+    expect(find.text('Neu'), findsOneWidget);
+    expect(find.text('1:01'), findsOneWidget);
   });
 
   // The button stays disabled for the whole batch, and a file the server refused keeps
@@ -367,8 +484,11 @@ void main() {
     await tester.pumpAndSettle();
 
     // The first answer is held by the gate, so the second file has not been sent and the
-    // button is still disabled.
-    expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Wird hochgeladen…')).onPressed, isNull);
+    // button is still disabled. The button is taken by type, so the label is checked as
+    // something the page chose rather than as the name the finder was given.
+    final button = tester.widget<FilledButton>(find.byType(FilledButton));
+    expect((button.child as Text).data, 'Wird hochgeladen…');
+    expect(button.onPressed, isNull);
     expect(find.textContaining('only audio files are accepted'), findsNothing);
 
     gate.complete();
