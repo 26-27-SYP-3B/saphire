@@ -200,7 +200,7 @@ curl -X POST localhost:8080/api/music/upload \
 
 | Status | When | Example body |
 |---|---|---|
-| `201 Created` | File saved in the library and the row inserted | `{"id": 4, "uploaded_by": "lukas", "title": "Neutrone (Remix)", "artist": "Kraftwerk", "duration_ms": 261, "stored_name": "18cfd7db41d243d98cc87c4ab33dded6.mp3", "size": 4237, "content_type": "audio/mpeg", "uploaded_at": 1793974311}` |
+| `201 Created` | File saved in the library and the row inserted | `{"id": 4, "uploaded_by": "lukas", "title": "Neutrone (Remix)", "artist": "Kraftwerk", "duration_ms": 261000, "stored_name": "18cfd7db41d243d98cc87c4ab33dded6.mp3", "size": 4237, "content_type": "audio/mpeg", "uploaded_at": 1793974311}` |
 | `401 Unauthorized` | Missing `Authorization: Bearer` header | `{"error": "authorization header with a Bearer token is missing"}` |
 | `401 Unauthorized` | Unknown or expired token | `{"error": "session is not valid or expired"}` |
 | `400 Bad Request` | Not `multipart/form-data`, no file, the field is not named `file`, an empty file, a name with no usable characters, or content that is not audio | `{"error": "only audio files are accepted (mp3, wav, m4a, ogg, opus, flac, aac)"}` |
@@ -255,7 +255,7 @@ Authorization: Bearer <token>
 
 | Status | When | Example body |
 |---|---|---|
-| `200 OK` | Rows read | `[{"id": 1, "uploaded_by": "lukas", "title": "Neutrone (Remix)", "artist": "Kraftwerk", "duration_ms": 261, "stored_name": "18cfd7db…mp3", "size": 4237, "content_type": "audio/mpeg", "uploaded_at": 1793974311}]` |
+| `200 OK` | Rows read | `[{"id": 1, "uploaded_by": "lukas", "title": "Neutrone (Remix)", "artist": "Kraftwerk", "duration_ms": 261000, "stored_name": "18cfd7db…mp3", "size": 4237, "content_type": "audio/mpeg", "uploaded_at": 1793974311}]` |
 | `401 Unauthorized` | Missing `Authorization: Bearer` header | `{"error": "authorization header with a Bearer token is missing"}` |
 | `401 Unauthorized` | Unknown or expired token | `{"error": "session is not valid or expired"}` |
 | `429 Too Many Requests` | Library rate limit reached (10 requests per IP, refilling 1 token every 12 s — its own bucket, shared with `GET /api/music/{id}`). Includes a `Retry-After` header. | `{"error": "too many requests from this address, try again later"}` |
