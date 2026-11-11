@@ -1,0 +1,32 @@
+name: server tests
+
+# Only the backend tests. They build the app with an in-memory database and a temporary
+# library folder, so a run needs no database file and no .env. The path filter keeps a
+# client-only change from starting them.
+on:
+  push:
+    paths:
+      - "server/**"
+      - ".github/workflows/server-tests.yml"
+  pull_request:
+    paths:
+      - "server/**"
+      - ".github/workflows/server-tests.yml"
+
+jobs:
+  test:
+    name: cargo test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        # tests/common/mod.rs reads the page files through CARGO_MANIFEST_DIR, so cargo
+        # has to run inside the crate rather than at the repository root.
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      # Cargo.toml asks for edition 2024, so an older toolchain cannot build the crate.
+      - uses: dtolnay/rust-toolchain@stable
+
+      # The same command as `just test`; `just` itself is not installed on a runner.
+      - run: cargo test
