@@ -370,6 +370,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     return AppShell(
       selected: '/library',
       player: widget.player,
+      localLibrary: _local,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

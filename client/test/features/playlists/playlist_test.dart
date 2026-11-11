@@ -56,9 +56,10 @@ Future<Wiring> openPlaylists(
   StubAdapter? library,
   CoverStore? covers,
   PickImage? pickImage,
+  Size size = const Size(1600, 1200),
 }) async {
   // The two-pane layout needs more room than the default test window.
-  tester.view..physicalSize = const Size(1600, 1200)..devicePixelRatio = 1.0;
+  tester.view..physicalSize = size..devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
 
@@ -504,6 +505,25 @@ void main() {
     expect(covers['server:2'], isNull);
   });
 
+  // The picker's image filter is an offer, not a check: a renamed text file must not be
+  // stored as a cover.
+  testWidgets('a picked file that is no image is refused', (tester) async {
+    final covers = CoverStore();
+
+    await openPlaylists(
+      tester,
+      playlists: StubAdapter(200, <Object>[]),
+      covers: covers,
+      pickImage: () async => Uint8List.fromList([1, 2, 3, 4, 5, 6]),
+    );
+
+    await tester.tap(find.byIcon(Icons.add_photo_alternate_outlined));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('kein Bild'), findsOneWidget);
+    expect(find.byType(Image), findsNothing);
+  });
+
   // An image picked for a playlist that does not exist yet has no id to be stored under;
   // it belongs to the playlist the create then makes.
   testWidgets('a picked image becomes the cover of the created playlist', (tester) async {
@@ -520,9 +540,37 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Anlegen'));
     await tester.pumpAndSettle();
 
-    expect(covers['server:1'], _png);
+    expect(covers['server:http://127.0.0.1:8080:1'], _png);
     // The row in the list and the detail show the image instead of the mark.
     expect(find.byType(Image), findsWidgets);
+  });
+
+  // A phone has less width than the two panes need. The page stacks them instead of
+  // overflowing, which a Row with a fixed pane would do.
+  testWidgets('a narrow window shows the list above the detail', (tester) async {
+    final adapter = StubAdapter(200, <Object>[]);
+    adapter.queue.addAll([(200, <Object>[playlistAnswer]), (200, detailAnswer)]);
+
+    await openPlaylists(tester, playlists: adapter, size: const Size(420, 900));
+    await tester.tap(find.text('Favoriten'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Technogal.mp3'), findsWidgets);
+    // An overflow would be reported here instead of only showing stripes in the app.
+    expect(tester.takeException(), isNull);
+  });
+
+  // The bar is on every page and has to start the queue stored on the device: the player
+  // only knows it after it was started, and playCurrent would find no server queue.
+  testWidgets('the bar starts the stored local queue', (tester) async {
+    final local = LocalLibrary()..add(name: 'song.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
+    local.setQueue(local.tracks);
+    final wiring = await openLocalPlaylists(tester, local);
+
+    await tester.tap(find.byTooltip('Abspielen'));
+    await tester.pumpAndSettle();
+
+    expect(wiring.player.localTitle, 'song.mp3');
   });
 
   // The Playlists page draws the navigation every other page draws, so it is not a dead

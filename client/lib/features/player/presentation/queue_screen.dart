@@ -306,9 +306,9 @@ class _QueueScreenState extends State<QueueScreen> {
     }
   }
 
-  // What the page says happened: an action of this page, or what the player reported on
-  // its own when a song ended and the next one could not be opened.
-  String? _message() => _note ?? widget.player.failure;
+  // What the page itself said happened. The bar shows what the player reported on its own,
+  // so a message is not printed twice.
+  String? _message() => _note;
 
   @override
   Widget build(BuildContext context) {
@@ -320,6 +320,7 @@ class _QueueScreenState extends State<QueueScreen> {
     return AppShell(
       selected: '/queue',
       player: widget.player,
+      localLibrary: _local,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
