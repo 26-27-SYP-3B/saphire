@@ -179,6 +179,14 @@ class _QueueScreenState extends State<QueueScreen> {
   }
 
   Future<void> _next() async {
+    if (_settings.localMode) {
+      // This page shows the stored queue; the player may still hold an older copy.
+      widget.player.syncLocalQueue(_local.queue);
+      // Nothing from the stored list is open yet (a first tap or after a restart), so next
+      // means start it — not that the list has ended.
+      if (widget.player.localCurrent == null) return _play();
+    }
+
     setState(() => _busy = true);
     try {
       final moved = await widget.player.next();

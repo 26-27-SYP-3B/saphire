@@ -140,11 +140,16 @@ class LocalLibrary {
 
   static List<LocalTrack> _readTracks(String? saved) => _tracks(_decode(saved));
 
-  static List<LocalTrack> _tracks(Object? data) => [
-        for (final entry in data as List? ?? const [])
-          LocalTrack(
-            title: (entry as Map<String, dynamic>)['title'] as String,
-            path: entry['path'] as String?,
-          ),
-      ];
+  static List<LocalTrack> _tracks(Object? data) {
+    final tracks = <LocalTrack>[];
+    for (final entry in data as List? ?? const []) {
+      final row = entry as Map<String, dynamic>;
+      final path = row['path'] as String?;
+      // A browser pick never survives a restart: an older version stored its title without
+      // bytes, so such a row must not come back as a song that can never be opened.
+      if (path == null || path.isEmpty) continue;
+      tracks.add(LocalTrack(title: row['title'] as String, path: path));
+    }
+    return tracks;
+  }
 }

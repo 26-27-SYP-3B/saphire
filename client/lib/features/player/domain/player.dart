@@ -146,8 +146,14 @@ class QueuePlayer {
   /// Matched by identity, not by index: the player's copy may have been made before the
   /// page's list changed, and then a position would point at a different song.
   Future<void> removeLocal(LocalTrack track) async {
-    final index = _local.indexOf(track);
+    var index = _local.indexOf(track);
     if (index < 0) return;
+
+    // The same song can be queued twice: a removal must drop a copy that is not audible.
+    if (index == _localIndex) {
+      final other = _local.lastIndexOf(track);
+      if (other != index) index = other;
+    }
 
     if (index == _localIndex) {
       await player.stop();
@@ -214,7 +220,7 @@ class QueuePlayer {
     // Only a list that is at a song owns playback; an index of -1 means the local list
     // already ended and a server queue may be what plays next.
     if (_localIndex >= 0) {
-      if (_localIndex >= 0 && _localIndex < _local.length - 1) {
+      if (_localIndex < _local.length - 1) {
         _localIndex += 1;
         _changes.add(null);
         await _openLocal();
@@ -249,7 +255,7 @@ class QueuePlayer {
     // Same rule as the next button: a local list only owns playback while a song of it is
     // current. Otherwise the server queue is what moves on.
     if (_localIndex >= 0) {
-      if (_localIndex >= 0 && _localIndex < _local.length - 1) {
+      if (_localIndex < _local.length - 1) {
         _localIndex += 1;
         try {
           await _openLocal();

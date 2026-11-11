@@ -311,6 +311,8 @@ class _HomeScreenState extends State<HomeScreen> {
     // A local song that is open resumes as it is. Syncing the stored list first could drop
     // a song that was played straight from the library and is not in the queue.
     if (widget.player.localTitle != null) return widget.player.resume();
+    // A paused server song continues where it was; opening it again would start from zero.
+    if (widget.player.queue.current != null && widget.player.failure == null) return widget.player.resume();
     if (!widget.player.queue.isEmpty) return widget.player.playCurrent();
 
     final local = _local.queue.isNotEmpty ? _local.queue : widget.player.localQueue;

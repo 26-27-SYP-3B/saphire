@@ -249,6 +249,25 @@ void main() {
     expect(player.localTitle, 'a.mp3');
   });
 
+  // The same song can be queued twice. Removing one row must not stop the copy that is
+  // audible (it is the same object, so an identity match alone cannot tell them apart).
+  test('removing one of two equal rows keeps the audible copy', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final player = QueuePlayer(queue: PlaybackQueue(), player: fake, session: SessionStore());
+    addTearDown(player.dispose);
+
+    final track = LocalTrack(title: 'a.mp3', bytes: Uint8List.fromList([0xFF, 0xFB]));
+    await player.playLocalQueue([track]);
+    player.syncLocalQueue([track, track]);
+
+    await player.removeLocal(track);
+
+    expect(player.localTitle, 'a.mp3');
+    expect(player.localQueue, hasLength(1));
+    expect(fake.stopped, isEmpty);
+  });
+
   // A file the user deleted or moved is only noticed here. It must say what is wrong and
   // must not become the song the bar names.
   test('a local file that is gone is reported and does not become current', () async {
