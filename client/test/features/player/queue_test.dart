@@ -22,16 +22,31 @@ const queueAnswer = [
   {'position': 2.0, 'track_id': 4.0, 'title': 'lied.wav'},
 ];
 
-/// Opens the app on the queue page with a valid session, so the guard lets a test reach
-/// it. The player is the one the app shares, so a test can say "this song ended" and see
-/// what the page does with it.
-Future<Wiring> openQueue(WidgetTester tester, {StubAdapter? queues, SongPlayer? audio, SessionStore? session}) async {
+/// Opens the app and the queue sheet with a valid session, so the guard lets a test reach
+/// it. The queue has no page of its own any more, so the sheet is opened from the bar the
+/// way a user opens it. The player is the one the app shares, so a test can say "this song
+/// ended" and see what the sheet does with it.
+Future<Wiring> openQueue(
+  WidgetTester tester, {
+  StubAdapter? queues,
+  StubAdapter? library,
+  SongPlayer? audio,
+  SessionStore? session,
+}) async {
   tester.view..physicalSize = const Size(1600, 1200)..devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
 
   final store = session ?? loggedIn();
-  final wiring = Wiring(store, queueAdapter: queues, audio: audio);
+  final wiring = Wiring(
+    store,
+    queueAdapter: queues,
+    libraryAdapter: library,
+    // The page the sheet is opened from reads playlists too; an empty answer keeps it off
+    // the network.
+    playlistAdapter: StubAdapter(200, const []),
+    audio: audio,
+  );
   addTearDown(wiring.dispose);
 
   final auth = AuthRepository(Dio(), store);
@@ -50,8 +65,12 @@ Future<Wiring> openQueue(WidgetTester tester, {StubAdapter? queues, SongPlayer? 
     dio: Dio(),
   );
 
-  router.go('/queue');
+  router.go('/library');
   await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+  await tester.pumpAndSettle();
+
+  // The bar's list button is the way into the queue.
+  await tester.tap(find.byTooltip('Warteschlange'));
   await tester.pumpAndSettle();
 
   return wiring;
@@ -233,6 +252,38 @@ void main() {
 
     expect(find.textContaining('Die Warteschlange ist leer'), findsOneWidget);
     expect(find.textContaining('Kein Lied wird gespielt'), findsOneWidget);
+  });
+
+  // The list button is also the way to put any song into the queue, without leaving the
+  // page the user is on.
+  testWidgets('a song from the library is put at the end of the queue', (tester) async {
+    final adapter = StubAdapter(200, queueAnswer);
+    adapter.queue.addAll([
+      (200, queueAnswer),
+      (200, {'position': 3.0, 'track_id': 12.0, 'title': 'Neu.mp3'}),
+    ]);
+    final wiring = await openQueue(
+      tester,
+      queues: adapter,
+      library: StubAdapter(200, [
+        {'id': 12.0, 'title': 'Neu.mp3'},
+      ]),
+    );
+
+    await tester.tap(find.text('Lieder hinzufügen'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.descendant(
+      of: find.widgetWithText(ListTile, 'Neu.mp3'),
+      matching: find.byType(IconButton),
+    ));
+    await tester.pumpAndSettle();
+
+    // The server answers the slot, so the sheet says the same number a read would return.
+    expect(adapter.lastOptions?.uri.path, '/api/queue/songs');
+    expect(adapter.lastOptions?.data, {'track_id': 12});
+    expect(find.text('Neu.mp3 an Position 3 gelegt.'), findsOneWidget);
+    expect(wiring.queue.entries.map((entry) => entry.trackId), [8, 4, 12]);
   });
 
   // Playing a queue entry means asking the streaming endpoint for the song it refers to,

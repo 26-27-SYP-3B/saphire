@@ -89,7 +89,7 @@ class _Entry {
 ///
 /// Playing goes through the shared queue rather than through a second player: a song opened
 /// here and a song opened from a playlist play exactly the same way, and the bar at the
-/// bottom shows the same song as the queue page.
+/// bottom shows the same song as the queue in the bar.
 class LibraryScreen extends StatefulWidget {
   const LibraryScreen({
     super.key,
@@ -370,6 +370,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
     return AppShell(
       selected: '/library',
       player: widget.player,
+      queues: widget.queues,
+      library: widget.library,
+      localMode: _settings.localMode,
       localLibrary: _local,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
