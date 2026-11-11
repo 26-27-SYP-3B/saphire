@@ -309,9 +309,13 @@ Authorization: Bearer <token>
 `Content-Length` is known because the file is in the library, so the transfer is not
 chunk-encoded — but the bytes still leave piece by piece. One `Range` is served, not a
 list of ranges, because that is what an audio player sends; an open end (`bytes=900-`)
-means the rest of the file. The JSON error shape is used for everything decided before
-the first byte; the `416` is written as plain text, because that answer is about the
-transport rather than the API.
+means the rest of the file, and a suffix (`bytes=-500`) means the last 500 bytes. A start
+at the end of the file, a suffix larger than the file, or an end at or past the last byte
+is refused rather than clamped — that is a deliberate difference from RFC 9110, which would
+serve such a range as the whole file, so a player that sends `bytes=0-2147483647` gets
+`416` here. The JSON error shape is used for everything decided before the first byte; the
+`416` is written as plain text, because that answer is about the transport rather than the
+API.
 
 **Responses**
 

@@ -683,7 +683,20 @@ func TestStreamRange(t *testing.T) {
 	// A range that cannot be read as bytes, or one outside the file, is plain text: the
 	// caller here is a player, and this error is about the transport. It is the one answer
 	// on this route that is not the JSON error shape.
-	for _, header := range []string{"bytes=abc", "bytes=99999-100000", "bytes=0-1,4-5"} {
+	//
+	// The last three are the bounds api-docs.md claims: a start at the end of the file, a
+	// suffix larger than the file, and an end at or past the last byte. They are refused
+	// rather than clamped, which is the difference from RFC 9110 the docs name, so a player
+	// that sends bytes=0-2147483647 gets 416 here.
+	outside := []string{
+		"bytes=abc",
+		"bytes=99999-100000",
+		"bytes=0-1,4-5",
+		"bytes=" + strconv.FormatInt(size, 10) + "-",
+		"bytes=-" + strconv.FormatInt(size+1, 10),
+		"bytes=0-" + strconv.FormatInt(size, 10),
+	}
+	for _, header := range outside {
 		rec = getRange(t, handler, token, id, header)
 		if rec.Code != http.StatusRequestedRangeNotSatisfiable {
 			t.Errorf("%s -> %d, wanted 416 (%s)", header, rec.Code, rec.Body)
