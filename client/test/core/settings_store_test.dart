@@ -34,13 +34,28 @@ void main() {
     expect(restored.localMode, true);
   });
 
-  // Both choices are one entry, so saving one must not drop the other.
+  // Both choices are one entry, so saving one must not drop the other. The other order
+  // too: save() reads the current value, so the two calls cannot overwrite each other
+  // whichever one comes first.
   test('the server and the local choice come back together', () async {
     FlutterSecureStorage.setMockInitialValues({});
 
     final store = SettingsStore(FlutterSecureStorage());
     await store.save(server: 'https://musik.meinserver.at');
     await store.save(localMode: true);
+
+    final restored = await SettingsStore.restore();
+
+    expect(restored.serverBase, 'https://musik.meinserver.at');
+    expect(restored.localMode, true);
+  });
+
+  test('the local choice and then the server come back together', () async {
+    FlutterSecureStorage.setMockInitialValues({});
+
+    final store = SettingsStore(FlutterSecureStorage());
+    await store.save(localMode: true);
+    await store.save(server: 'https://musik.meinserver.at');
 
     final restored = await SettingsStore.restore();
 

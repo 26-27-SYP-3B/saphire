@@ -128,7 +128,7 @@ class _QueueScreenState extends State<QueueScreen> {
       try {
         // The stored queue may have grown since this song was opened, so the player gets
         // the current order before it decides between resuming and starting.
-        widget.player.syncLocalQueue(_local.queue);
+        await widget.player.syncLocalQueue(_local.queue);
 
         // A pause is not a new start: the same local song simply continues.
         if (widget.player.localCurrent != null) {
@@ -179,15 +179,16 @@ class _QueueScreenState extends State<QueueScreen> {
   }
 
   Future<void> _next() async {
+    setState(() => _busy = true);
     if (_settings.localMode) {
       // This page shows the stored queue; the player may still hold an older copy.
-      widget.player.syncLocalQueue(_local.queue);
+      await widget.player.syncLocalQueue(_local.queue);
+      if (!mounted) return;
       // Nothing from the stored list is open yet (a first tap or after a restart), so next
       // means start it — not that the list has ended.
       if (widget.player.localCurrent == null) return _play();
     }
 
-    setState(() => _busy = true);
     try {
       final moved = await widget.player.next();
       if (!mounted) return;

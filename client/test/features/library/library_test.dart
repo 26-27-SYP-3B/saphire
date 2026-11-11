@@ -8,10 +8,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:saphire_client/app/router.dart';
 import 'package:saphire_client/app/theme.dart';
 import 'package:saphire_client/core/config/api_config.dart';
+import 'package:saphire_client/core/storage/settings_store.dart';
 import 'package:saphire_client/core/utils/pick_audio.dart';
 import 'package:saphire_client/features/auth/data/auth_repository.dart';
 import 'package:saphire_client/features/home/presentation/home_screen.dart';
 import 'package:saphire_client/features/library/data/library_repository.dart';
+import 'package:saphire_client/features/library/data/local_library.dart';
 import 'package:saphire_client/features/library/presentation/library_screen.dart';
 import 'package:saphire_client/features/player/domain/player.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
@@ -78,6 +80,8 @@ Future<Wiring> openLibrary(
   StubAdapter? queues,
   PickAudio? pickAudio,
   SongPlayer? audio,
+  SettingsStore? settings,
+  LocalLibrary? localLibrary,
   bool settle = true,
 }) async {
   // The test font draws every glyph as wide as the font size, so this page needs
@@ -113,6 +117,8 @@ Future<Wiring> openLibrary(
         player: wiring.player,
         uploads: UploadRepository(Dio()..httpClientAdapter = uploadAdapter ?? list, wiring.session),
         pickAudio: pickAudio ?? (() async => [(name: 'song.mp3', bytes: Uint8List.fromList([1, 2, 3]))]),
+        settings: settings,
+        localLibrary: localLibrary ?? LocalLibrary(),
       ),
     ),
   );
@@ -627,6 +633,85 @@ void main() {
 
     expect(find.textContaining('konnten nicht gelesen werden'), findsNothing);
     expect(find.textContaining('Bibliothek ist noch leer'), findsOneWidget);
+  });
+
+  // The local songs are part of the same list, so a search does not have to look in two
+  // places and a user does not have to know which library a song is in.
+  testWidgets('local songs and server songs share the list', (tester) async {
+    final local = LocalLibrary();
+    local.add(name: 'lokal.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
+
+    await openLibrary(tester, localLibrary: local);
+
+    expect(find.text('Neutrone (Remix)'), findsOneWidget);
+    expect(find.text('lokal.mp3'), findsOneWidget);
+    expect(find.text('Auf diesem Gerät'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'lokal');
+    await tester.pumpAndSettle();
+
+    expect(find.text('lokal.mp3'), findsOneWidget);
+    expect(find.text('Neutrone (Remix)'), findsNothing);
+  });
+
+  // Local mode has no server and no session: the songs on this device are all the page
+  // needs, and uploading is not something it could offer.
+  testWidgets('a local library opens without a session and shows the songs on this device', (tester) async {
+    final local = LocalLibrary();
+    local.add(name: 'lokal.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
+    final adapter = StubAdapter(200, libraryAnswer);
+
+    await openLibrary(
+      tester,
+      libraryAdapter: adapter,
+      settings: SettingsStore()..save(localMode: true),
+      localLibrary: local,
+    );
+
+    expect(find.text('lokal.mp3'), findsOneWidget);
+    expect(find.text('Auf diesem Gerät'), findsOneWidget);
+    // Not one call went to the server, so the page did not quietly read a library it
+    // cannot use.
+    expect(adapter.requests, isEmpty);
+    expect(find.text('Neutrone (Remix)'), findsNothing);
+    expect(find.widgetWithText(FilledButton, 'Song hochladen'), findsNothing);
+  });
+
+  testWidgets('a local row plays the file on this device', (tester) async {
+    final audio = FakePlayer();
+    final local = LocalLibrary();
+    local.add(name: 'lokal.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
+
+    await openLibrary(
+      tester,
+      settings: SettingsStore()..save(localMode: true),
+      localLibrary: local,
+      audio: audio,
+    );
+
+    await tester.tap(playIcon(tester));
+    await tester.pumpAndSettle();
+
+    // No server and no token: the song is opened from the bytes the pick gave.
+    expect(audio.opened.single, startsWith('data:audio/mpeg'));
+    expect(audio.played, hasLength(1));
+    // The bar names the same song, so the page does not say two things at once.
+    expect(
+      find.descendant(of: find.byType(PlayerBar), matching: find.text('lokal.mp3')),
+      findsOneWidget,
+    );
+    // A file on this device has no server actions.
+    expect(find.byTooltip('Aktionen für lokal.mp3'), findsNothing);
+
+    // The bar's play button continues the paused local song instead of clearing it.
+    await tester.tap(find.descendant(of: find.byType(PlayerBar), matching: find.byTooltip('Pause')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(of: find.byType(PlayerBar), matching: find.byTooltip('Abspielen')));
+    await tester.pumpAndSettle();
+
+    expect(audio.opened, hasLength(1));
+    expect(audio.played, hasLength(2));
+    expect(find.descendant(of: find.byType(PlayerBar), matching: find.text('lokal.mp3')), findsOneWidget);
   });
 
   // Every page draws the same items from nav_bar.dart, so a page can only be opened where

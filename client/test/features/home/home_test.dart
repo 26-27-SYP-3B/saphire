@@ -59,6 +59,7 @@ Future<Wiring> openHome(
   Map<String, Object> uploadBody = uploadAnswer,
   PickAudio? pickAudio,
   PickLocalAudio? pickLocal,
+  PickLocalAudio? pickFolder,
   SettingsStore? settings,
   LocalLibrary? localLibrary,
   StubAdapter? uploads,
@@ -86,6 +87,7 @@ Future<Wiring> openHome(
         player: wiring.player,
         pickAudio: pickAudio ?? pickedFiles,
         pickLocal: pickLocal ?? (() async => null),
+        pickFolder: pickFolder ?? (() async => null),
         settings: settings,
         localLibrary: localLibrary,
       ),
@@ -425,6 +427,48 @@ void main() {
     // The shared player has the same order, so a tap on play starts this song.
     expect(wiring.player.localQueue.single.title, 'song.mp3');
     expect(find.textContaining('in die Warteschlange gelegt'), findsOneWidget);
+  });
+
+  // A whole folder is added at once, without picking every file.
+  testWidgets('a folder is added as its songs', (tester) async {
+    final local = LocalLibrary();
+
+    await openHome(
+      tester,
+      settings: SettingsStore()..save(localMode: true),
+      localLibrary: local,
+      pickFolder: () async => [
+        (name: 'a.mp3', path: 'C:/musik/a.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33])),
+        (name: 'b.mp3', path: 'C:/musik/b.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33])),
+      ],
+    );
+
+    await tester.tap(find.byTooltip('Ordner auswählen'));
+    await tester.pumpAndSettle();
+
+    expect(local.tracks.map((track) => track.title), ['a.mp3', 'b.mp3']);
+    expect(find.text('a.mp3'), findsOneWidget);
+  });
+
+  // A browser has no folders, so the picker can fail. That is not a refused file, so the
+  // page says what to do next instead of naming one file.
+  testWidgets('a folder that cannot be read says what to do next', (tester) async {
+    await openHome(tester, pickFolder: () async => throw UnsupportedError('keine Ordner'));
+
+    await tester.tap(find.byTooltip('Ordner auswählen'));
+    await tester.pumpAndSettle();
+
+    // The picker's own reason is kept: "try again" would never work here.
+    expect(find.text('keine Ordner'), findsOneWidget);
+  });
+
+  testWidgets('a folder without songs says so', (tester) async {
+    await openHome(tester, pickFolder: () async => []);
+
+    await tester.tap(find.byTooltip('Ordner auswählen'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('In diesem Ordner sind keine MP3-Dateien.'), findsOneWidget);
   });
 }
 

@@ -54,8 +54,12 @@ class _PlayerBarState extends State<PlayerBar> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final local = widget.player.localCurrent;
     final current = widget.player.queue.current;
     final playing = widget.player.playing;
+    // A local file has no slot in the server queue, so the bar follows what the player
+    // opened last rather than the queue alone.
+    final title = local?.title ?? current?.title;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -70,7 +74,7 @@ class _PlayerBarState extends State<PlayerBar> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  current == null ? 'Nichts wird abgespielt' : current.title,
+                  title ?? 'Nichts wird abgespielt',
                   style: theme.textTheme.labelLarge,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -80,9 +84,11 @@ class _PlayerBarState extends State<PlayerBar> {
                   // or what would start something.
                   _note ??
                       widget.player.failure ??
-                      (current == null
-                          ? 'Suche ein Lied und öffne es, oder fülle die Warteschlange.'
-                          : 'Warteschlange · Slot ${current.position}'),
+                      (local != null
+                          ? 'Lokal · dieses Gerät'
+                          : current == null
+                              ? 'Suche ein Lied und öffne es, oder fülle die Warteschlange.'
+                              : 'Warteschlange · Slot ${current.position}'),
                   style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -92,7 +98,15 @@ class _PlayerBarState extends State<PlayerBar> {
           ),
           IconButton(
             tooltip: playing ? 'Pause' : 'Abspielen',
-            onPressed: _busy ? null : () => _control(() => playing ? widget.player.pause() : widget.player.playCurrent()),
+            // A local song resumes where it was; playCurrent would clear the local list
+            // and leave nothing to play.
+            onPressed: _busy
+                ? null
+                : () => _control(() => playing
+                    ? widget.player.pause()
+                    : local != null
+                        ? widget.player.resume()
+                        : widget.player.playCurrent()),
             icon: Icon(playing ? Icons.pause : Icons.play_arrow),
           ),
           IconButton(

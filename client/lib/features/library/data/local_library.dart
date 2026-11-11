@@ -58,6 +58,11 @@ class LocalLibrary {
     if (bytes != null && !isMp3(bytes)) {
       return 'die Datei ist keine gültige MP3-Datei';
     }
+    // A folder import adds a whole list at once, and picking the same folder twice would
+    // double every song. The path is what tells two files with the same name apart.
+    if (path != null && tracks.any((track) => track.path == path)) {
+      return 'ist schon in der Bibliothek';
+    }
 
     // shortcut: the bytes of a browser pick stay in memory for the session. Upgrade:
     // store the file with the app's data, so a browser library survives a restart too.
@@ -117,15 +122,28 @@ class LocalLibrary {
     _write();
   }
 
+  /// Writes are chained: a folder import adds hundreds of songs at once, and three writes
+  /// to the same keys in parallel are not something the web plugin can handle. The values
+  /// are read when the write runs, so the last one always stores the newest list.
+  Future<void> _pending = Future.value();
+
   void _write() {
-    _storage?.write(key: _key, value: jsonEncode(_json(tracks))).ignore();
-    _storage?.write(
-      key: _playlistsKey,
-      value: jsonEncode([
-        for (final playlist in playlists) {'name': playlist.name, 'songs': _json(playlist.songs)},
-      ]),
-    ).ignore();
-    _storage?.write(key: _queueKey, value: jsonEncode(_json(queue))).ignore();
+    _pending = _pending.then((_) async {
+      final storage = _storage;
+      if (storage == null) return;
+      try {
+        await storage.write(key: _key, value: jsonEncode(_json(tracks)));
+        await storage.write(
+          key: _playlistsKey,
+          value: jsonEncode([
+            for (final playlist in playlists) {'name': playlist.name, 'songs': _json(playlist.songs)},
+          ]),
+        );
+        await storage.write(key: _queueKey, value: jsonEncode(_json(queue)));
+      } catch (_) {
+        // In memory the lists still work for this run, which is all a broken keychain allows.
+      }
+    });
   }
 
   /// Only a path survives a restart. The bytes of a browser pick live in memory for one
