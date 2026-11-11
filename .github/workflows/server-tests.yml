@@ -1,8 +1,8 @@
 name: server tests
 
-# Only the backend tests. They build the app with an in-memory database and a temporary
-# library folder, so a run needs no database file and no .env. The path filter keeps a
-# client-only change from starting them.
+# The backend checks: clippy with -D warnings, then the tests. They build the app with
+# an in-memory database and a temporary library folder, so a run needs no database file
+# and no .env. The path filter keeps a client-only change from starting them.
 on:
   push:
     paths:
@@ -14,8 +14,8 @@ on:
       - ".github/workflows/server-tests.yml"
 
 jobs:
-  test:
-    name: cargo test
+  check-and-test:
+    name: check and test
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -28,5 +28,11 @@ jobs:
       # Cargo.toml asks for edition 2024, so an older toolchain cannot build the crate.
       - uses: dtolnay/rust-toolchain@stable
 
-      # The same command as `just test`; `just` itself is not installed on a runner.
-      - run: cargo test
+      # The two recipes of server/justfile, in the order AGENTS.md runs them; `just`
+      # itself is not installed on a runner. Clippy first because a lint failure is the
+      # cheaper one to hit, and the code must stay clean with -D warnings.
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test
