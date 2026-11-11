@@ -50,11 +50,13 @@ pub async fn middleware(req: Request, next: Next) -> Response {
     response
 }
 
-/// The permission to send the real request: no body, no content type.
+/// The permission to send the real request: no body, no content type. The methods are the ones
+/// the API serves, and DELETE is one of them — it is not a simple method, so a browser asks
+/// first and a list without it blocks every delete the client makes.
 fn preflight() -> Response {
     Response::builder()
         .status(StatusCode::NO_CONTENT)
-        .header("access-control-allow-methods", "GET, POST, OPTIONS")
+        .header("access-control-allow-methods", "GET, POST, DELETE, OPTIONS")
         .header("access-control-allow-headers", "Content-Type, Authorization")
         .header("access-control-max-age", "600")
         .body(Body::empty())

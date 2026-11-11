@@ -76,6 +76,42 @@ async fn a_taken_username_is_named_without_naming_the_constraint() {
     );
 }
 
+// Trailing content is its own answer, and it has to be seen as what is left over rather than
+// as something that can be parsed: text that is not a JSON value is still more than the one
+// object the body was asked for.
+#[tokio::test]
+async fn a_body_that_continues_after_the_object_is_refused() {
+    let test = common::setup().await;
+
+    let body = r#"{"username": "nina", "password": "valid-password"}"#;
+    for case in [format!("{body} trailing"), format!("{body} {body}")] {
+        let reply = common::post(&test, "/api/register", &case, "").await;
+        assert_eq!(reply.status, StatusCode::BAD_REQUEST, "wanted 400 ({})", reply.body);
+        assert_eq!(
+            common::json(&reply.body)["error"].as_str(),
+            Some("body must contain exactly one JSON object"),
+            "the body held more than the one object, the answer must say so: {}",
+            reply.body
+        );
+    }
+}
+
+// The 4 KiB limit belongs to the body as it is read, so the boundary is the documented one:
+// exactly 4 KiB is still read, one more byte is not.
+#[tokio::test]
+async fn a_body_of_exactly_the_documented_limit_is_still_read() {
+    let test = common::setup().await;
+
+    let body = r#"{"username": "nina", "password": "valid-password"}"#;
+    let padding = " ".repeat(4096 - body.len());
+
+    let reply = common::post(&test, "/api/register", &format!("{body}{padding}"), "").await;
+    assert_eq!(reply.status, StatusCode::CREATED, "a body of exactly 4 KiB must be read ({})", reply.body);
+
+    let reply = common::post(&test, "/api/register", &format!("{body}{padding} "), "").await;
+    assert_eq!(reply.status, StatusCode::BAD_REQUEST, "one byte over the limit must be refused ({})", reply.body);
+}
+
 // The rate limiter buckets per address, so the peer address must be read for IPv6 too — a
 // bracketed address must not fall into the shared unknown bucket, and a port is not part of
 // an address.
@@ -88,6 +124,10 @@ fn a_peer_key_is_the_address_without_the_port() {
         // A zone belongs to the address, so it belongs to the key.
         ("[fe80::1%eth0]:8080", "fe80::1%eth0"),
         ("[::1]", "::1"), // bracketed without a port
+        // A proxy header carries the address with no port, so it is the key as it is. Cutting
+        // at the last colon would cut an unbracketed IPv6 address instead of a port.
+        ("2001:db8::1", "2001:db8::1"),
+        ("10.0.0.1", "10.0.0.1"),
     ];
 
     for (remote, want) in cases {

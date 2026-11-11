@@ -15,11 +15,11 @@ saphire/
 ## Commands (from `server/`)
 
 ```bash
-just build     # cargo build
+just build     # cargo build --release
 just run       # cargo run
 just test      # cargo test
 just check     # cargo clippy --all-targets -- -D warnings
-just clean     # rm -rf target
+just clean     # cargo clean
 ```
 
 Use `just check` and `just test` before declaring work done. The server is one crate with one
