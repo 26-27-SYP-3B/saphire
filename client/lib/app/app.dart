@@ -1,6 +1,8 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 
 import '../core/storage/session_store.dart';
+import '../core/storage/settings_store.dart';
 import '../features/auth/data/auth_repository.dart';
 import '../features/library/data/library_repository.dart';
 import '../features/playlists/data/playlist_repository.dart';
@@ -28,6 +30,8 @@ class SaphireApp extends StatefulWidget {
     required this.queue,
     required this.player,
     required this.session,
+    required this.settings,
+    required this.dio,
   });
 
   final AuthRepository repository;
@@ -38,6 +42,8 @@ class SaphireApp extends StatefulWidget {
   final PlaybackQueue queue;
   final QueuePlayer player;
   final SessionStore session;
+  final SettingsStore settings;
+  final Dio dio;
 
   @override
   State<SaphireApp> createState() => _SaphireAppState();
@@ -66,6 +72,8 @@ class _SaphireAppState extends State<SaphireApp> {
         queue: widget.queue,
         player: widget.player,
         session: widget.session,
+        settings: widget.settings,
+        dio: widget.dio,
       ),
     );
   }

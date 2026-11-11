@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -42,7 +43,7 @@ class SessionStore {
     // The server answers with expires_at as a Unix timestamp in seconds; an
     // expired session is treated like no session at all.
     if (DateTime.now().millisecondsSinceEpoch ~/ 1000 > _expiresAt) {
-      clear();
+      unawaited(clear());
       return false;
     }
     return true;
@@ -58,9 +59,13 @@ class SessionStore {
     _storage?.write(key: _key, value: jsonEncode({'token': token, 'expires_at': expiresAt})).ignore();
   }
 
-  void clear() {
+  /// Awaited where the delete has to finish before the next write (the setup and the
+  /// settings screens). A failed delete leaves the in-memory session gone anyway.
+  Future<void> clear() async {
     _token = null;
     _expiresAt = 0;
-    _storage?.delete(key: _key).ignore();
+    try {
+      await _storage?.delete(key: _key);
+    } catch (_) {}
   }
 }

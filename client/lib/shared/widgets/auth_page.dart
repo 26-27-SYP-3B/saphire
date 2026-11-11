@@ -13,9 +13,9 @@ class AuthPage extends StatelessWidget {
     required this.fields,
     required this.buttonLabel,
     required this.onSubmitted,
-    required this.linkQuestion,
-    required this.linkLabel,
-    required this.linkTo,
+    this.linkQuestion,
+    this.linkLabel,
+    this.linkTo,
     this.note,
   });
 
@@ -24,17 +24,20 @@ class AuthPage extends StatelessWidget {
   final List<Widget> fields;
   final String buttonLabel;
   final VoidCallback? onSubmitted;
-  final String linkQuestion;
-  final String linkLabel;
-  final String linkTo;
 
-  /// Was nach dem Knopf passiert ist: eine Fehlermeldung oder eine Bestätigung.
+  /// Der Link zur anderen Seite. Alle drei null: die Seite zeigt keinen Link.
+  final String? linkQuestion;
+  final String? linkLabel;
+  final String? linkTo;
+
+  /// Was nach dem Knopf passiert ist: die Meldung des Servers.
   final String? note;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final muted = theme.colorScheme.onSurfaceVariant;
+    final label = linkLabel;
 
     return Scaffold(
       body: Center(
@@ -68,21 +71,23 @@ class AuthPage extends StatelessWidget {
                     ],
                     const SizedBox(height: 24),
                     FilledButton(onPressed: onSubmitted, child: Text(buttonLabel)),
-                    const SizedBox(height: 24),
-                    Wrap(
-                      spacing: 4,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        Text(
-                          linkQuestion,
-                          style: theme.textTheme.bodyMedium?.copyWith(color: muted),
-                        ),
-                        TextButton(
-                          onPressed: () => context.go(linkTo),
-                          child: Text(linkLabel),
-                        ),
-                      ],
-                    ),
+                    if (label != null) ...[
+                      const SizedBox(height: 24),
+                      Wrap(
+                        spacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text(
+                            linkQuestion ?? '',
+                            style: theme.textTheme.bodyMedium?.copyWith(color: muted),
+                          ),
+                          TextButton(
+                            onPressed: () => context.go(linkTo!),
+                            child: Text(label),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               );

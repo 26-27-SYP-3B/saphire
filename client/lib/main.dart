@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'app/app.dart';
 import 'core/storage/session_store.dart';
+import 'core/storage/settings_store.dart';
 import 'features/auth/data/auth_repository.dart';
 import 'features/library/data/library_repository.dart';
 import 'features/playlists/data/playlist_repository.dart';
@@ -20,6 +21,9 @@ Future<void> main() async {
   // A session from the last run means the app opens on the home screen instead
   // of asking for the password again.
   final session = await SessionStore.restore();
+  // A server the guided setup saved on the first run is the server of this run; the
+  // launch default only stands in until the setup has stored one.
+  final settings = await SettingsStore.restore();
   final dio = Dio();
 
   final queue = PlaybackQueue();
@@ -35,6 +39,8 @@ Future<void> main() async {
       queue: queue,
       player: QueuePlayer(queue: queue, player: player, session: session),
       session: session,
+      settings: settings,
+      dio: dio,
     ),
   );
 }

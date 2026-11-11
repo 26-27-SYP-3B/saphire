@@ -393,6 +393,10 @@ class _HomeScreenState extends State<HomeScreen> {
             tooltip: 'Konto',
             offset: const Offset(0, 44),
             onSelected: (value) {
+              if (value == 'settings') {
+                context.go('/settings');
+                return;
+              }
               if (value != 'logout') return;
               // There is no logout endpoint yet (api-docs.md, Upcoming), so
               // dropping the token here is the whole logout on this side.
@@ -400,6 +404,7 @@ class _HomeScreenState extends State<HomeScreen> {
               context.go('/login');
             },
             itemBuilder: (context) => const [
+              PopupMenuItem(value: 'settings', child: Text('Einstellungen')),
               PopupMenuItem(value: 'logout', child: Text('Abmelden')),
             ],
             child: Container(

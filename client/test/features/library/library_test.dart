@@ -660,6 +660,8 @@ void main() {
       queue: wiring.queue,
       player: wiring.player,
       session: wiring.session,
+      settings: withServer(),
+      dio: Dio(),
     );
 
     await tester.pumpWidget(MaterialApp.router(routerConfig: router));
