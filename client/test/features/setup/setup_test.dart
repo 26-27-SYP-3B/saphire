@@ -165,6 +165,33 @@ void main() {
     expect(find.byType(HomeScreen), findsOneWidget);
   });
 
+  // A phone with a large system font and a navigation bar leaves little room. The choice
+  // has to stay visible and tappable instead of sitting under the navigation bar, where
+  // nothing can scroll it into view.
+  testWidgets('the way without a server stays reachable on a small phone', (tester) async {
+    final app = await openApp(tester);
+    tester.view
+      ..physicalSize = const Size(360, 640)
+      ..devicePixelRatio = 1.0
+      ..padding = const FakeViewPadding(top: 24, bottom: 48);
+    tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+    addTearDown(tester.view.resetPadding);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await tester.pumpAndSettle();
+
+    final button = find.widgetWithText(TextButton, 'Weiter ohne Server');
+    expect(button, findsOneWidget);
+
+    // 640 - 48 is where the app area ends; the button's last pixel has to be above it.
+    expect(tester.getRect(button).bottom, lessThanOrEqualTo(640 - 48));
+
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(HomeScreen), findsOneWidget);
+    expect(app.settings.localMode, true);
+  });
+
   // A session belongs to a server, and this start uses none.
   testWidgets('choosing without a server drops a session from an earlier server', (tester) async {
     final app = await openApp(tester, session: loggedIn());
