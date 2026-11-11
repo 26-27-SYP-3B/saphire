@@ -430,7 +430,7 @@ void main() {
     final local = LocalLibrary()
       ..add(name: 'song.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
 
-    await openLocalPlaylists(tester, local);
+    final wiring = await openLocalPlaylists(tester, local);
 
     await tester.enterText(find.byType(TextField).first, 'Favoriten');
     await tester.tap(find.widgetWithText(FilledButton, 'Anlegen'));
@@ -459,5 +459,13 @@ void main() {
     expect(local.queue.single.title, 'song.mp3');
     expect(find.text('Warteschlange'), findsOneWidget);
     expect(find.text('song.mp3'), findsOneWidget);
+
+    // Starting a playlist only fills the stored queue. "Nächstes Lied" from here starts
+    // the first song; it must not answer that the list has already ended.
+    await tester.tap(find.widgetWithText(TextButton, 'Nächstes Lied'));
+    await tester.pumpAndSettle();
+
+    expect(wiring.player.localTitle, 'song.mp3');
+    expect(find.text('Gerade: song.mp3'), findsOneWidget);
   });
 }

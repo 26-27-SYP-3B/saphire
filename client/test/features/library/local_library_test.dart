@@ -97,6 +97,18 @@ void main() {
     expect(restored.tracks, isEmpty);
   });
 
+  // An older version stored such a row with path: null. Restoring it would show a song
+  // that always fails, so the read side drops it too.
+  test('a stored row without a path is dropped on restore', () async {
+    FlutterSecureStorage.setMockInitialValues({
+      'local_library': '[{"title":"kauf.mp3","path":null}]',
+    });
+
+    final restored = await LocalLibrary.restore();
+
+    expect(restored.tracks, isEmpty);
+  });
+
   // Two playlists with the same name would be indistinguishable in the list, and an
   // empty one has nothing to open. Both are refused instead of saved with a suffix.
   test('an empty or duplicate playlist name is refused', () {

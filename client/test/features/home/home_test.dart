@@ -374,6 +374,36 @@ void main() {
     expect(find.textContaining('Das Lied konnte nicht gespielt werden'), findsOneWidget);
   });
 
+  // A local song that is not in the stored queue must not be dropped by a tap on play: the
+  // bar keeps naming it and the file is not opened again.
+  testWidgets('the bar resumes a local song that is not in the stored queue', (tester) async {
+    final audio = FakePlayer();
+    addTearDown(audio.dispose);
+
+    final wiring = await openHome(
+      tester,
+      settings: SettingsStore()..save(localMode: true),
+      localLibrary: LocalLibrary(),
+      audio: audio,
+      pickLocal: () async => [(name: 'song.mp3', path: null, bytes: Uint8List.fromList([0x49, 0x44, 0x33]))],
+    );
+
+    await tester.tap(find.byTooltip('Lokale Songs hinzufügen'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('song.mp3'));
+    await tester.pumpAndSettle();
+    expect(wiring.player.localTitle, 'song.mp3');
+
+    await tester.tap(find.widgetWithIcon(IconButton, Icons.pause));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithIcon(IconButton, Icons.play_arrow));
+    await tester.pumpAndSettle();
+
+    expect(wiring.player.localTitle, 'song.mp3');
+    expect(audio.opened, hasLength(1));
+    expect(audio.played, hasLength(2));
+  });
+
   // A local song can be put into the local queue without a server. It is stored with the
   // library, so the queue page can play it after a restart too.
   testWidgets('a long press puts a local song into the local queue', (tester) async {
@@ -397,3 +427,4 @@ void main() {
     expect(find.textContaining('in die Warteschlange gelegt'), findsOneWidget);
   });
 }
+
