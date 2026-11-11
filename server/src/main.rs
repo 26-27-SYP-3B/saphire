@@ -25,14 +25,23 @@ async fn main() {
         }
     };
 
+    // The port is read once and must be a number: a value that cannot be bound is reported as
+    // the value that was given, not quietly replaced, because the line below prints what the
+    // server actually listens on.
     let port = match std::env::var("PORT") {
-        Ok(port) if !port.is_empty() => port,
-        _ => "8080".to_string(),
+        Ok(port) if !port.is_empty() => match port.parse::<u16>() {
+            Ok(port) => port,
+            Err(_) => {
+                eprintln!("port: {port} is not a port number");
+                std::process::exit(1);
+            }
+        },
+        _ => 8080,
     };
 
     let router = app::app(&database, &library, staticfiles::STATIC_DIR, &app::default_limiters());
 
-    let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port.parse::<u16>().unwrap_or(8080))).await {
+    let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
         Ok(listener) => listener,
         Err(error) => {
             eprintln!("listen: {error}");

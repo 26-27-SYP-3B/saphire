@@ -104,6 +104,13 @@ pub fn client_ip(req: &Request) -> String {
 /// IPv6 keeps its address and zone; a port is split off, so `127.0.0.1:8080` and `::1:8080`
 /// do not fall into one shared bucket.
 pub fn peer_key(remote: &str) -> String {
+    // A value that is an address on its own has no port to split off. An unbracketed IPv6 from
+    // a proxy header is such a value, and cutting it at the last colon would cut the address
+    // rather than the port.
+    if let Ok(parsed) = remote.parse::<IpAddr>() {
+        return parsed.to_string();
+    }
+
     let host = match remote.find(']') {
         // Bracketed: the address is inside the brackets and the port follows them.
         Some(end) => remote[..end].trim_matches('['),

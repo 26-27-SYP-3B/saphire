@@ -32,6 +32,13 @@ async fn a_preflight_answers_the_permission_and_names_the_origin_it_reflected() 
         "preflight must allow POST: {:?}",
         reply.headers
     );
+    // DELETE is not a simple method, so a browser asks first. A preflight that does not allow
+    // it blocks every delete the client makes, even though the API serves those routes.
+    assert!(
+        common::header(&reply, "access-control-allow-methods").contains("DELETE"),
+        "preflight must allow the methods the API serves: {:?}",
+        reply.headers
+    );
     assert!(
         common::header(&reply, "access-control-allow-headers").contains("Content-Type"),
         "preflight must allow the JSON content type: {:?}",

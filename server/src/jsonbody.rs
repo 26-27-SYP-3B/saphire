@@ -1,6 +1,6 @@
 use axum::body::Body;
 use http_body_util::{BodyExt, Limited};
-use serde::de::{Deserialize, DeserializeOwned};
+use serde::de::DeserializeOwned;
 
 pub const MAX_BODY_BYTES: usize = 4 << 10;
 
@@ -11,7 +11,7 @@ pub const MAX_BODY_BYTES: usize = 4 << 10;
 pub async fn read_object<T: DeserializeOwned>(body: Body, expected: &str) -> Result<T, String> {
     // The limit is enforced while reading, not after: a body over it is refused the same
     // way one that cannot be parsed is.
-    let collected = match Limited::new(body, MAX_BODY_BYTES + 1).collect().await {
+    let collected = match Limited::new(body, MAX_BODY_BYTES).collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(_) => return Err(one_object(expected)),
     };
@@ -27,9 +27,11 @@ pub async fn read_object<T: DeserializeOwned>(body: Body, expected: &str) -> Res
         Err(_) => return Err(one_object(expected)),
     };
 
-    // Trailing content after the object is a separate answer, so the caller knows the body
-    // held more than the one object it was asked for.
-    if serde_json::Value::deserialize(&mut deserializer).is_ok() {
+    // Anything after the object is a separate answer, so the caller knows the body held more
+    // than the one object it was asked for. `end` is what decides it: trailing text that is not
+    // a JSON value is still trailing content, so parsing what is left would accept
+    // `{"name":"x"} garbage`. Trailing whitespace is not content.
+    if deserializer.end().is_err() {
         return Err("body must contain exactly one JSON object".to_string());
     }
 
