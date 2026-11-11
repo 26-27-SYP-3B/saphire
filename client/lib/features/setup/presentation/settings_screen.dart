@@ -76,7 +76,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     // Die alte Session gehört zum alten Server, also meldet man sich neu an.
     await widget.repository.logout();
-    await widget.settings.save(server: base);
+    // Ein Server ersetzt den Start ohne Server, sonst bliebe der nächste Start dort.
+    await widget.settings.save(server: base, localMode: false);
     if (!mounted) return;
     context.go('/login');
   }

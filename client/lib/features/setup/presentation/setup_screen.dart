@@ -63,9 +63,19 @@ class _SetupScreenState extends State<SetupScreen> {
 
     // Eine Session von einem früheren Server darf den Wechsel nicht überleben.
     await widget.repository.logout();
-    await widget.settings.save(server: base);
+    // Ein Server ersetzt den Start ohne Server, sonst bliebe der nächste Start dort.
+    await widget.settings.save(server: base, localMode: false);
     if (!mounted) return;
     context.go('/login');
+  }
+
+  /// Der Weg ohne Server, gleich beim ersten Start: kein Konto, die Songs dieses Geräts.
+  Future<void> _withoutServer() async {
+    // Eine Session gehört zu einem Server, den dieser Start nicht benutzt.
+    await widget.repository.logout();
+    await widget.settings.save(localMode: true);
+    if (!mounted) return;
+    context.go('/home');
   }
 
   @override
@@ -81,6 +91,10 @@ class _SetupScreenState extends State<SetupScreen> {
       buttonLabel: _isChecking ? 'Wird geprüft…' : 'Verbinden',
       onSubmitted: _isChecking ? null : _connect,
       note: _note,
+      footer: TextButton(
+        onPressed: _isChecking ? null : _withoutServer,
+        child: const Text('Weiter ohne Server'),
+      ),
     );
   }
 }
