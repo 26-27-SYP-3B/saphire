@@ -20,13 +20,10 @@ import 'features/upload/data/upload_repository.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // A session from the last run means the app opens on the home screen instead
-  // of asking for the password again. The settings say whether the user chose to run
-  // without a server, and the local library is what that home screen then shows.
+  // of asking for the password again. A server the guided setup saved on the first run is
+  // the server of this run, and the settings also say whether the user chose to run
+  // without one; the local library is what that home screen then shows.
   final session = await SessionStore.restore();
-  // A server the guided setup saved on the first run is the server of this run; the
-  // launch default only stands in until the setup has stored one. The settings also say
-  // whether the user chose to run without a server, and the local library is what that
-  // home screen then shows.
   final settings = await SettingsStore.restore();
   final localLibrary = await LocalLibrary.restore();
   final dio = Dio();

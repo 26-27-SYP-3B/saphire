@@ -31,8 +31,8 @@ class SaphireApp extends StatefulWidget {
     required this.queue,
     required this.player,
     required this.session,
-    SettingsStore? settings,
-    LocalLibrary? localLibrary,
+    this.settings,
+    this.localLibrary,
     required this.dio,
   });
 

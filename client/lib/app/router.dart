@@ -59,7 +59,7 @@ GoRouter buildRouter({
       if (!settingsStore.localMode && settingsStore.serverBase == null && state.matchedLocation != '/setup') {
         return '/setup';
       }
-      final loggedIn = auth.session.isLoggedIn;
+      final loggedIn = session.isLoggedIn;
       final atAuthPage = state.matchedLocation == '/login' || state.matchedLocation == '/register';
       // A session restored from the last run skips the form; a browser that
       // reloads on the login page has no session left and stays there.

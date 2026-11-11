@@ -43,7 +43,7 @@ class SettingsStore {
   /// two choices cannot overwrite each other.
   Future<void> save({String? server, bool? localMode}) async {
     if (server != null) {
-      this.serverBase = server;
+      serverBase = server;
       // The repositories read apiBaseUrl while they work, so a new server takes
       // effect without rebuilding them.
       apiBaseUrl = server;
