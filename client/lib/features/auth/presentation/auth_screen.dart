@@ -62,7 +62,7 @@ class _AuthScreenState extends State<AuthScreen> {
       }
       // A login is the way out of local mode, so the guard lets the next restart start
       // on the login form again instead of opening the home screen without an account.
-      widget.settings?.save(localMode: false);
+      await widget.settings?.save(localMode: false);
       if (mounted) context.go('/home');
     } on AuthException catch (error) {
       if (mounted) setState(() => _note = error.message);
@@ -88,8 +88,9 @@ class _AuthScreenState extends State<AuthScreen> {
       // The way into local mode: no account, no server, the songs from the device. The
       // guided setup (a later screen) lands in the same place.
       footer: TextButton(
-        onPressed: () {
-          widget.settings?.save(localMode: true);
+        onPressed: () async {
+          await widget.settings?.save(localMode: true);
+          if (!context.mounted) return;
           context.go('/home');
         },
         child: const Text('Ohne Server fortfahren'),

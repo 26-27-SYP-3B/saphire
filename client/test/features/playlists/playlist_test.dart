@@ -98,6 +98,7 @@ Future<Wiring> openLocalPlaylists(WidgetTester tester, LocalLibrary local) async
     session: session,
     settings: SettingsStore()..save(localMode: true),
     localLibrary: local,
+    dio: Dio(),
   );
 
   router.go('/playlists');

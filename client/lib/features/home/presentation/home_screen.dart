@@ -509,8 +509,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 context.go('/login');
                 return;
               }
-                return;
-              }
               if (value != 'logout') return;
               // There is no logout endpoint yet (api-docs.md, Upcoming), so
               // dropping the token here is the whole logout on this side.

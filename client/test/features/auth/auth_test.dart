@@ -225,6 +225,36 @@ void main() {
     expect(find.byType(HomeScreen), findsOneWidget);
   });
 
+  // Local mode has no account, so the guard must let the app reach the home screen. The
+  // button on the login form is what starts it and what the next start reads.
+  testWidgets('the choice to run without a server opens the home screen', (tester) async {
+    final repository = FakeRepository(null);
+    final settings = withServer();
+    final wiring = Wiring(repository.session);
+    addTearDown(wiring.dispose);
+
+    final router = buildRouter(
+      auth: repository,
+      uploads: UploadRepository(Dio(), repository.session),
+      library: wiring.library,
+      playlists: wiring.playlists,
+      queues: wiring.queues,
+      queue: wiring.queue,
+      player: wiring.player,
+      session: repository.session,
+      settings: settings,
+      dio: Dio(),
+    );
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Ohne Server fortfahren'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(HomeScreen), findsOneWidget);
+    expect(settings.localMode, true);
+  });
+
   testWidgets('an error from the server shows below the fields', (tester) async {
     await openRegister(tester, FakeRepository('username is not available'));
 
