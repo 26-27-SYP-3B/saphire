@@ -3,13 +3,15 @@
 
 Compile the server for your Arch. / OS
 ```bash
-go build -o build/saphire-server .
+cargo build --release
 ```
 Run the server
 
 ```bash
-./build/saphire-server
+./target/release/saphire-server
 ```
+
+From `server/` the same is `just build` and `just run`.
 
 ## Endpoints
 
@@ -82,7 +84,7 @@ device is currently playing is not stored on the server, because that is device 
 ## Development frontend
 
 Run the server from `server/` and open <http://localhost:8080/> (it forwards to
-`/static/`) — `main.go` serves a plain HTML page (`static/`) for calling these
+`/static/`) — `src/main.rs` serves a plain HTML page (`static/`) for calling these
 endpoints from a browser: register, login, session check, upload, list, stream. It
 prints the status code, the elapsed time, `Retry-After`, and the same request as a
 `curl` command; for the stream it shows which chunks arrived and when. Nothing on the

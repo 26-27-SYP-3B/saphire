@@ -3,7 +3,7 @@ saphire.db
 saphire.db-wal
 saphire.db-shm
 .DS_Store
-/build
+/target
 
 # Uploaded songs and the library table live in the library folder
 /library
