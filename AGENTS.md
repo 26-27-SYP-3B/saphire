@@ -81,7 +81,7 @@ code yourself — do not average them.
 
 ## Gotchas
 
-- An existing `saphire.db` uses the old `name`/`email` schema. `CREATE TABLE IF NOT EXISTS` will not migrate it; delete the file for a fresh start.
+- An existing `saphire.db` with the old `name`/`email` user schema is not migrated: `CREATE TABLE IF NOT EXISTS` never changes a table that is already there, so delete the file for a fresh start. The `track` table is the exception — `ensure_columns` adds the missing metadata columns, so an old library table keeps working and its rows read as untagged files.
 - The rate limiter state is in memory and resets on restart.
 - Browser clients only work through the CORS middleware in `src/cors.rs`; without the reflected Origin the browser blocks every JSON POST. On devices, `127.0.0.1` is the device itself — `API_BASE_URL` must point at the development machine (Android emulator: `10.0.2.2`).
 - The project is a school project (3BHIF): prefer simple, readable code over frameworks.

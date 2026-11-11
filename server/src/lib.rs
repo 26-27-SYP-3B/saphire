@@ -8,6 +8,7 @@ pub mod db;
 pub mod hex;
 pub mod jsonbody;
 pub mod login;
+pub mod metadata;
 pub mod music;
 pub mod pathvalue;
 pub mod playlist;

@@ -47,9 +47,9 @@ curl -X POST localhost:8080/api/music/upload \
 Returns `201 Created` with the track record, `401` for anonymous requests,
 `400` for a non-audio or empty file, `413` above 500 MiB, `429` when rate limited.
 An MP3's title, artist and length come from its tags and frame headers
-(`metadata.go`); what a file does not say stays empty, and the client shows a dash.
+(`src/metadata.rs`); what a file does not say stays empty, and the client shows a dash.
 
-Reading the library is the other half of this feature (`library.go`):
+Reading the library is the other half of this feature (`src/music.rs`):
 
 ```bash
 curl localhost:8080/api/music -H "Authorization: Bearer <token>"      # the list
@@ -60,10 +60,11 @@ Both need a session and share their own rate-limit bucket. Every error answers t
 JSON error shape; the file route answers the file itself on success and supports
 `Range`, so a player can start a song before the whole file is read.
 
-`GET /api/music` — the library as `id` and `title` for any logged-in user, ordered by
-id. `GET /api/music/{id}` — one song, streamed in 32 KiB chunks with a flush after
-each, so a player gets the start of a file before the rest is read. Both need the
-same `Authorization: Bearer` rule as `GET /api/session`.
+`GET /api/music` — the library as the full track row for any logged-in user, ordered by
+id. `GET /api/music/{id}` — one song, streamed in 32 KiB pieces, so a player gets the
+start of a file before the rest is read; a `Range` header answers just that part with
+`206` and `Content-Range`. Both need the same `Authorization: Bearer` rule as
+`GET /api/session`.
 
 `POST /api/playlists` and `GET /api/playlists` — playlists belong to the user who
 created them (the library is shared, so this is the one place the server keeps user
