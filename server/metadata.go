@@ -32,23 +32,11 @@ func readAudioMeta(data []byte) audioMeta {
 	}
 }
 
-// cleanTagText makes text that came out of a file safe to show: no control
-// characters, at most maxTitleLen characters. This is the same rule the uploaded
-// name goes through, so a tag cannot be longer than a name.
+// cleanTagText makes text that came out of a file safe to show. It is the same rule
+// an uploaded name goes through (see music.go), so a tag cannot be longer or cleaner
+// differently than a name.
 func cleanTagText(text string) string {
-	var b strings.Builder
-	count := 0
-	for _, r := range text {
-		if r < 0x20 || r == 0x7f {
-			continue
-		}
-		if count >= maxTitleLen {
-			break
-		}
-		b.WriteRune(r)
-		count++
-	}
-	return strings.TrimSpace(b.String())
+	return withoutControlChars(text, maxTitleLen)
 }
 
 // readID3v2 returns the text frames of an ID3v2 tag and where the audio data

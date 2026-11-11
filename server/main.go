@@ -40,17 +40,40 @@ func main() {
 	sessionLimiter := newRateLimiter(10, 12*time.Second)
 	// Uploads move whole files, so this bucket is smaller on purpose.
 	uploadLimiter := newRateLimiter(3, 30*time.Second)
-	// Reading the library is its own bucket: opening the library screen or streaming
-	// a song must not starve the login and registration buckets.
+	// Reading the library and streaming one song are their own buckets, so a client
+	// that polls the list cannot starve playback, and a player that opens several
+	// songs cannot starve the session checks.
 	libraryLimiter := newRateLimiter(10, 12*time.Second)
+	streamLimiter := newRateLimiter(10, 10*time.Second)
+	// Playlists and the queue are separate from each other and from the library: a
+	// client that builds a playlist should not be able to stop playback, and a player
+	// that reads its queue should not be able to stop the library.
+	playlistLimiter := newRateLimiter(10, 12*time.Second)
+	queueLimiter := newRateLimiter(10, 12*time.Second)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/register", registerHandler(db, registerLimiter))
 	mux.HandleFunc("POST /api/login", loginHandler(db, loginLimiter))
 	mux.HandleFunc("GET /api/session", sessionHandler(db, sessionLimiter))
 	mux.HandleFunc("POST /api/music/upload", uploadHandler(db, library, uploadLimiter))
-	mux.HandleFunc("GET /api/music", libraryHandler(db, libraryLimiter))
-	mux.HandleFunc("GET /api/music/{id}", trackFileHandler(db, library, libraryLimiter))
+	mux.HandleFunc("GET /api/music", listHandler(db, libraryLimiter))
+	mux.HandleFunc("GET /api/music/{id}", streamHandler(db, library, streamLimiter))
+
+	// Playlists belong to the user who created them. The queue is the same shape for
+	// every source: filling it from a playlist is one of its sources, so a plain queue
+	// feature later is another branch in queueSongIDs, not a new endpoint.
+	mux.HandleFunc("POST /api/playlists", createPlaylistHandler(db, playlistLimiter))
+	mux.HandleFunc("GET /api/playlists", listPlaylistsHandler(db, playlistLimiter))
+	mux.HandleFunc("GET /api/playlists/{id}", getPlaylistHandler(db, playlistLimiter))
+	mux.HandleFunc("POST /api/playlists/{id}/songs", addPlaylistSongHandler(db, playlistLimiter))
+	mux.HandleFunc("DELETE /api/playlists/{id}/songs/{position}", removePlaylistSongHandler(db, playlistLimiter))
+	mux.HandleFunc("DELETE /api/playlists/{id}", deletePlaylistHandler(db, playlistLimiter))
+
+	mux.HandleFunc("POST /api/queue", fillQueueHandler(db, queueLimiter))
+	mux.HandleFunc("GET /api/queue", getQueueHandler(db, queueLimiter))
+	mux.HandleFunc("POST /api/queue/songs", appendQueueEntryHandler(db, queueLimiter))
+	mux.HandleFunc("DELETE /api/queue/{position}", removeQueueEntryHandler(db, queueLimiter))
+	mux.HandleFunc("DELETE /api/queue", clearQueueHandler(db, queueLimiter))
 
 	// The development frontend in static/, mounted under its own prefix so it cannot
 	// take over a path an API pattern owns. See static.go.
@@ -79,4 +102,22 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // writeError sends the {"error": "…"} body that the client form shows below its fields.
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+// writePlainText is for the one error that is not about the API but about how a file is
+// delivered: the file endpoint answers a range in its own words, because its success
+// answer is bytes and not JSON. A caller that sent a Range header is a player, and a
+// JSON body it cannot show is not what that caller expects here.
+func writePlainText(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(status)
+	_, _ = fmt.Fprint(w, message)
+}
+
+// writeNoContent answers a successful delete. There is no body, so the JSON content
+// type must not be set: a 204 with Content-Type: application/json and no body is what
+// a client has to read as "nothing to parse".
+func writeNoContent(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusNoContent)
 }

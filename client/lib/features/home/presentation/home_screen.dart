@@ -1,11 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/utils/pick_audio.dart';
-import '../../../shared/widgets/app_shell.dart';
+import '../../../shared/widgets/saphire_logo.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/user.dart';
-import '../../player/data/player.dart';
+import '../../library/data/library_repository.dart';
+import '../../player/data/queue_repository.dart';
+import '../../player/domain/player.dart';
+import '../../player/domain/queue.dart';
 import '../../upload/data/upload_repository.dart';
 import '../../upload/domain/track.dart';
 
@@ -27,8 +32,10 @@ String greetingFor(DateTime now) {
   return 'Guten Abend';
 }
 
-/// What the page shows. The uploaded songs are real; the rest is placeholder,
-/// because playlists and mixes have no endpoints yet (api-docs.md, Upcoming).
+/// What the page shows. The uploaded songs are real; the playlist rows are placeholder,
+/// because they would need the real playlists from GET /api/playlists, and this page does
+/// not load them — the Playlists page is where a playlist exists. The only real songs on
+/// this page are the search results, which come from GET /api/music.
 const _placeholders = [
   (title: 'Lieblingssongs', meta: 'Playlist · 150 Songs', icon: Icons.favorite),
   (title: 'Workout', meta: 'Playlist · 87 Songs', icon: Icons.local_activity),
@@ -37,29 +44,45 @@ const _placeholders = [
   (title: 'Good Times', meta: 'Playlist · 78 Songs', icon: Icons.west),
 ];
 
-// The frame — the mark, the navigation, the bar — is in shared/widgets/app_shell.dart,
-// so the library page draws the same frame. Only the list below the navigation belongs
-// to this page.
+const _navItems = [
+  (label: 'Home', icon: Icons.home, selected: true, route: ''),
+  (label: 'Suche', icon: Icons.search, selected: false, route: ''),
+  // What can be opened is what has a route in app/router.dart. Suche has no page of its
+  // own — it is the search field on this page — so it stays a label.
+  (label: 'Bibliothek', icon: Icons.library_books, selected: false, route: '/library'),
+  (label: 'Playlists', icon: Icons.playlist_play, selected: false, route: '/playlists'),
+  (label: 'Warteschlange', icon: Icons.queue_music, selected: false, route: '/queue'),
+];
 
 /// What the server accepts (server/music.go): the client only says it up front,
 /// the upload itself is still checked on the server.
 const _uploadHint = 'Erlaubt: MP3, WAV, M4A, OGG, OPUS, FLAC, AAC · höchstens 500 MiB pro Datei';
 
-/// The home screen: the greeting and the rows inside the app's frame. Only the upload
-/// reaches the server. The other areas have no endpoints yet, so they are labels and
-/// pictures, not buttons.
+/// The home screen: the app on the left, the greeting and the rows on the right.
+/// Upload, playlists and the queue reach the server; the playlist rows below are the
+/// placeholders from the mock, because there is no data behind them until a playlist is
+/// opened on the Playlists page.
+///
+/// The search field is the one place this page shows real songs: the server has no search
+/// endpoint, so the page reads the library once and filters what it got. The bar at the
+/// bottom shows what the shared player is playing — this page does not own a player, it
+/// only puts a song into the queue the player reads.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
     required this.repository,
     required this.uploads,
+    required this.library,
+    required this.queues,
     required this.player,
     this.pickAudio = pickAudioFiles,
   });
 
   final AuthRepository repository;
   final UploadRepository uploads;
-  final Player player;
+  final LibraryRepository library;
+  final QueueRepository queues;
+  final QueuePlayer player;
   final PickAudio pickAudio;
 
   @override
@@ -68,6 +91,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final List<_UploadFile> _files = [];
+  List<Track> _library = [];
   final TextEditingController _search = TextEditingController();
 
   // The message from the session check. What a single file got is on its own row.
@@ -75,17 +99,30 @@ class _HomeScreenState extends State<HomeScreen> {
   User? _user;
   // While the picker is open a second tap must not open it again.
   bool _picking = false;
+  // While a queue call is running the same tap must not start it again.
+  bool _busy = false;
+  StreamSubscription<void>? _changes;
 
   @override
   void initState() {
     super.initState();
+    // The player moves on its own when a song ends. Without a listener the bar would keep
+    // showing the song that just finished.
+    _changes = widget.player.changes.listen((_) {
+      if (mounted) setState(() {});
+    });
     // The name in the greeting is the account name, so it comes from the session
     // check: the session store holds only the token, nothing that says who we are.
     _loadUser();
+    // The search has nothing to filter until the library is here, so it is read once
+    // when the page opens rather than on every keystroke.
+    _loadLibrary();
   }
 
   @override
   void dispose() {
+    // The player belongs to the whole app, so only this page's listener is dropped here.
+    _changes?.cancel();
     _search.dispose();
     super.dispose();
   }
@@ -100,6 +137,16 @@ class _HomeScreenState extends State<HomeScreen> {
       // the router guard and the page then agree on the same session.
       widget.repository.logout();
       setState(() => _note = error.message);
+    }
+  }
+
+  Future<void> _loadLibrary() async {
+    try {
+      final library = await widget.library.list();
+      if (!mounted) return;
+      setState(() => _library = library);
+    } on LibraryException catch (error) {
+      if (mounted) setState(() => _note = error.message);
     }
   }
 
@@ -154,99 +201,135 @@ class _HomeScreenState extends State<HomeScreen> {
     return query.isEmpty || title.toLowerCase().contains(query);
   }
 
+  /// What the search field finds. The server has no search endpoint (api-docs.md, Upcoming),
+  /// so this filters the library the page loaded. Without a query nothing is a result, because
+  /// without a query the page shows its sections instead of a result list.
+  List<Track> _results() {
+    final query = _search.text.trim().toLowerCase();
+    if (query.isEmpty) return const [];
+    return [for (final entry in _library) if (_matches(entry.title)) entry];
+  }
+
+  /// One action on the shared player at a time. The page rebuilds after every one of them:
+  /// a player that is only paused does not report anything, so a page that rebuilt only on
+  /// the tap itself would keep the icon from before the tap.
+  Future<void> _control(Future<void> Function() action) async {
+    if (_busy) return;
+
+    setState(() => _busy = true);
+    try {
+      await action();
+    } catch (error) {
+      // A player that cannot open a song is not a JSON error, so the message is ours there.
+      if (mounted) setState(() => _note = error is QueueException ? error.message : 'Das Lied konnte nicht gespielt werden: $error');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// Opening a search result fills the queue with that one song and plays it, the way the
+  /// Playlists page starts a playlist. The player only ever reads a queue, so a song picked
+  /// here and a song from a playlist play exactly the same way.
+  Future<void> _play(Track entry) => _control(() async {
+    widget.player.queue.fill(await widget.queues.fill(QueueSource.track(entry.id)));
+    await widget.player.playCurrent();
+  });
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
-    return AppShell(
-      selected: '/home',
-      player: widget.player,
-      // What only belongs to this page: the list below the navigation. The items here
-      // have no screen behind them, so they stay labels.
-      sidebarExtra: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _heading('Deine Inhalte'),
-          for (final item in [
-            (label: 'Eigene Dateien', icon: Icons.add),
-            (label: 'Playlists', icon: Icons.playlist_play),
-            (label: 'Alben', icon: Icons.album),
-            (label: 'Künstler*innen', icon: Icons.people),
-          ])
-            _navItem(item.label, item.icon),
-          _heading('Playlists'),
-          // The sidebar is the list of what is there, the search field above
-          // only filters the page.
-          for (final item in _placeholders)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 6, 20, 6),
-              child: Row(
-                children: [
-                  _thumb(item.icon),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(item.title, style: theme.textTheme.labelLarge),
-                        Text(
-                          item.meta,
-                          style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+    return LayoutBuilder(builder: (context, constraints) {
+      // Below this width the sidebar has no room, the content takes the screen.
+      // For a phone the upgrade would be a drawer.
+      final wide = constraints.maxWidth >= 760;
+      final results = _results();
+
+      return Scaffold(
+        backgroundColor: scheme.surface,
+        body: SafeArea(
+          child: Row(
+            children: [
+              if (wide) _sidebar(constraints.maxHeight),
+              Expanded(
+                child: Column(
+                  children: [
+                    _topBar(),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _greeting(),
+                            if (_note != null) ...[
+                              const SizedBox(height: 16),
+                              Text(_note!, style: TextStyle(color: scheme.error)),
+                            ],
+                            if (results.isNotEmpty) ...[
+                              _section('Suchergebnisse'),
+                              _row([for (final entry in results) _songCard(entry)]),
+                            ],
+                            _section('Zuletzt gehört'),
+                            _row([
+                              for (final item in _placeholders.where((item) => _matches(item.title))) _card(item),
+                            ]),
+                            _section(
+                              'In aktueller Sitzung hinzugefügt',
+                              action: IconButton(
+                                tooltip: 'Datei auswählen',
+                                onPressed: _picking ? null : _upload,
+                                icon: Icon(Icons.add, color: scheme.primary),
+                              ),
+                            ),
+                            Text(
+                              _uploadHint,
+                              style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                            ),
+                            const SizedBox(height: 12),
+                            _row([
+                              for (final file in _files.where((file) => _matches(_title(file)))) _fileCard(file),
+                            ]),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
-                  ),
-                ],
-              ),
-            ),
-        ],
-      ),
-      child: Column(
-        children: [
-          _topBar(),
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _greeting(),
-                  const SizedBox(height: 24),
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: [
-                      _chip('Dein Mix', Icons.equalizer),
-                      _chip('Charts', Icons.star),
-                      _chip('Radio', Icons.radio),
-                      _chip('Eigene Dateien hochladen', Icons.upload, onPressed: _picking ? null : _upload),
-                      _chip('Entdecken', Icons.explore),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    _uploadHint,
-                    style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-                  ),
-                  if (_note != null) ...[
-                    const SizedBox(height: 16),
-                    Text(_note!, style: TextStyle(color: scheme.error)),
+                    _playerBar(),
                   ],
-                  _section('Eigene Dateien'),
-                  _row([
-                    for (final file in _files.where((file) => _matches(_title(file)))) _fileCard(file),
-                    if (_files.isEmpty && _matches('Eigene Dateien')) _uploadCard(),
-                  ]),
-                  _section('Zuletzt gehört'),
-                  _row([
-                    for (final item in _placeholders.where((item) => _matches(item.title))) _card(item),
-                  ]),
-                ],
+                ),
               ),
-            ),
+            ],
           ),
-        ],
+        ),
+      );
+    });
+  }
+
+  Widget _sidebar(double height) {
+    return SizedBox(
+      width: 248,
+      height: height,
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // The lines in the logo asset are thin, so at this size they come out
+            // soft — that is the small mark the mock shows.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+              child: SaphireLogo(size: 44),
+            ),
+            for (final item in _navItems) _navItem(item.label, item.icon, selected: item.selected, route: item.route),
+            _heading('Deine Inhalte'),
+            for (final item in [
+              (label: 'Playlists', icon: Icons.playlist_play),
+              (label: 'Alben', icon: Icons.album),
+              (label: 'Künstler*innen', icon: Icons.people),
+            ])
+              _navItem(item.label, item.icon),
+          ],
+        ),
       ),
     );
   }
@@ -258,20 +341,25 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Nothing is behind these, so they stay labels; the items that have a screen are
-  // in NavBar.
-  Widget _navItem(String label, IconData icon) {
+  Widget _navItem(String label, IconData icon, {bool selected = false, String route = ''}) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
+    // A row with no route behind it stays a label. Only what has an endpoint can be
+    // opened, and that is what the routes in app/router.dart are.
+    final canOpen = route.isNotEmpty;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
-      child: Row(
-        children: [
-          Icon(icon, size: 20, color: scheme.onSurfaceVariant),
-          const SizedBox(width: 14),
-          Flexible(child: Text(label, style: theme.textTheme.labelLarge)),
-        ],
+      child: InkWell(
+        onTap: canOpen ? () => context.go(route) : null,
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: selected ? scheme.primary : scheme.onSurfaceVariant),
+            const SizedBox(width: 14),
+            Flexible(child: Text(label, style: theme.textTheme.labelLarge)),
+          ],
+        ),
       ),
     );
   }
@@ -290,8 +378,8 @@ class _HomeScreenState extends State<HomeScreen> {
           Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
           const SizedBox(width: 16),
           Expanded(
-            // The server has no search yet, so what is typed here only filters
-            // what this page already shows.
+            // The server has no search endpoint, so what is typed here filters the library
+            // this page loaded once (see the shortcut in library/data/library_repository.dart).
             child: TextField(
               controller: _search,
               onChanged: (_) => setState(() {}),
@@ -362,10 +450,18 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _section(String title) {
+  /// A section title, with the control for that section on its left when there is one.
+  Widget _section(String title, {Widget? action}) {
+    final theme = Theme.of(context);
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(0, 24, 0, 12),
-      child: Text(title, style: Theme.of(context).textTheme.titleLarge),
+      child: Row(
+        children: [
+          if (action != null) ...[action, const SizedBox(width: 10)],
+          Flexible(child: Text(title, style: theme.textTheme.titleLarge, maxLines: 1, overflow: TextOverflow.ellipsis)),
+        ],
+      ),
     );
   }
 
@@ -428,6 +524,16 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// A real library song: the same card as the placeholder rows, but it can be opened,
+  /// because a search result is something the user means to play. The line under the title
+  /// says where the row came from, so a real song can be told apart from a mock row.
+  Widget _songCard(Track entry) {
+    return InkWell(
+      onTap: _busy ? null : () => _play(entry),
+      child: _card((title: entry.title, meta: 'Bibliothek', icon: Icons.audio_file)),
+    );
+  }
+
   /// One picked file: its name and the answer for this file only, so the results
   /// of a batch do not mix into one message.
   Widget _fileCard(_UploadFile file) {
@@ -477,95 +583,48 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _uploadCard() {
+  Widget _playerBar() {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-
-    return SizedBox(
-      width: 186,
-      height: 186,
-      child: FilledButton(
-        onPressed: _picking ? null : _upload,
-        style: FilledButton.styleFrom(
-          // The card stays in the card color, only the plus is the accent.
-          backgroundColor: scheme.surfaceContainer,
-          foregroundColor: scheme.onSurface,
-          padding: const EdgeInsets.all(14),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(Icons.add, color: scheme.primary),
-            const Spacer(),
-            Text(
-              'Datei auswählen',
-              style: theme.textTheme.titleMedium,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            Text(
-              'Noch nichts hochgeladen',
-              style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _chip(String label, IconData icon, {VoidCallback? onPressed}) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-
-    if (onPressed == null) {
-      // Nothing is behind this on the server, so it is a label and not a button.
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: scheme.surfaceContainer,
-          border: Border.all(color: scheme.outline),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 18, color: scheme.onSurfaceVariant),
-            const SizedBox(width: 10),
-            Text(label, style: theme.textTheme.labelLarge),
-          ],
-        ),
-      );
-    }
-
-    return FilledButton(
-      onPressed: onPressed,
-      style: FilledButton.styleFrom(
-        minimumSize: const Size(0, 44),
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [Icon(icon, size: 18), const SizedBox(width: 10), Text(label)],
-      ),
-    );
-  }
-
-  Widget _thumb(IconData icon) {
-    final scheme = Theme.of(context).colorScheme;
-
+    final current = widget.player.queue.current;
+    final playing = widget.player.playing;
     return Container(
-      width: 40,
-      height: 40,
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainer,
-        border: Border.all(color: scheme.outline),
-        borderRadius: BorderRadius.circular(8),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      decoration: BoxDecoration(border: Border(top: BorderSide(color: scheme.outline))),
+      child: Row(
+        children: [
+          Icon(Icons.audio_file, size: 22, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  current == null ? 'Nichts wird abgespielt' : current.title,
+                  style: theme.textTheme.labelLarge,
+                ),
+                Text(
+                  widget.player.failure ??
+                      (current == null
+                          ? 'Suche ein Lied und öffne es, oder fülle die Warteschlange.'
+                          : 'Warteschlange · Slot ${current.position}'),
+                  style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: playing ? 'Pause' : 'Abspielen',
+            onPressed: _busy ? null : () => _control(() => playing ? widget.player.pause() : widget.player.playCurrent()),
+            icon: Icon(playing ? Icons.pause : Icons.play_arrow),
+          ),
+          IconButton(
+            tooltip: 'Nächstes Lied',
+            onPressed: _busy ? null : () => _control(() => widget.player.next()),
+            icon: const Icon(Icons.skip_next),
+          ),
+        ],
       ),
-      child: Icon(icon, size: 18, color: scheme.onSurfaceVariant),
     );
   }
 

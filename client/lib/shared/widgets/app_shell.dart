@@ -1,19 +1,18 @@
 import 'package:flutter/material.dart';
 
-import '../../features/player/data/player.dart';
+import '../../features/player/domain/player.dart';
 import 'nav_bar.dart';
 import 'player_bar.dart';
 import 'saphire_logo.dart';
 
-/// The frame every signed-in screen draws: the mark and the navigation on the left,
-/// the page in the middle, the bar at the bottom. The pages look the same because
-/// they share this frame, and only what belongs to one page is passed in.
+/// The frame every signed-in page draws: the mark and the navigation on the left, the
+/// page in the middle, the bar at the bottom. The pages look the same because they share
+/// this frame, and only what belongs to one page is passed in.
 ///
-/// `child` gets the height left over after the navigation row and the bar, so a page
-/// with a long list scrolls inside it instead of pushing the bar off the screen. Below
-/// `wideAt` the sidebar has no room and the navigation becomes the row at the top;
-/// `sidebarExtra` is only drawn in the wide layout, because a narrow page has no column
-/// to put it in.
+/// `child` gets the height left over after the navigation row and the bar, so a page with
+/// a long list scrolls inside it instead of pushing the bar off the screen. Below `wideAt`
+/// the sidebar has no room and the navigation becomes the row at the top; `sidebarExtra`
+/// is only drawn in the wide layout, because a narrow page has no column to put it in.
 class AppShell extends StatelessWidget {
   const AppShell({
     super.key,
@@ -24,10 +23,10 @@ class AppShell extends StatelessWidget {
   });
 
   final String selected;
-  final Player player;
+  final QueuePlayer player;
   final Widget child;
 
-  /// What a screen shows below the navigation. Nothing for a page that has none.
+  /// What a page shows below the navigation. Nothing for a page that has none.
   final Widget? sidebarExtra;
 
   static const double sidebarWidth = 248;
@@ -44,8 +43,6 @@ class AppShell extends StatelessWidget {
 
         return Scaffold(
           backgroundColor: scheme.surface,
-          // The bar has to stay at the bottom, so the page above it gets the rest of
-          // the height rather than growing with its content.
           body: SafeArea(
             child: Column(
               children: [

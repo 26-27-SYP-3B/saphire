@@ -1,19 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-/// The screens the app can move between. Every screen draws the same items from
-/// here, so the labels cannot drift apart, and an item with no screen behind it
-/// stays a label rather than a button.
+/// The screens the app can move between. Every screen draws the same items from here, so
+/// the labels cannot drift apart, and an item with no screen behind it stays a label
+/// rather than a button. Only what has an endpoint and a screen can be opened, and that is
+/// what the routes in app/router.dart are.
 const navItems = [
   (label: 'Home', icon: Icons.home, to: '/home'),
   // No search screen yet, so this one stays a label.
   (label: 'Suche', icon: Icons.search, to: ''),
   (label: 'Bibliothek', icon: Icons.library_books, to: '/library'),
+  (label: 'Playlists', icon: Icons.playlist_play, to: '/playlists'),
+  (label: 'Warteschlange', icon: Icons.queue_music, to: '/queue'),
 ];
 
-/// The navigation, as the sidebar column or as the row a screen shows at its top.
-/// `selected` is the route this screen is on, so the current item is the marked one
-/// and the user can see where they are.
+/// The navigation, as the sidebar column or as the row a page shows at its top.
+/// `selected` is the route this page is on, so the current item is the marked one and the
+/// user can see where they are.
 class NavBar extends StatelessWidget {
   const NavBar({super.key, required this.selected, this.vertical = true});
 

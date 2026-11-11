@@ -7,19 +7,20 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:saphire_client/app/router.dart';
 import 'package:saphire_client/app/theme.dart';
-import 'package:saphire_client/core/storage/session_store.dart';
+import 'package:saphire_client/core/config/api_config.dart';
 import 'package:saphire_client/core/utils/pick_audio.dart';
 import 'package:saphire_client/features/auth/data/auth_repository.dart';
 import 'package:saphire_client/features/home/presentation/home_screen.dart';
 import 'package:saphire_client/features/library/data/library_repository.dart';
 import 'package:saphire_client/features/library/presentation/library_screen.dart';
-import 'package:saphire_client/features/player/data/player.dart';
-import 'package:saphire_client/features/playlists/data/playlist_store.dart';
+import 'package:saphire_client/features/player/domain/player.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
 import 'package:saphire_client/features/upload/domain/track.dart';
 import 'package:saphire_client/shared/widgets/player_bar.dart';
 
+import '../../support/fake_player.dart';
 import '../../support/stub_adapter.dart';
+import '../../support/wiring.dart';
 
 // Three rows, so all three orders the page can be sorted by come out different:
 // Titel gives Alle Songs, Bohne, Neutrone; Interpret gives Bohne, Neutrone, Alle
@@ -35,26 +36,48 @@ const libraryAnswer = [
   {'id': 9.0, 'title': 'Bohne', 'artist': 'Anna', 'duration_ms': 121000.0, 'uploaded_at': 100.0},
 ];
 
-SessionStore loggedIn() =>
-    SessionStore()..save('a' * 64, DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch ~/ 1000);
+// What POST /api/queue answers for a fill from one song: that song at slot 1. A queue entry
+// is only a reference to a library song, so the title here is the title the library row has,
+// and a test that looks at the bar can only assert what this answer says — the page shows the
+// title the queue gave it, not the one it read from GET /api/music.
+List<Object> queueFor(int trackId, String title) => [
+  {'position': 1.0, 'track_id': trackId * 1.0, 'title': title},
+];
 
-/// The library screen with a session, so the repository sends a token. The screen is
-/// pumped on its own here, so the router guard is not part of these tests; the
-/// navigation test below covers the guard.
+/// A playlist answer for the menu test. The id is what the create returns, so a test that
+/// checks the follow-up call reads it from here rather than assuming one.
+const createdPlaylist = {
+  'id': 1.0,
+  'name': 'Meine Playlist',
+  'created_at': 1794180269.0,
+  'song_count': 0.0,
+};
+
+/// The library page with a session, so the repositories send a token. The page is pumped on
+/// its own here, so the router guard is not part of these tests; the navigation test below
+/// covers the guard.
 ///
-/// Two adapters, because the stub answers one fixed body or a queue of bodies: the list
-/// is answered by `libraryAdapter` (or `libraryBody`), the upload by `uploadAdapter`.
-/// A test that needs both a failing read and a failing upload gives both.
+/// The page now works with the app's shared repositories and the shared queue and player, so
+/// the test gets the wiring back and asserts what those were asked for. A page that only kept
+/// its own lists could not be checked from the outside, and the player here needs no platform.
+///
+/// Two adapters, because the stub answers one fixed body or a queue of bodies: the list is
+/// answered by `libraryAdapter` (or `libraryBody`), the upload by `uploadAdapter`. A test that
+/// needs both a failing read and a failing upload gives both. The page reads the playlist names
+/// with the library, so a test that does not look at the menu still needs that call to answer
+/// something; the default is the empty list.
 ///
 /// `settle` is off for the test that looks at the page while the request is still
 /// open: the loading bar repeats its animation, so settling would never finish.
-Future<PlaylistStore> openLibrary(
+Future<Wiring> openLibrary(
   WidgetTester tester, {
   Object libraryBody = libraryAnswer,
   StubAdapter? libraryAdapter,
   StubAdapter? uploadAdapter,
+  StubAdapter? playlists,
+  StubAdapter? queues,
   PickAudio? pickAudio,
-  Player? player,
+  SongPlayer? audio,
   bool settle = true,
 }) async {
   // The test font draws every glyph as wide as the font size, so this page needs
@@ -63,9 +86,19 @@ Future<PlaylistStore> openLibrary(
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
 
-  final session = loggedIn();
-  final adapter = libraryAdapter ?? StubAdapter(200, libraryBody);
-  final playlists = PlaylistStore();
+  final list = libraryAdapter ?? StubAdapter(200, libraryBody);
+  // The page reads the playlist names with the library, so a test that does not look at the
+  // menu still needs that call to answer something; the default is the empty list, because a
+  // real Dio here would be a request to a server that is not there.
+  final playlistAdapter = playlists ?? StubAdapter(200, <Object>[]);
+  final wiring = Wiring(
+    loggedIn(),
+    libraryAdapter: list,
+    playlistAdapter: playlistAdapter,
+    queueAdapter: queues,
+    audio: audio,
+  );
+  addTearDown(wiring.dispose);
 
   await tester.pumpWidget(
     // The app's own theme, so a test that looks at a color sees the color the app
@@ -73,17 +106,19 @@ Future<PlaylistStore> openLibrary(
     MaterialApp(
       theme: buildTheme(),
       home: LibraryScreen(
-        library: LibraryRepository(Dio()..httpClientAdapter = adapter, session),
-        player: player ?? Player(session, (url, headers) async {}),
-        playlists: playlists,
-        uploads: UploadRepository(Dio()..httpClientAdapter = uploadAdapter ?? adapter, session),
+        library: wiring.library,
+        playlists: wiring.playlists,
+        queues: wiring.queues,
+        queue: wiring.queue,
+        player: wiring.player,
+        uploads: UploadRepository(Dio()..httpClientAdapter = uploadAdapter ?? list, wiring.session),
         pickAudio: pickAudio ?? (() async => [(name: 'song.mp3', bytes: Uint8List.fromList([1, 2, 3]))]),
       ),
     ),
   );
   if (settle) await tester.pumpAndSettle();
 
-  return playlists;
+  return wiring;
 }
 
 Future<void> openMenu(WidgetTester tester, String title) async {
@@ -105,6 +140,11 @@ List<String> shownOrder(WidgetTester tester, List<String> titles) {
 
   return [for (final row in rows) row.$1];
 }
+
+// The row's own play icon, not the one the bar at the bottom has. Both are called
+// 'Abspielen', so an unscoped finder here would find the bar's button as well.
+Finder playIcon(WidgetTester tester) =>
+    find.descendant(of: find.byType(ListView), matching: find.byTooltip('Abspielen'));
 
 void main() {
   test('reads the library answer as songs', () async {
@@ -321,50 +361,61 @@ void main() {
     expect(shownOrder(tester, ['Gleich', 'gleich']), ['Gleich', 'gleich']);
   });
 
-  testWidgets('playing a song shows it in the bar', (tester) async {
-    final played = <String>[];
-
-    await openLibrary(
+  // Opening a row is not a play of its own: it fills the shared queue with that one song and
+  // asks the shared player for the current entry, so the bar shows the same song the queue
+  // page would. What the test can read is what the page sent and what the player was asked to
+  // open — the title in the bar is the one the queue answer carries.
+  testWidgets('playing a song fills the queue with it and opens that song', (tester) async {
+    final audio = FakePlayer();
+    final queues = StubAdapter(200, queueFor(4, 'Neutrone (Remix)'));
+    final wiring = await openLibrary(
       tester,
       libraryBody: [libraryAnswer.first],
-      player: Player(loggedIn(), (url, headers) async => played.add(url)),
+      queues: queues,
+      audio: audio,
     );
 
-    await tester.tap(find.byTooltip('Abspielen'));
+    await tester.tap(playIcon(tester));
     await tester.pumpAndSettle();
 
-    expect(played.single, contains('/api/music/4'));
+    expect(queues.lastOptions?.data, {'source': 'track', 'source_id': 4});
+    expect(audio.opened, ['$apiBaseUrl/api/music/4']);
     expect(
       find.descendant(of: find.byType(PlayerBar), matching: find.text('Neutrone (Remix)')),
       findsOneWidget,
     );
+    expect(wiring.queue.current?.trackId, 4);
   });
 
   // The row itself can be tapped, so playing a song does not need the small icon.
   testWidgets('clicking the row plays the song', (tester) async {
-    final played = <String>[];
-
+    final audio = FakePlayer();
+    final queues = StubAdapter(200, queueFor(8, 'Alle Songs'));
     await openLibrary(
       tester,
       libraryBody: [libraryAnswer[1]],
-      player: Player(loggedIn(), (url, headers) async => played.add(url)),
+      queues: queues,
+      audio: audio,
     );
 
     await tester.tap(find.text('Alle Songs'));
     await tester.pumpAndSettle();
 
-    expect(played.single, contains('/api/music/8'));
+    expect(queues.lastOptions?.data, {'source': 'track', 'source_id': 8});
+    expect(audio.opened, ['$apiBaseUrl/api/music/8']);
     expect(
       find.descendant(of: find.byType(PlayerBar), matching: find.text('Alle Songs')),
       findsOneWidget,
     );
   });
 
-  // The row of the song that is playing is marked, so the page and the bar agree on
-  // what is current. The marker is the row's own box, so the test reads it there.
+  // The row of the song that is current in the queue is marked, so the page and the bar agree
+  // on what is current. The marker is the row's own box, so the test reads it there. The theme
+  // maps fieldBackground and accent to the colors the row uses, so the constants here are the
+  // colors the app paints.
   testWidgets('the row of the song that is playing is marked', (tester) async {
-    final player = Player(loggedIn(), (url, headers) async {});
-    await openLibrary(tester, player: player);
+    final audio = FakePlayer();
+    final wiring = await openLibrary(tester, audio: audio, queues: StubAdapter(200, queueFor(8, 'Alle Songs')));
 
     // The bar at the bottom shows the same title once a song is playing, so a row is
     // looked for inside the list rather than anywhere on the screen.
@@ -390,38 +441,73 @@ void main() {
 
     // A row that is not the current one stays unmarked.
     expect(decorationOf('Bohne').color, isNull);
+    // The page and the bar name the same song.
+    expect(wiring.queue.current?.trackId, 8);
+    expect(
+      find.descendant(of: find.byType(PlayerBar), matching: find.text('Alle Songs')),
+      findsOneWidget,
+    );
   });
 
-  // The message is ours, not the player's own text, so it stays readable.
-  testWidgets('a song the player cannot start says so in the bar', (tester) async {
-    await openLibrary(
-      tester,
-      libraryBody: [libraryAnswer.first],
-      player: Player(loggedIn(), (url, headers) async => throw Exception('no audio platform in a test')),
-    );
+  // A song that cannot be opened is not a JSON answer from the server, so the message is the
+  // exception's own text, shown on the page that made the call. The bar only reports what it
+  // was asked to do itself, so it still names the slot here — which is what this test checks,
+  // because the page cannot show both at once.
+  testWidgets('a song the player cannot start is named by the page, not by the bar', (tester) async {
+    final audio = FakePlayer();
+    audio.openError = 'das Audioobjekt ist geschlossen';
+    await openLibrary(tester, libraryBody: [libraryAnswer.first], queues: StubAdapter(200, queueFor(4, 'Neutrone (Remix)')), audio: audio);
 
-    await tester.tap(find.byTooltip('Abspielen'));
+    await tester.tap(playIcon(tester));
     await tester.pumpAndSettle();
 
-    expect(find.text('Der Song konnte nicht abgespielt werden.'), findsOneWidget);
+    expect(find.textContaining('das Audioobjekt ist geschlossen'), findsOneWidget);
+    expect(
+      find.descendant(of: find.byType(PlayerBar), matching: find.text('Warteschlange · Slot 1')),
+      findsOneWidget,
+    );
   });
 
+  // Adding to the queue is a call, not a play: nothing becomes current, so the bar still names
+  // no song. The menu's first entry creates the playlist it names when the page has none, and
+  // the id the follow-up call uses is the one the answer carried.
   testWidgets('the context menu adds a song to the queue and to a playlist', (tester) async {
-    final store = await openLibrary(tester, libraryBody: [libraryAnswer.first]);
+    final playlistAdapter = StubAdapter(200, <Object>[]);
+    // Answers in the order the page calls them: the list (nothing yet, so the menu can only
+    // offer the first one), the create, then the song.
+    playlistAdapter.queue.addAll([
+      (200, <Object>[]),
+      (201, createdPlaylist),
+      (201, {'position': 1.0, 'track_id': 4.0, 'title': 'Neutrone (Remix)'}),
+    ]);
+    final queueAdapter = StubAdapter(200, {'position': 1.0, 'track_id': 4.0, 'title': 'Neutrone (Remix)'});
+
+    final wiring = await openLibrary(
+      tester,
+      libraryBody: [libraryAnswer.first],
+      playlists: playlistAdapter,
+      queues: queueAdapter,
+    );
 
     await openMenu(tester, 'Neutrone (Remix)');
     await tester.tap(find.text('Zur Warteschlange hinzufügen'));
     await tester.pumpAndSettle();
 
-    // Nothing has been played, so the bar names the queued song by its title.
-    expect(find.textContaining('Als nächstes: Neutrone'), findsOneWidget);
+    expect(queueAdapter.lastOptions?.data, {'track_id': 4});
+    // The mirror takes the row the server answered with; adding does not make it current.
+    expect(wiring.queue.entries.map((entry) => entry.trackId), [4]);
+    expect(find.descendant(of: find.byType(PlayerBar), matching: find.text('Nichts wird abgespielt')), findsOneWidget);
 
     await openMenu(tester, 'Neutrone (Remix)');
     await tester.tap(find.text('Zur neuen Playlist „Meine Playlist“'));
     await tester.pumpAndSettle();
 
-    expect(store.names, ['Meine Playlist']);
-    expect(store.songs('Meine Playlist'), [4]);
+    // The list, the create, and the song at the id the create answered with — not an id the
+    // page made up.
+    final calls = playlistAdapter.requests;
+    expect(calls.map((request) => request.uri.path), ['/api/playlists', '/api/playlists', '/api/playlists/1/songs']);
+    expect(calls[1].data, {'name': 'Meine Playlist'});
+    expect(calls[2].data, {'track_id': 4});
   });
 
   testWidgets('an uploaded song is added to the library', (tester) async {
@@ -499,6 +585,7 @@ void main() {
     expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Song hochladen')).onPressed, isNotNull);
   });
 
+  // A file the server refuses is not added, so there is nothing to show for it but its message.
   testWidgets('a file the server refuses is not added', (tester) async {
     final adapter = StubAdapter(200, [libraryAnswer.first]);
     adapter.queue.add((400, {'error': 'only audio files are accepted (mp3, wav, m4a, ogg, opus, flac, aac)'}));
@@ -542,36 +629,50 @@ void main() {
     expect(find.textContaining('Bibliothek ist noch leer'), findsOneWidget);
   });
 
-  // The navigation is the same list on both screens, so the library can be opened
-  // from Home and Home can be reached again from the library.
+  // Every page draws the same items from nav_bar.dart, so a page can only be opened where
+  // buildRouter has a route for it. The library has one, so the item on Home opens this page
+  // and the bar on this page leads back; that round trip is why the navigation is shared
+  // rather than drawn per page.
   testWidgets('the navigation opens the library and leads back', (tester) async {
     tester.view..physicalSize = const Size(1600, 1200)..devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    final session = loggedIn();
-    final dio = Dio()..httpClientAdapter = StubAdapter(200, {'id': 7.0, 'username': 'lukas'});
-    // The page asks who the session belongs to, then the library; two adapters so
-    // the test does not depend on which answer comes first.
-    final libraryAdapter = StubAdapter(200, libraryAnswer);
-
-    await tester.pumpWidget(
-      MaterialApp.router(
-        routerConfig: buildRouter(
-          AuthRepository(dio, session),
-          UploadRepository(dio, session),
-          LibraryRepository(Dio()..httpClientAdapter = libraryAdapter, session),
-          PlaylistStore(),
-          Player(session, (url, headers) async {}),
-        ),
-      ),
+    final wiring = Wiring(
+      loggedIn(),
+      libraryAdapter: StubAdapter(200, libraryAnswer),
+      playlistAdapter: StubAdapter(200, <Object>[]),
+      queueAdapter: StubAdapter(200, <Object>[]),
     );
+    addTearDown(wiring.dispose);
+
+    // The guard only reads the session, but Home asks who that session belongs to and drops it
+    // when the answer is not there — so the test answers that call instead of sending it to a
+    // network that is not there. Without this the page would be on the login, not on Home.
+    final auth = AuthRepository(Dio()..httpClientAdapter = StubAdapter(200, {'id': 7.0, 'username': 'lukas'}), wiring.session);
+
+    final router = buildRouter(
+      auth: auth,
+      uploads: UploadRepository(Dio(), wiring.session),
+      library: wiring.library,
+      playlists: wiring.playlists,
+      queues: wiring.queues,
+      queue: wiring.queue,
+      player: wiring.player,
+      session: wiring.session,
+    );
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
     await tester.pumpAndSettle();
+
+    expect(find.byType(HomeScreen), findsOneWidget);
 
     await tester.tap(find.text('Bibliothek'));
     await tester.pumpAndSettle();
 
     expect(find.byType(LibraryScreen), findsOneWidget);
+    // The page shows the songs its adapter answered, so opening it through the navigation is
+    // the same page as opening it directly.
     expect(find.text('Neutrone (Remix)'), findsOneWidget);
 
     await tester.tap(find.text('Home'));

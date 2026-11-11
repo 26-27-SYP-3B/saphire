@@ -15,23 +15,34 @@ class LibraryException implements Exception {
   String toString() => message;
 }
 
-/// Reads the library. GET /api/music is the shared library of the server
-/// (api-docs.md, Implemented), so this reads exactly the shape that is documented:
-/// every song as its id, its title, the artist its tags name and the length the
-/// server worked out.
+/// Reads the shared library. Only a logged-in user may read it, so the stored session
+/// token goes as a Bearer header, like every other call.
+///
+/// There is no search endpoint (see api-docs.md, Upcoming), so this gives the whole
+/// library and the page filters what it got. shortcut: no pagination and no server-side
+/// search, upgrade when GET /api/music has one.
 class LibraryRepository {
   LibraryRepository(this._dio, this.session);
 
   final Dio _dio;
   final SessionStore session;
 
-  /// An empty library answers [], so this is an empty list and never null. An
-  /// answer that is not that list is an error, not an empty library.
+  // The header is only built when there is a token. "Bearer null" would be answered as an
+  // unknown session, and the user would read a message about a token they never sent.
+  Map<String, String> get _headers {
+    final token = session.token;
+    return token == null ? const {} : {'Authorization': 'Bearer $token'};
+  }
+
+  /// The library, ordered by id as the server answers it. An empty library answers [],
+  /// so this is an empty list and never null. An answer that is not that list is an
+  /// error, not an empty library: the page cannot say what a library holds before it has
+  /// an answer.
   Future<List<Track>> list() async {
     try {
       final response = await _dio.get(
         '$apiBaseUrl/api/music',
-        options: Options(headers: {'Authorization': 'Bearer ${session.token}'}),
+        options: Options(headers: _headers),
       );
 
       final data = response.data;
