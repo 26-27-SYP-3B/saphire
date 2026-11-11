@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../features/library/data/local_library.dart';
 import '../../features/player/domain/player.dart';
 
 /// The bar every signed-in page shows at the bottom: what is current in the queue, and
@@ -10,9 +11,14 @@ import '../../features/player/domain/player.dart';
 /// own has no tap behind it, and a bar that only rebuilt on a tap would keep showing the
 /// song that just finished.
 class PlayerBar extends StatefulWidget {
-  const PlayerBar({super.key, required this.player});
+  const PlayerBar({super.key, required this.player, this.localLibrary});
 
   final QueuePlayer player;
+
+  /// The queue stored on the device. Without a server that queue is all there is, and the
+  /// player only learns it once it is started, so the bar reads it here. Null in a test
+  /// that does not care about local mode.
+  final LocalLibrary? localLibrary;
 
   @override
   State<PlayerBar> createState() => _PlayerBarState();
@@ -48,6 +54,22 @@ class _PlayerBarState extends State<PlayerBar> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// What pressing play means when nothing is open yet.
+  ///
+  /// A local song that is open resumes as it is. A paused server song continues where it
+  /// was. A queue that was filled but never started plays from its first song. Without a
+  /// server, the queue stored on the device is what starts — otherwise the button would
+  /// have nothing to open on a fresh start.
+  Future<void> _play() {
+    if (widget.player.localTitle != null) return widget.player.resume();
+    if (widget.player.queue.current != null && widget.player.failure == null) return widget.player.resume();
+    if (!widget.player.queue.isEmpty) return widget.player.playCurrent();
+
+    final stored = widget.localLibrary?.queue ?? const [];
+    if (stored.isNotEmpty) return widget.player.playLocalQueue(stored);
+    return widget.player.playCurrent();
   }
 
   @override
@@ -98,15 +120,15 @@ class _PlayerBarState extends State<PlayerBar> {
           ),
           IconButton(
             tooltip: playing ? 'Pause' : 'Abspielen',
-            // A local song resumes where it was; playCurrent would clear the local list
-            // and leave nothing to play.
+            // A local song resumes where it was; _play knows that and what to start when
+            // nothing is open yet.
             onPressed: _busy
                 ? null
                 : () => _control(() => playing
                     ? widget.player.pause()
-                    : local != null
+                    : widget.player.localCurrent != null
                         ? widget.player.resume()
-                        : widget.player.playCurrent()),
+                        : _play()),
             icon: Icon(playing ? Icons.pause : Icons.play_arrow),
           ),
           IconButton(

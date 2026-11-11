@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/config/api_config.dart';
 import '../../../core/storage/session_store.dart';
 import '../../../core/storage/settings_store.dart';
 import '../../../core/utils/pick_image.dart';
@@ -111,10 +112,17 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
   }
 
   String? get _selectedCoverKey {
-    final name = _selectedName;
-    if (name == null) return null;
-    return _isLocal ? 'local:$name' : 'server:${_selected!.playlist.id}';
+    if (_isLocal) {
+      final name = _selectedLocal?.name;
+      return name == null ? null : 'local:$name';
+    }
+    final id = _selected?.playlist.id;
+    return id == null ? null : _serverKey(id);
   }
+
+  /// A playlist id is unique inside one database only, and the app can be pointed at
+  /// another server, so the address is part of the key.
+  String _serverKey(int id) => 'server:$apiBaseUrl:$id';
 
   @override
   void initState() {
@@ -156,24 +164,31 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
     }
 
     // The picker names songs the way the library does, so it needs the whole list once.
-    // A failure here leaves the playlists visible and only the picker empty.
+    // A failure here leaves the playlists visible and only the picker empty; it must not
+    // overwrite what the page already said.
     try {
       final library = await widget.library.list();
       if (mounted) setState(() => _library = library);
     } on LibraryException catch (error) {
-      if (mounted) setState(() => _note = error.message);
+      if (mounted && _note == null) setState(() => _note = error.message);
     }
   }
 
   Future<void> _create() async {
     if (_isLocal) {
       final created = _local.createPlaylist(_name.text);
-      if (created != null) _takeCover('local:${created.name}');
+      if (created == null) {
+        setState(() => _note = 'Bitte einen Titel eingeben, der noch nicht vergeben ist.');
+        return;
+      }
+
+      final stored = await _takeCover('local:${created.name}');
+      if (!mounted) return;
       setState(() {
-        if (created != null) _selectedLocal = created;
-        _note = created == null
-            ? 'Bitte einen Titel eingeben, der noch nicht vergeben ist.'
-            : 'Playlist „${created.name}“ angelegt.';
+        _selectedLocal = created;
+        _note = stored
+            ? 'Playlist „${created.name}“ angelegt.'
+            : 'Playlist „${created.name}“ angelegt. Das Bild konnte nicht gespeichert werden.';
         _song = -1;
       });
       return;
@@ -183,12 +198,15 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
     try {
       final created = await widget.playlists.create(_name.text);
       if (!mounted) return;
-      _takeCover('server:${created.id}');
+      final stored = await _takeCover(_serverKey(created.id));
+      if (!mounted) return;
       // The action keeps its name: what the button says is what happened.
       setState(() {
         _playlists = [..._playlists, created];
         _selected = PlaylistWithSongs(playlist: created, songs: []);
-        _note = 'Playlist „${created.name}“ angelegt.';
+        _note = stored
+            ? 'Playlist „${created.name}“ angelegt.'
+            : 'Playlist „${created.name}“ angelegt. Das Bild konnte nicht gespeichert werden.';
         _busy = false;
         _song = -1;
       });
@@ -202,12 +220,13 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
   }
 
   /// The image picked before the create was for the playlist the create just made, and
-  /// only now is there a key to keep it under.
-  void _takeCover(String key) {
+  /// only now is there a key to keep it under. False says the storage refused it.
+  Future<bool> _takeCover(String key) async {
     final cover = _newCover;
-    if (cover == null) return;
-    _covers.save(key, cover);
+    if (cover == null) return true;
+    final stored = await _covers.save(key, cover);
     _newCover = null;
+    return stored;
   }
 
   /// A picked image is kept under `key`; the playlist that is still being created has no
@@ -227,6 +246,10 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
       setState(() => _note = 'Das Bild ist größer als 1 MB. Bitte ein kleineres wählen.');
       return;
     }
+    if (!isImage(picked)) {
+      setState(() => _note = 'Die Datei ist kein Bild (PNG, JPEG, GIF oder WebP).');
+      return;
+    }
 
     if (key == null) {
       setState(() {
@@ -236,8 +259,11 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
       return;
     }
 
-    _covers.save(key, picked);
-    setState(() => _note = null);
+    final stored = await _covers.save(key, picked);
+    if (!mounted) return;
+    setState(() => _note = stored
+        ? null
+        : 'Das Bild konnte nicht gespeichert werden. Es bleibt nur bis zum Neustart sichtbar.');
   }
 
   // The list on the left shows how many songs a playlist has. Adding or removing one here
@@ -426,6 +452,7 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
     return AppShell(
       selected: '/playlists',
       player: widget.player,
+      localLibrary: _local,
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -459,12 +486,28 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
             ],
             const SizedBox(height: 20),
             Expanded(
-              child: Row(
-                children: [
-                  SizedBox(width: 300, child: _list()),
-                  const SizedBox(width: 20),
-                  Expanded(child: _detail(theme)),
-                ],
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  // A phone has no room for two panes: the list goes above the detail, so
+                  // the detail's own row keeps its width.
+                  if (constraints.maxWidth < 640) {
+                    return Column(
+                      children: [
+                        SizedBox(height: 180, child: _list()),
+                        const SizedBox(height: 16),
+                        Expanded(child: _detail(theme)),
+                      ],
+                    );
+                  }
+
+                  return Row(
+                    children: [
+                      SizedBox(width: 300, child: _list()),
+                      const SizedBox(width: 20),
+                      Expanded(child: _detail(theme)),
+                    ],
+                  );
+                },
               ),
             ),
           ],
@@ -521,29 +564,40 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
     // A selected playlist always has a cover key: it is made from its name or its id.
     final coverKey = _selectedCoverKey!;
 
+    final info = Row(
+      children: [
+        _Cover(
+          cover: _covers[coverKey],
+          size: 96,
+          onTap: _busy ? null : () => _pickCover(coverKey),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(name, style: theme.textTheme.titleMedium),
+              const SizedBox(height: 4),
+              Text('${songs.length} Songs', style: theme.textTheme.bodyMedium),
+            ],
+          ),
+        ),
+      ],
+    );
+    final start = FilledButton(onPressed: _busy ? null : _start, child: const Text('Playlist starten'));
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            _Cover(
-              cover: _covers[coverKey],
-              size: 96,
-              onTap: _busy ? null : () => _pickCover(coverKey),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(name, style: theme.textTheme.titleMedium),
-                  const SizedBox(height: 4),
-                  Text('${songs.length} Songs', style: theme.textTheme.bodyMedium),
-                ],
-              ),
-            ),
-            FilledButton(onPressed: _busy ? null : _start, child: const Text('Playlist starten')),
-          ],
+        // The button goes under the title when the width is a phone's, instead of
+        // squeezing the title to nothing beside it.
+        LayoutBuilder(
+          builder: (context, constraints) => constraints.maxWidth < 520
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [info, const SizedBox(height: 12), start],
+                )
+              : Row(children: [Expanded(child: info), start]),
         ),
         const SizedBox(height: 16),
         Row(
@@ -615,7 +669,15 @@ class _Cover extends StatelessWidget {
           color: scheme.surfaceContainer,
           child: cover == null
               ? Icon(icon, size: size / 2, color: scheme.onSurfaceVariant)
-              : Image.memory(cover!, fit: BoxFit.cover),
+              : Image.memory(
+                  cover!,
+                  fit: BoxFit.cover,
+                  // A full photo would be decoded at its own size for a thumbnail.
+                  cacheWidth: (size * MediaQuery.devicePixelRatioOf(context)).round(),
+                  // A stored cover that cannot be read shows the mark, not an exception.
+                  errorBuilder: (context, error, stack) =>
+                      Icon(icon, size: size / 2, color: scheme.onSurfaceVariant),
+                ),
         ),
       ),
     );

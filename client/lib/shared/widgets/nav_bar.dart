@@ -34,12 +34,15 @@ class NavBar extends StatelessWidget {
     Widget entry(String label, IconData icon, String to) {
       final isCurrent = to == selected;
 
+      final labelText = Text(label, style: theme.textTheme.labelLarge);
       final row = Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 20, color: isCurrent ? scheme.primary : scheme.onSurfaceVariant),
           const SizedBox(width: 10),
-          Flexible(child: Text(label, style: theme.textTheme.labelLarge)),
+          // The sidebar has a fixed width, so a long label has to give way; the row that
+          // scrolls sideways sizes itself and must not hold a flex child.
+          if (vertical) Flexible(child: labelText) else labelText,
         ],
       );
 
@@ -60,8 +63,13 @@ class NavBar extends StatelessWidget {
 
     final entries = [for (final item in navItems) entry(item.label, item.icon, item.to)];
 
+    // The row of a narrow page scrolls sideways: with every item on it, a phone is
+    // narrower than the list, and an overflowing Row throws instead of scrolling.
     return vertical
         ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: entries)
-        : Row(children: entries);
+        : SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(mainAxisSize: MainAxisSize.min, children: entries),
+          );
   }
 }

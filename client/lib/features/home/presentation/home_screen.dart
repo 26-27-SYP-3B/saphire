@@ -305,6 +305,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return AppShell(
       selected: '/home',
       player: widget.player,
+      localLibrary: _local,
       child: Column(
         children: [
           _topBar(),

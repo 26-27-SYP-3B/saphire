@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../features/library/data/local_library.dart';
 import '../../features/player/domain/player.dart';
 import 'nav_bar.dart';
 import 'player_bar.dart';
@@ -20,11 +21,16 @@ class AppShell extends StatelessWidget {
     required this.player,
     required this.child,
     this.sidebarExtra,
+    this.localLibrary,
   });
 
   final String selected;
   final QueuePlayer player;
   final Widget child;
+
+  /// What the bar starts when no song is open yet: a queue stored on the device. null in a
+  /// test that does not care about local mode.
+  final LocalLibrary? localLibrary;
 
   /// What a page shows below the navigation. Nothing for a page that has none.
   final Widget? sidebarExtra;
@@ -79,7 +85,7 @@ class AppShell extends StatelessWidget {
                     ],
                   ),
                 ),
-                PlayerBar(player: player),
+                PlayerBar(player: player, localLibrary: localLibrary),
               ],
             ),
           ),
