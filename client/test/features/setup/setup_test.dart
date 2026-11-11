@@ -145,6 +145,37 @@ void main() {
     expect(find.text('Gib die Adresse deines Saphire-Servers ein.'), findsOneWidget);
   });
 
+  // The choice the start asks for: the way without a server sits below the address field
+  // and needs no request, because there is no server to ask.
+  testWidgets('the first start offers the way without a server and remembers it', (tester) async {
+    final app = await openApp(tester);
+
+    expect(find.text('Weiter ohne Server'), findsOneWidget);
+
+    await tester.tap(find.text('Weiter ohne Server'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(HomeScreen), findsOneWidget);
+    expect(app.settings.localMode, true);
+    expect(app.adapter.requests, isEmpty);
+
+    // The next start reads the same store, so it does not ask again.
+    await openApp(tester, settings: app.settings);
+    expect(find.byType(SetupScreen), findsNothing);
+    expect(find.byType(HomeScreen), findsOneWidget);
+  });
+
+  // A session belongs to a server, and this start uses none.
+  testWidgets('choosing without a server drops a session from an earlier server', (tester) async {
+    final app = await openApp(tester, session: loggedIn());
+
+    await tester.tap(find.text('Weiter ohne Server'));
+    await tester.pumpAndSettle();
+
+    expect(app.session.isLoggedIn, false);
+    expect(find.byType(HomeScreen), findsOneWidget);
+  });
+
   // The guard is only read when a route is resolved, so this has to run inside a
   // widget: a router that was never built has no current location to redirect.
   testWidgets('without a stored server even /login leads to the setup', (tester) async {
@@ -336,5 +367,34 @@ void main() {
     expect(app.adapter.requests.where((r) => r.headers['Authorization'] == null), isEmpty);
     expect(app.session.isLoggedIn, true);
     expect(find.byType(HomeScreen), findsOneWidget);
+  });
+
+  // A server chosen after the start without one ends local mode: otherwise the next start
+  // would skip the login for a server that has accounts.
+  testWidgets('choosing a server after starting without one leaves local mode', (tester) async {
+    final app = await openApp(tester, settings: SettingsStore()..localMode = true);
+
+    await tester.tap(find.byTooltip('Konto'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Einstellungen'));
+    await tester.pumpAndSettle();
+    await connect(tester, 'https://musik.anders.at/', 'Server ändern');
+
+    expect(app.settings.serverBase, 'https://musik.anders.at');
+    expect(app.settings.localMode, false);
+    expect(find.byType(AuthScreen), findsOneWidget);
+  });
+
+  // Without a stored server the login has no address; sending the user there would use
+  // the launch default instead of asking.
+  testWidgets('from local mode without a server, connecting leads back to the setup', (tester) async {
+    await openApp(tester, settings: SettingsStore()..localMode = true);
+
+    await tester.tap(find.byTooltip('Konto'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mit Server verbinden'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SetupScreen), findsOneWidget);
   });
 }

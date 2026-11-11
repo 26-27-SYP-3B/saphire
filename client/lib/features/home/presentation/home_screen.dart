@@ -530,7 +530,9 @@ class _HomeScreenState extends State<HomeScreen> {
               // Local mode ends with a login: the form saves that choice, so the next
               // start asks for the password again instead of opening the home screen.
               if (value == 'connect') {
-                context.go('/login');
+                // Ohne gespeicherten Server gibt es keine Adresse für das Login; der
+                // Start fragt danach. Sonst ginge die Anmeldung an den Standard-Server.
+                context.go(_settings.serverBase == null ? '/setup' : '/login');
                 return;
               }
               if (value != 'logout') return;
