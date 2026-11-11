@@ -198,7 +198,7 @@ void main() {
     final second = LocalTrack(title: 'b.mp3', bytes: Uint8List.fromList([0xFF, 0xFB]));
 
     await player.playLocalQueue([first]);
-    player.syncLocalQueue([first, second]);
+    await player.syncLocalQueue([first, second]);
 
     expect(player.localTitle, 'a.mp3');
     expect(await player.next(), isTrue);
@@ -220,7 +220,7 @@ void main() {
     addTearDown(player.dispose);
 
     await player.playCurrent();
-    player.syncLocalQueue([LocalTrack(title: 'lokal.mp3', bytes: Uint8List.fromList([0xFF, 0xFB]))]);
+    await player.syncLocalQueue([LocalTrack(title: 'lokal.mp3', bytes: Uint8List.fromList([0xFF, 0xFB]))]);
 
     fake.complete();
     await Future<void>.delayed(Duration.zero);
@@ -241,7 +241,7 @@ void main() {
     final second = LocalTrack(title: 'b.mp3', bytes: Uint8List.fromList([0xFF, 0xFB]));
 
     await player.playLocalQueue([first, second]);
-    player.syncLocalQueue([second, first]);
+    await player.syncLocalQueue([second, first]);
 
     await player.removeLocal(second);
 
@@ -259,7 +259,7 @@ void main() {
 
     final track = LocalTrack(title: 'a.mp3', bytes: Uint8List.fromList([0xFF, 0xFB]));
     await player.playLocalQueue([track]);
-    player.syncLocalQueue([track, track]);
+    await player.syncLocalQueue([track, track]);
 
     await player.removeLocal(track);
 
@@ -283,5 +283,46 @@ void main() {
 
     expect(player.localTitle, isNull);
     expect(fake.opened, isEmpty);
+  });
+
+  // One file that cannot be read must not end the list: the player moves on to the next
+  // one and still says which file was skipped.
+  test('an auto-advance skips a local file that cannot be read', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final player = QueuePlayer(queue: PlaybackQueue(), player: fake, session: SessionStore());
+    addTearDown(player.dispose);
+
+    await player.playLocalQueue([
+      LocalTrack(title: 'a.mp3', bytes: Uint8List.fromList([0xFF, 0xFB])),
+      const LocalTrack(title: 'gone.mp3', path: '/saphire/no-such-file.mp3'),
+      LocalTrack(title: 'c.mp3', bytes: Uint8List.fromList([0xFF, 0xFB])),
+    ]);
+
+    fake.complete();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(player.localTitle, 'c.mp3');
+    expect(fake.played, hasLength(2));
+    expect(player.failure, contains('nicht gefunden'));
+  });
+
+  // The stored queue was reloaded and the song that is open — paused or not — is no longer
+  // in it, so it must not stay the one the bar names.
+  test('a song that left the local queue stops with it', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final player = QueuePlayer(queue: PlaybackQueue(), player: fake, session: SessionStore());
+    addTearDown(player.dispose);
+
+    final first = LocalTrack(title: 'a.mp3', bytes: Uint8List.fromList([0xFF, 0xFB]));
+    final second = LocalTrack(title: 'b.mp3', bytes: Uint8List.fromList([0xFF, 0xFB]));
+
+    await player.playLocalQueue([first]);
+    await player.pause();
+    await player.syncLocalQueue([second]);
+
+    expect(player.localTitle, isNull);
+    expect(fake.stopped, hasLength(1));
   });
 }

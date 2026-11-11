@@ -85,6 +85,7 @@ class HomeScreen extends StatefulWidget {
     required this.player,
     this.pickAudio = pickAudioFiles,
     this.pickLocal = pickLocalAudioFiles,
+    this.pickFolder = pickLocalFolder,
     this.settings,
     this.localLibrary,
   });
@@ -96,6 +97,7 @@ class HomeScreen extends StatefulWidget {
   final QueuePlayer player;
   final PickAudio pickAudio;
   final PickLocalAudio pickLocal;
+  final PickLocalAudio pickFolder;
 
   /// Null in a test that does not care about local mode: the stores then stay in memory.
   final SettingsStore? settings;
@@ -208,18 +210,32 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// Adds picked files to the local library. Each file is checked on its own, so a
-  /// refused one says why and the rest still land in the library.
-  Future<void> _addLocal() async {
+  /// refused one says why and the rest still land in the library. `folder` takes a whole
+  /// directory instead of single files; a browser has no folders, so that path throws.
+  Future<void> _addLocal({bool folder = false}) async {
     if (_picking) return;
 
     setState(() => _picking = true);
     final List<PickedLocal>? picked;
     try {
-      picked = await widget.pickLocal();
+      picked = await (folder ? widget.pickFolder() : widget.pickLocal());
+    } on UnsupportedError catch (error) {
+      // A browser has no folders, so "try again" would never work there.
+      if (mounted) setState(() => _note = '${error.message}');
+      return;
+    } catch (_) {
+      // A folder that cannot be read is not a refused file, so no row can name it.
+      if (mounted) setState(() => _note = 'Die Dateien konnten nicht gelesen werden. Versuch es erneut.');
+      return;
     } finally {
       if (mounted) setState(() => _picking = false);
     }
     if (picked == null || !mounted) return;
+
+    if (picked.isEmpty) {
+      if (folder) setState(() => _note = 'In diesem Ordner sind keine MP3-Dateien.');
+      return;
+    }
 
     setState(() {
       for (final file in picked!) {
@@ -295,13 +311,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   /// Long-pressing a local card puts the song into the local queue. The queue page then
   /// plays the list in order, still without a server.
-  void _queueLocal(LocalTrack track) {
-    setState(() {
-      _local.addToQueue(track);
-      // A song that is already playing keeps playing, and the new one follows it.
-      widget.player.syncLocalQueue(_local.queue);
-      _note = '${track.title} in die Warteschlange gelegt.';
-    });
+  Future<void> _queueLocal(LocalTrack track) async {
+    _local.addToQueue(track);
+    // Said before the sync, so a failure to sync overwrites it instead of being hidden.
+    setState(() => _note = '${track.title} in die Warteschlange gelegt.');
+    await _control(() => widget.player.syncLocalQueue(_local.queue));
   }
 
   /// What the play button starts when nothing is playing. A song that was paused continues;
@@ -358,10 +372,20 @@ class _HomeScreenState extends State<HomeScreen> {
                             ],
                             _section(
                               'Lokale Songs',
-                              action: IconButton(
-                                tooltip: 'Lokale Songs hinzufügen',
-                                onPressed: _picking ? null : _addLocal,
-                                icon: Icon(Icons.add, color: scheme.primary),
+                              action: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    tooltip: 'Lokale Songs hinzufügen',
+                                    onPressed: _picking ? null : _addLocal,
+                                    icon: Icon(Icons.add, color: scheme.primary),
+                                  ),
+                                  IconButton(
+                                    tooltip: 'Ordner auswählen',
+                                    onPressed: _picking ? null : () => _addLocal(folder: true),
+                                    icon: Icon(Icons.create_new_folder, color: scheme.primary),
+                                  ),
+                                ],
                               ),
                             ),
                             Text(

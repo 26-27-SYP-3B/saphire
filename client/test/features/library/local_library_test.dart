@@ -63,6 +63,22 @@ void main() {
     expect(restored.tracks.single.bytes, null);
   });
 
+  // A folder import adds the same list twice easily, so a file that is already there is
+  // not added again. The same name in another folder is another song.
+  test('the same file is only in the library once', () {
+    final library = LocalLibrary();
+
+    expect(library.add(name: 'song.mp3', path: '/music/song.mp3', bytes: id3Mp3()), null);
+    expect(
+      library.add(name: 'song.mp3', path: '/music/song.mp3', bytes: id3Mp3()),
+      'ist schon in der Bibliothek',
+    );
+    expect(library.tracks, hasLength(1));
+
+    expect(library.add(name: 'song.mp3', path: '/music/live/song.mp3', bytes: id3Mp3()), null);
+    expect(library.tracks, hasLength(2));
+  });
+
   // A local playlist and the local queue are on the device, so they have to come back
   // after a restart without any server.
   test('a local playlist and the queue survive a restart', () async {

@@ -2,6 +2,8 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 
+import '../storage/read_folder.dart';
+
 /// A picked song: the name the server would store as the title and its bytes.
 typedef PickedAudio = ({String name, Uint8List bytes});
 typedef PickAudio = Future<List<PickedAudio>?> Function();
@@ -29,4 +31,13 @@ Future<List<PickedLocal>?> pickLocalAudioFiles() async {
   if (picked.isEmpty) return null;
 
   return [for (final file in picked) (name: file.name, path: file.path, bytes: await file.readAsBytes())];
+}
+
+/// A whole folder for the local library, one entry per song in it. Null when the picker
+/// was cancelled.
+Future<List<PickedLocal>?> pickLocalFolder() async {
+  final path = await FilePicker.getDirectoryPath();
+  if (path == null) return null;
+
+  return readFolder(path);
 }

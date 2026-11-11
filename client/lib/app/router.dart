@@ -135,6 +135,8 @@ GoRouter buildRouter({
           queue: queue,
           player: player,
           uploads: uploads,
+          settings: settingsStore,
+          localLibrary: localLibrary,
         ),
       ),
     ],

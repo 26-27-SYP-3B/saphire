@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../core/storage/settings_store.dart';
 import '../../../core/utils/pick_audio.dart';
 import '../../../shared/widgets/app_shell.dart';
 import '../../playlists/data/playlist_repository.dart';
@@ -12,6 +13,8 @@ import '../../player/domain/queue.dart';
 import '../../upload/data/upload_repository.dart';
 import '../../upload/domain/track.dart';
 import '../data/library_repository.dart';
+import '../data/local_library.dart';
+import '../domain/local_track.dart';
 
 /// The three the list can be ordered by. There is nothing else to order by.
 const sortKeys = ['Titel', 'Interpret', 'Hinzugefügt am'];
@@ -53,9 +56,36 @@ String durationOf(Track track) {
   return '$minutes:${(seconds % 60).toString().padLeft(2, '0')}';
 }
 
+/// One row of the list: a song from the server or a file on this device. Both are songs
+/// the user can play, so they share one list instead of two sections.
+class _Entry {
+  _Entry.server(Track this.track, this.id) : local = null;
+  _Entry.local(LocalTrack this.local, this.id) : track = null;
+
+  final Track? track;
+  final LocalTrack? local;
+
+  /// The server id, or a negative one for a song on this device. No two rows share it, so
+  /// the order cannot change between rebuilds where the sort keys are equal.
+  final int id;
+
+  String get title => track?.title ?? local!.title;
+
+  /// A local file's tags are not read, so the row does not guess an artist from its name.
+  String get artist => track == null ? '' : artistOf(track!);
+
+  String get duration => track == null ? unknownValue : durationOf(track!);
+
+  int get uploadedAt => track?.uploadedAt ?? 0;
+}
+
 /// The library: the songs the server has, filtered and sorted, with the same actions the rest
 /// of the app uses — play, add to a playlist, add to the queue, upload a new song. It draws
 /// the app's frame through AppShell, so it is the same page shape as the start page.
+///
+/// The songs on this device are in the same list, because to the user they are the same
+/// kind of thing: a song that can be played. There is no server call for them, so the page
+/// also works in local mode, where there is no session and nothing to upload.
 ///
 /// Playing goes through the shared queue rather than through a second player: a song opened
 /// here and a song opened from a playlist play exactly the same way, and the bar at the
@@ -70,6 +100,8 @@ class LibraryScreen extends StatefulWidget {
     required this.player,
     required this.uploads,
     this.pickAudio = pickAudioFiles,
+    this.settings,
+    this.localLibrary,
   });
 
   final LibraryRepository library;
@@ -80,12 +112,19 @@ class LibraryScreen extends StatefulWidget {
   final UploadRepository uploads;
   final PickAudio pickAudio;
 
+  /// Null in a test that does not care about local mode: the stores then stay in memory.
+  final SettingsStore? settings;
+  final LocalLibrary? localLibrary;
+
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();
 }
 
 class _LibraryScreenState extends State<LibraryScreen> {
   final TextEditingController _search = TextEditingController();
+
+  late final SettingsStore _settings = widget.settings ?? SettingsStore();
+  late final LocalLibrary _local = widget.localLibrary ?? LocalLibrary();
 
   String _sort = sortKeys.first;
   List<Track> _tracks = [];
@@ -120,10 +159,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
     _changes = widget.player.changes.listen((_) {
       if (mounted) setState(() {});
     });
-    _load();
-    // The names the menu offers come from the server, so they are read with the library. A
-    // page that guesses them would show playlists that are not there.
-    _loadPlaylists();
+    // Both lists are on the server. Local mode has no server and no session, so neither
+    // read is sent there; the songs on this device are already in the store.
+    if (!_settings.localMode) {
+      _load();
+      // The names the menu offers come from the server, so they are read with the library. A
+      // page that guesses them would show playlists that are not there.
+      _loadPlaylists();
+    }
   }
 
   @override
@@ -252,6 +295,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
     await widget.player.playCurrent();
   });
 
+  /// A song on this device plays straight from the file: no queue call and no token, so it
+  /// works with no server and no session.
+  Future<void> _playLocal(LocalTrack track) => _control(() => widget.player.playLocal(track));
+
   Future<void> _addToQueue(Track track) => _control(() async {
     final entry = await widget.queues.append(track.id);
     if (mounted) widget.queue.append(entry);
@@ -271,15 +318,18 @@ class _LibraryScreenState extends State<LibraryScreen> {
   });
 
   /// What the page shows now: the rows that match the search, in the order the sort was
-  /// picked.
-  List<Track> _visible() {
+  /// picked. The songs on this device are part of the same list.
+  List<_Entry> _visible() {
     final query = _search.text.trim().toLowerCase();
-    final rows = [
+    final rows = <_Entry>[
       for (final track in _tracks)
         if (query.isEmpty ||
             track.title.toLowerCase().contains(query) ||
             artistOf(track).toLowerCase().contains(query))
-          track,
+          _Entry.server(track, track.id),
+      for (var index = 0; index < _local.tracks.length; index++)
+        if (query.isEmpty || _local.tracks[index].title.toLowerCase().contains(query))
+          _Entry.local(_local.tracks[index], -index - 1),
     ];
 
     // Names and artists are compared without case, so "ahne" comes before "Zehn" the way a
@@ -287,11 +337,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
     // sorts by its code point, after z.
     //
     // Newest first for the date; the id decides what the date cannot, so the order does not
-    // change on every rebuild.
+    // change on every rebuild. A song on this device has no date, so it counts as the
+    // oldest and comes last for "Hinzugefügt am". Its artist is unknown, which sorts it to
+    // the top for "Interpret" — the dash the row shows is where an artist would be.
     switch (_sort) {
       case 'Interpret':
         rows.sort((a, b) {
-          final byArtist = artistOf(a).toLowerCase().compareTo(artistOf(b).toLowerCase());
+          final byArtist = a.artist.toLowerCase().compareTo(b.artist.toLowerCase());
           return byArtist != 0 ? byArtist : a.id.compareTo(b.id);
         });
       case 'Hinzugefügt am':
@@ -313,6 +365,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final rows = _visible();
+    final total = _tracks.length + _local.tracks.length;
 
     return AppShell(
       selected: '/library',
@@ -330,11 +383,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 // What the page holds right now. While the list is on its way there is
                 // nothing to count, and a row that is not shown cannot be counted either, so
                 // this line says nothing until something is actually there.
-                if (!_loading && _tracks.isNotEmpty)
+                if (!_loading && total > 0)
                   Text(
                     _search.text.trim().isEmpty
-                        ? '${_tracks.length} Songs'
-                        : '${rows.length} von ${_tracks.length} Songs passen zur Suche',
+                        ? '$total Songs'
+                        : '${rows.length} von $total Songs passen zur Suche',
                     style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
                   ),
               ],
@@ -361,14 +414,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     // One button for the whole page, so uploading works whether the library is
                     // empty or already has songs in it. Its label follows what is actually
                     // happening, and it is not usable while a batch is on its way or while the
-                    // list it would add to is still being read.
-                    FilledButton(
-                      onPressed: _loading || _picking || _uploading ? null : _upload,
-                      // The theme's minimum size asks for the whole width, which a row cannot
-                      // give; this button takes only its label and the theme's height.
-                      style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
-                      child: Text(_uploading ? 'Wird hochgeladen…' : 'Song hochladen'),
-                    ),
+                    // list it would add to is still being read. Local mode has no server to
+                    // upload to.
+                    if (!_settings.localMode)
+                      FilledButton(
+                        onPressed: _loading || _picking || _uploading ? null : _upload,
+                        // The theme's minimum size asks for the whole width, which a row cannot
+                        // give; this button takes only its label and the theme's height.
+                        style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
+                        child: Text(_uploading ? 'Wird hochgeladen…' : 'Song hochladen'),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -479,8 +534,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
           // library holds — that would be the page lying about an answer it never got.
           if (_note == null)
             Text(
-              _tracks.isEmpty
-                  ? 'Die Bibliothek ist noch leer. Lade einen Song hoch, um sie zu füllen.'
+              _tracks.length + _local.tracks.length == 0
+                  ? (_settings.localMode
+                      ? 'Die Bibliothek ist noch leer. Füge auf der Startseite lokale Songs hinzu.'
+                      : 'Die Bibliothek ist noch leer. Lade einen Song hoch, um sie zu füllen.')
                   : 'Keine Songs passen zur Suche.',
               style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
@@ -489,18 +546,32 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 
-  /// One song: its name, what the file says about it, and the actions the menu has. The
-  /// whole row can be tapped, so playing a song does not need the small icon.
-  Widget _row(Track track) {
+  /// One song: its name, what is known about it, and the actions the menu has. The whole
+  /// row can be tapped, so playing a song does not need the small icon. A song on this
+  /// device says so instead of an artist, and has no server actions.
+  Widget _row(_Entry entry) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    // The row of the song that is current in the queue is the one the bar at the bottom is
-    // showing, so both agree on what is current.
-    final current = widget.queue.current?.trackId == track.id;
-    final artist = artistOf(track);
+    final track = entry.track;
+    final local = entry.local;
+    // The row of the song that is current is the one the bar at the bottom is showing, so
+    // both agree on what is current. A local file has no queue slot, so the player's own
+    // current song decides there.
+    final current = local != null
+        ? identical(widget.player.localCurrent, local)
+        : widget.queue.current?.trackId == track!.id;
+    final artist = entry.artist;
+
+    void play() {
+      if (local != null) {
+        _playLocal(local);
+      } else {
+        _play(track!);
+      }
+    }
 
     return InkWell(
-      onTap: _busy ? null : () => _play(track),
+      onTap: _busy ? null : play,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
         decoration: BoxDecoration(
@@ -518,7 +589,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
           children: [
             IconButton(
               tooltip: 'Abspielen',
-              onPressed: _busy ? null : () => _play(track),
+              onPressed: _busy ? null : play,
               icon: Icon(Icons.play_arrow, color: current ? scheme.primary : scheme.onSurfaceVariant),
             ),
             Expanded(
@@ -526,15 +597,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    track.title,
+                    entry.title,
                     style: theme.textTheme.labelLarge?.copyWith(color: current ? scheme.primary : null),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                   Text(
                     // What is known about the song: the artist its tags name, or what its own
-                    // name says when they do not. Where nothing is known, the row shows a dash.
-                    artist.isEmpty ? unknownValue : artist,
+                    // name says when they do not. A song on this device has no tags to read.
+                    // Where nothing is known, the row shows a dash.
+                    local != null ? 'Auf diesem Gerät' : (artist.isEmpty ? unknownValue : artist),
                     style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -545,29 +617,32 @@ class _LibraryScreenState extends State<LibraryScreen> {
             // The length is put at the end of the row, so a list can be read top to bottom
             // without reading every line.
             Text(
-              durationOf(track),
+              entry.duration,
               style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
             ),
             const SizedBox(width: 12),
-            PopupMenuButton<String>(
-              tooltip: 'Aktionen für ${track.title}',
-              onSelected: (value) {
-                if (value == 'queue') {
-                  _addToQueue(track);
-                } else {
-                  _addToPlaylist(track, int.parse(value));
-                }
-              },
-              itemBuilder: (context) => [
-                // Which playlists exist is the playlist page; here the menu can only add to
-                // one that this page has read, or start the first one.
-                if (_playlists.isEmpty)
-                  const PopupMenuItem(value: '0', child: Text('Zur neuen Playlist „Meine Playlist“')),
-                for (final playlist in _playlists)
-                  PopupMenuItem(value: playlist.id.toString(), child: Text('Zur Playlist „${playlist.name}“')),
-                const PopupMenuItem(value: 'queue', child: Text('Zur Warteschlange hinzufügen')),
-              ],
-            ),
+            // A local file is not on the server, so it cannot go into a server queue or a
+            // server playlist.
+            if (track != null)
+              PopupMenuButton<String>(
+                tooltip: 'Aktionen für ${entry.title}',
+                onSelected: (value) {
+                  if (value == 'queue') {
+                    _addToQueue(track);
+                  } else {
+                    _addToPlaylist(track, int.parse(value));
+                  }
+                },
+                itemBuilder: (context) => [
+                  // Which playlists exist is the playlist page; here the menu can only add to
+                  // one that this page has read, or start the first one.
+                  if (_playlists.isEmpty)
+                    const PopupMenuItem(value: '0', child: Text('Zur neuen Playlist „Meine Playlist“')),
+                  for (final playlist in _playlists)
+                    PopupMenuItem(value: playlist.id.toString(), child: Text('Zur Playlist „${playlist.name}“')),
+                  const PopupMenuItem(value: 'queue', child: Text('Zur Warteschlange hinzufügen')),
+                ],
+              ),
           ],
         ),
       ),
