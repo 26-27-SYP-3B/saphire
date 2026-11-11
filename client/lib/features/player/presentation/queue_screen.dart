@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../core/storage/session_store.dart';
+import '../../../core/storage/settings_store.dart';
+import '../../library/data/local_library.dart';
 import '../data/queue_repository.dart';
 import '../domain/player.dart';
 import '../domain/queue.dart';
@@ -21,12 +23,18 @@ class QueueScreen extends StatefulWidget {
     required this.queue,
     required this.player,
     required this.session,
+    this.settings,
+    this.localLibrary,
   });
 
   final QueueRepository queues;
   final PlaybackQueue queue;
   final QueuePlayer player;
   final SessionStore session;
+
+  /// Null in a test that does not care about local mode: the stores then stay in memory.
+  final SettingsStore? settings;
+  final LocalLibrary? localLibrary;
 
   @override
   State<QueueScreen> createState() => _QueueScreenState();
@@ -36,6 +44,9 @@ class _QueueScreenState extends State<QueueScreen> {
   String? _note;
   bool _busy = false;
   StreamSubscription<void>? _changes;
+
+  late final SettingsStore _settings = widget.settings ?? SettingsStore();
+  late final LocalLibrary _local = widget.localLibrary ?? LocalLibrary();
 
   @override
   void initState() {
@@ -59,6 +70,16 @@ class _QueueScreenState extends State<QueueScreen> {
   }
 
   Future<void> _read() async {
+    // The local queue is on the device. There is nothing to fetch and no token to send.
+    if (_settings.localMode) {
+      setState(() {
+        _note = _local.queue.isEmpty
+            ? 'Die Warteschlange ist leer. Lege auf der Startseite ein Lied hinein oder starte eine Playlist.'
+            : null;
+      });
+      return;
+    }
+
     setState(() => _busy = true);
     try {
       final entries = await widget.queues.read();
@@ -97,6 +118,42 @@ class _QueueScreenState extends State<QueueScreen> {
     }
   }
   Future<void> _play() async {
+    if (_settings.localMode) {
+      if (_local.queue.isEmpty) {
+        setState(() => _note = 'Die Warteschlange ist leer, es gibt nichts zu spielen.');
+        return;
+      }
+
+      setState(() => _busy = true);
+      try {
+        // The stored queue may have grown since this song was opened, so the player gets
+        // the current order before it decides between resuming and starting.
+        widget.player.syncLocalQueue(_local.queue);
+
+        // A pause is not a new start: the same local song simply continues.
+        if (widget.player.localCurrent != null) {
+          await widget.player.resume();
+        } else {
+          await widget.player.playLocalQueue(_local.queue);
+        }
+        if (!mounted) return;
+        setState(() {
+          _note = null;
+          _busy = false;
+        });
+      } catch (error) {
+        if (!mounted) return;
+        setState(() {
+          _note = switch (error) {
+            PlaybackException(:final message) => message,
+            _ => 'Das Lied konnte nicht gespielt werden: $error',
+          };
+          _busy = false;
+        });
+      }
+      return;
+    }
+
     if (widget.queue.isEmpty) {
       setState(() => _note = 'Die Warteschlange ist leer, es gibt nichts zu spielen.');
       return;
@@ -140,6 +197,26 @@ class _QueueScreenState extends State<QueueScreen> {
   }
 
   Future<void> _remove(int position) async {
+    if (_settings.localMode) {
+      final index = position - 1;
+      if (index < 0 || index >= _local.queue.length) return;
+
+      setState(() => _busy = true);
+      try {
+        // The player holds its own copy of the order, so it drops the same song by identity.
+        await widget.player.removeLocal(_local.queue[index]);
+        _local.removeFromQueue(index);
+        if (!mounted) return;
+        setState(() => _note = 'Position $position entfernt.');
+      } catch (error) {
+        if (!mounted) return;
+        setState(() => _note = 'Das Lied konnte nicht entfernt werden: $error');
+      } finally {
+        if (mounted) setState(() => _busy = false);
+      }
+      return;
+    }
+
     setState(() => _busy = true);
 
     // The row being removed may be the one that is playing. The mirror moves to the song
@@ -184,6 +261,22 @@ class _QueueScreenState extends State<QueueScreen> {
   }
 
   Future<void> _clear() async {
+    if (_settings.localMode) {
+      setState(() => _busy = true);
+      try {
+        await widget.player.clearLocalQueue();
+        _local.clearQueue();
+        if (!mounted) return;
+        setState(() => _note = 'Warteschlange geleert.');
+      } catch (error) {
+        if (!mounted) return;
+        setState(() => _note = 'Die Warteschlange konnte nicht geleert werden: $error');
+      } finally {
+        if (mounted) setState(() => _busy = false);
+      }
+      return;
+    }
+
     setState(() => _busy = true);
     try {
       await widget.queues.clear();
@@ -212,6 +305,7 @@ class _QueueScreenState extends State<QueueScreen> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final message = _message();
+    final currentTitle = _settings.localMode ? widget.player.localTitle : widget.queue.current?.title;
 
     return Scaffold(
       body: Column(
@@ -231,17 +325,18 @@ class _QueueScreenState extends State<QueueScreen> {
                     TextButton(onPressed: _busy ? null : () => widget.player.pause(), child: const Text('Pause')),
                     const SizedBox(width: 8),
                     TextButton(onPressed: _busy ? null : _next, child: const Text('Nächstes Lied')),
-                    const SizedBox(width: 8),
-                    TextButton(onPressed: _busy ? null : _read, child: const Text('Aktualisieren')),
+                    // A local queue lives on the device, so reading it again is pointless.
+                    if (!_settings.localMode) ...[
+                      const SizedBox(width: 8),
+                      TextButton(onPressed: _busy ? null : _read, child: const Text('Aktualisieren')),
+                    ],
                     const SizedBox(width: 8),
                     TextButton(onPressed: _busy ? null : _clear, child: const Text('Leeren')),
                   ],
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  widget.queue.current == null
-                      ? 'Kein Lied wird gespielt.'
-                      : 'Gerade: ${widget.queue.current!.title}',
+                  currentTitle == null ? 'Kein Lied wird gespielt.' : 'Gerade: $currentTitle',
                   style: theme.textTheme.labelLarge,
                 ),
                 if (message != null) ...[
@@ -251,28 +346,51 @@ class _QueueScreenState extends State<QueueScreen> {
               ],
             ),
           ),
-          Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-              itemCount: widget.queue.length,
-              itemBuilder: (context, index) {
-                final entry = widget.queue.entries[index];
-                final current = index == widget.queue.index;
-
-                return ListTile(
-                  leading: Text('${entry.position}'),
-                  title: Text(entry.title),
-                  selected: current,
-                  trailing: IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: _busy ? null : () => _remove(entry.position),
-                  ),
-                );
-              },
-            ),
-          ),
+          Expanded(child: _rows()),
         ],
       ),
+    );
+  }
+
+  Widget _rows() {
+    if (_settings.localMode) {
+      return ListView.builder(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        itemCount: _local.queue.length,
+        itemBuilder: (context, index) {
+          final track = _local.queue[index];
+
+          return ListTile(
+            leading: Text('${index + 1}'),
+            title: Text(track.title),
+            // The player holds the same track objects, so this is still the row it plays.
+            selected: identical(widget.player.localCurrent, track),
+            trailing: IconButton(
+              icon: const Icon(Icons.close),
+              onPressed: _busy ? null : () => _remove(index + 1),
+            ),
+          );
+        },
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+      itemCount: widget.queue.length,
+      itemBuilder: (context, index) {
+        final entry = widget.queue.entries[index];
+        final current = index == widget.queue.index;
+
+        return ListTile(
+          leading: Text('${entry.position}'),
+          title: Text(entry.title),
+          selected: current,
+          trailing: IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: _busy ? null : () => _remove(entry.position),
+          ),
+        );
+      },
     );
   }
 }

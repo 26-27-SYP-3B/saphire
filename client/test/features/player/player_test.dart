@@ -1,7 +1,10 @@
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:saphire_client/core/config/api_config.dart';
 import 'package:saphire_client/core/storage/session_store.dart';
+import 'package:saphire_client/features/library/domain/local_track.dart';
 import 'package:saphire_client/features/player/domain/player.dart';
 import 'package:saphire_client/features/player/domain/queue.dart';
 
@@ -130,5 +133,136 @@ void main() {
     // Nothing after it, so the player says so and stops rather than waiting for a song.
     expect(await player.next(), isFalse);
     expect(fake.stopped, ['$apiBaseUrl/api/music/8']);
+  });
+
+  // A local playlist is a list on the device. It has no server slots, but it moves on
+  // when a song ends just like the server queue does.
+  test('a local queue plays the next file when a song ends', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final player = QueuePlayer(queue: PlaybackQueue(), player: fake, session: SessionStore());
+    addTearDown(player.dispose);
+
+    final tracks = [
+      LocalTrack(title: 'a.mp3', bytes: Uint8List.fromList([0xFF, 0xFB])),
+      LocalTrack(title: 'b.mp3', bytes: Uint8List.fromList([0xFF, 0xFB])),
+    ];
+
+    await player.playLocalQueue(tracks);
+    expect(player.localTitle, 'a.mp3');
+    expect(fake.played.length, 1);
+
+    fake.complete();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(player.localTitle, 'b.mp3');
+    expect(fake.played.length, 2);
+
+    // The last local song ends: the player stops instead of waiting for one that is not
+    // there. The stored list is still what the queue page shows.
+    fake.complete();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(player.localTitle, isNull);
+    expect(player.localQueue.map((track) => track.title), ['a.mp3', 'b.mp3']);
+    expect(fake.stopped.length, 1);
+  });
+
+  // The next button has to move a local list too, and say when it was the last song.
+  test('next moves through a local list and stops at its end', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final player = QueuePlayer(queue: PlaybackQueue(), player: fake, session: SessionStore());
+    addTearDown(player.dispose);
+
+    await player.playLocalQueue([
+      LocalTrack(title: 'a.mp3', bytes: Uint8List.fromList([0xFF, 0xFB])),
+      LocalTrack(title: 'b.mp3', bytes: Uint8List.fromList([0xFF, 0xFB])),
+    ]);
+
+    expect(await player.next(), isTrue);
+    expect(player.localTitle, 'b.mp3');
+    expect(await player.next(), isFalse);
+    expect(player.localTitle, isNull);
+  });
+
+  // A song added while another one is open has to follow it. Otherwise the queue page
+  // would show the new row but the player would stop at the end of its older copy.
+  test('a song added to a playing local list follows the current one', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final player = QueuePlayer(queue: PlaybackQueue(), player: fake, session: SessionStore());
+    addTearDown(player.dispose);
+
+    final first = LocalTrack(title: 'a.mp3', bytes: Uint8List.fromList([0xFF, 0xFB]));
+    final second = LocalTrack(title: 'b.mp3', bytes: Uint8List.fromList([0xFF, 0xFB]));
+
+    await player.playLocalQueue([first]);
+    player.syncLocalQueue([first, second]);
+
+    expect(player.localTitle, 'a.mp3');
+    expect(await player.next(), isTrue);
+    expect(player.localTitle, 'b.mp3');
+  });
+
+  // Adding a local song while a server song plays must not turn the local list into
+  // something that stops playback: nothing of it is current, so the server queue owns the
+  // end of the song.
+  test('a local list that is not playing does not swallow the server queue', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final queue = PlaybackQueue();
+    queue.fill([
+      QueueEntry(position: 1, trackId: 8, title: 'a'),
+      QueueEntry(position: 2, trackId: 4, title: 'b'),
+    ]);
+    final player = QueuePlayer(queue: queue, player: fake, session: loggedIn());
+    addTearDown(player.dispose);
+
+    await player.playCurrent();
+    player.syncLocalQueue([LocalTrack(title: 'lokal.mp3', bytes: Uint8List.fromList([0xFF, 0xFB]))]);
+
+    fake.complete();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(queue.current?.trackId, 4);
+    expect(fake.opened, ['$apiBaseUrl/api/music/8', '$apiBaseUrl/api/music/4']);
+  });
+
+  // The player's copy may be older than the page's, so a row is dropped by its song and
+  // not by a position that could point at another row.
+  test('removing a local row finds it even after the order changed', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final player = QueuePlayer(queue: PlaybackQueue(), player: fake, session: SessionStore());
+    addTearDown(player.dispose);
+
+    final first = LocalTrack(title: 'a.mp3', bytes: Uint8List.fromList([0xFF, 0xFB]));
+    final second = LocalTrack(title: 'b.mp3', bytes: Uint8List.fromList([0xFF, 0xFB]));
+
+    await player.playLocalQueue([first, second]);
+    player.syncLocalQueue([second, first]);
+
+    await player.removeLocal(second);
+
+    expect(player.localQueue.map((track) => track.title), ['a.mp3']);
+    expect(player.localTitle, 'a.mp3');
+  });
+
+  // A file the user deleted or moved is only noticed here. It must say what is wrong and
+  // must not become the song the bar names.
+  test('a local file that is gone is reported and does not become current', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final player = QueuePlayer(queue: PlaybackQueue(), player: fake, session: SessionStore());
+    addTearDown(player.dispose);
+
+    await expectLater(
+      player.playLocal(const LocalTrack(title: 'gone.mp3', path: '/saphire/no-such-file.mp3')),
+      throwsA(isA<PlaybackException>().having((error) => error.message, 'message', contains('nicht gefunden'))),
+    );
+
+    expect(player.localTitle, isNull);
+    expect(fake.opened, isEmpty);
   });
 }

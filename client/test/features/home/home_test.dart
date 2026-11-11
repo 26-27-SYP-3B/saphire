@@ -6,9 +6,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:saphire_client/core/config/api_config.dart';
+import 'package:saphire_client/core/storage/settings_store.dart';
 import 'package:saphire_client/core/utils/pick_audio.dart';
 import 'package:saphire_client/features/auth/data/auth_repository.dart';
 import 'package:saphire_client/features/home/presentation/home_screen.dart';
+import 'package:saphire_client/features/library/data/local_library.dart';
 import 'package:saphire_client/features/player/domain/player.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
 
@@ -56,6 +58,9 @@ Future<Wiring> openHome(
   int uploadStatus = 201,
   Map<String, Object> uploadBody = uploadAnswer,
   PickAudio? pickAudio,
+  PickLocalAudio? pickLocal,
+  SettingsStore? settings,
+  LocalLibrary? localLibrary,
   StubAdapter? uploads,
   StubAdapter? library,
   StubAdapter? queues,
@@ -80,6 +85,9 @@ Future<Wiring> openHome(
         queues: wiring.queues,
         player: wiring.player,
         pickAudio: pickAudio ?? pickedFiles,
+        pickLocal: pickLocal ?? (() async => null),
+        settings: settings,
+        localLibrary: localLibrary,
       ),
     ),
   );
@@ -364,5 +372,28 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Das Lied konnte nicht gespielt werden'), findsOneWidget);
+  });
+
+  // A local song can be put into the local queue without a server. It is stored with the
+  // library, so the queue page can play it after a restart too.
+  testWidgets('a long press puts a local song into the local queue', (tester) async {
+    final local = LocalLibrary();
+
+    final wiring = await openHome(
+      tester,
+      settings: SettingsStore()..save(localMode: true),
+      localLibrary: local,
+      pickLocal: () async => [(name: 'song.mp3', path: null, bytes: Uint8List.fromList([0x49, 0x44, 0x33]))],
+    );
+
+    await tester.tap(find.byTooltip('Lokale Songs hinzufügen'));
+    await tester.pumpAndSettle();
+    await tester.longPress(find.text('song.mp3'));
+    await tester.pumpAndSettle();
+
+    expect(local.queue.single.title, 'song.mp3');
+    // The shared player has the same order, so a tap on play starts this song.
+    expect(wiring.player.localQueue.single.title, 'song.mp3');
+    expect(find.textContaining('in die Warteschlange gelegt'), findsOneWidget);
   });
 }

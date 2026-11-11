@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/storage/session_store.dart';
+import '../../../core/storage/settings_store.dart';
+import '../../library/data/local_library.dart';
+import '../../library/domain/local_playlist.dart';
 import '../../player/data/queue_repository.dart';
 import '../../player/domain/queue.dart';
 import '../data/playlist_repository.dart';
@@ -20,12 +23,18 @@ class PlaylistsScreen extends StatefulWidget {
     required this.queue,
     required this.queues,
     required this.session,
+    this.settings,
+    this.localLibrary,
   });
 
   final PlaylistRepository playlists;
   final QueueRepository queues;
   final PlaybackQueue queue;
   final SessionStore session;
+
+  /// Null in a test that does not care about local mode: the stores then stay in memory.
+  final SettingsStore? settings;
+  final LocalLibrary? localLibrary;
 
   @override
   State<PlaylistsScreen> createState() => _PlaylistsScreenState();
@@ -37,8 +46,13 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
 
   List<Playlist> _playlists = [];
   PlaylistWithSongs? _selected;
+  LocalPlaylist? _selectedLocal;
+  int _localTrack = -1;
   String? _note;
   bool _busy = false;
+
+  late final SettingsStore _settings = widget.settings ?? SettingsStore();
+  late final LocalLibrary _local = widget.localLibrary ?? LocalLibrary();
 
   @override
   void initState() {
@@ -54,6 +68,16 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
   }
 
   Future<void> _load() async {
+    // Local mode has no server to ask. What is on the device is the whole list.
+    if (_settings.localMode) {
+      setState(() {
+        _note = _local.playlists.isEmpty
+            ? 'Noch keine Playlist. Eine Playlist gehört dir, nicht der geteilten Bibliothek.'
+            : null;
+      });
+      return;
+    }
+
     setState(() => _busy = true);
     try {
       final playlists = await widget.playlists.list();
@@ -76,6 +100,17 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
   }
 
   Future<void> _create() async {
+    if (_settings.localMode) {
+      final created = _local.createPlaylist(_name.text);
+      setState(() {
+        if (created != null) _selectedLocal = created;
+        _note = created == null
+            ? 'Bitte einen Namen eingeben, der noch nicht vergeben ist.'
+            : 'Playlist „${created.name}“ angelegt.';
+      });
+      return;
+    }
+
     setState(() => _busy = true);
     try {
       final created = await widget.playlists.create(_name.text);
@@ -132,7 +167,32 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
     }
   }
 
+  Future<void> _openLocal(LocalPlaylist playlist) async {
+    setState(() {
+      _selectedLocal = playlist;
+      _localTrack = -1;
+      _note = null;
+    });
+  }
+
   Future<void> _addSong() async {
+    if (_settings.localMode) {
+      final playlist = _selectedLocal;
+      if (playlist == null) return;
+
+      if (_localTrack < 0 || _localTrack >= _local.tracks.length) {
+        setState(() => _note = 'Bitte ein Lied aus der lokalen Bibliothek wählen.');
+        return;
+      }
+
+      _local.addToPlaylist(playlist, _local.tracks[_localTrack]);
+      setState(() {
+        _note = 'Song an Position ${playlist.songs.length} eingefügt.';
+        _localTrack = -1;
+      });
+      return;
+    }
+
     final detail = _selected;
     if (detail == null) return;
 
@@ -168,6 +228,17 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
   }
 
   Future<void> _removeSong(int position) async {
+    if (_settings.localMode) {
+      final playlist = _selectedLocal;
+      if (playlist == null || position < 1 || position > playlist.songs.length) return;
+
+      setState(() {
+        _local.removeFromPlaylist(playlist, position - 1);
+        _note = 'Position $position entfernt.';
+      });
+      return;
+    }
+
     final detail = _selected;
     if (detail == null) return;
 
@@ -202,6 +273,21 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
   }
 
   Future<void> _start() async {
+    if (_settings.localMode) {
+      final playlist = _selectedLocal;
+      if (playlist == null) return;
+      if (playlist.songs.isEmpty) {
+        setState(() => _note = 'Diese Playlist hat noch keine Lieder.');
+        return;
+      }
+
+      // The stored queue is what the queue page plays, so it works again after a restart.
+      _local.setQueue(playlist.songs);
+      setState(() => _note = null);
+      context.push('/queue');
+      return;
+    }
+
     final detail = _selected;
     if (detail == null) return;
 
@@ -263,76 +349,11 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
           Expanded(
             child: Row(
               children: [
-                SizedBox(
-                  width: 300,
-                  child: ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                    itemCount: _playlists.length,
-                    itemBuilder: (context, index) {
-                      final playlist = _playlists[index];
-                      final selected = _selected?.playlist.id == playlist.id;
-
-                      return ListTile(
-                        title: Text(playlist.name),
-                        subtitle: Text('${playlist.songCount} Songs'),
-                        selected: selected,
-                        onTap: _busy ? null : () => _open(playlist),
-                      );
-                    },
-                  ),
-                ),
+                SizedBox(width: 300, child: _list()),
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(0, 0, 20, 20),
-                    child: _selected == null
-                        ? Text('Eine Playlist auswählen, um ihre Songs zu sehen.', style: theme.textTheme.bodyMedium)
-                        : Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(child: Text(_selected!.playlist.name, style: theme.textTheme.titleMedium)),
-                                  FilledButton(
-                                    onPressed: _busy ? null : _start,
-                                    child: const Text('Playlist starten'),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 12),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: TextField(
-                                      controller: _trackId,
-                                      keyboardType: TextInputType.number,
-                                      // The value is sent as typed: a negative id is what
-                                      // makes the server answer with its own message.
-                                      decoration: const InputDecoration(labelText: 'Track id aus der Bibliothek'),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  FilledButton.tonal(onPressed: _busy ? null : _addSong, child: const Text('Hinzufügen')),
-                                ],
-                              ),
-                              const SizedBox(height: 12),
-                              Expanded(
-                                child: ListView.builder(
-                                  itemCount: _selected!.songs.length,
-                                  itemBuilder: (context, index) {
-                                    final song = _selected!.songs[index];
-                                    return ListTile(
-                                      leading: Text('${song.position}'),
-                                      title: Text(song.title),
-                                      trailing: IconButton(
-                                        icon: const Icon(Icons.close),
-                                        onPressed: _busy ? null : () => _removeSong(song.position),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
+                    child: _detail(theme),
                   ),
                 ),
               ],
@@ -340,6 +361,157 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _list() {
+    // Local mode lists what is on the device. The rows look the same as the server's,
+    // because a playlist is a name and songs either way.
+    if (_settings.localMode) {
+      return ListView.builder(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        itemCount: _local.playlists.length,
+        itemBuilder: (context, index) {
+          final playlist = _local.playlists[index];
+
+          return ListTile(
+            title: Text(playlist.name),
+            subtitle: Text('${playlist.songs.length} Songs'),
+            selected: identical(_selectedLocal, playlist),
+            onTap: _busy ? null : () => _openLocal(playlist),
+          );
+        },
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+      itemCount: _playlists.length,
+      itemBuilder: (context, index) {
+        final playlist = _playlists[index];
+        final selected = _selected?.playlist.id == playlist.id;
+
+        return ListTile(
+          title: Text(playlist.name),
+          subtitle: Text('${playlist.songCount} Songs'),
+          selected: selected,
+          onTap: _busy ? null : () => _open(playlist),
+        );
+      },
+    );
+  }
+
+  Widget _detail(ThemeData theme) {
+    if (_settings.localMode) return _localDetail(theme);
+
+    if (_selected == null) {
+      return Text('Eine Playlist auswählen, um ihre Songs zu sehen.', style: theme.textTheme.bodyMedium);
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(child: Text(_selected!.playlist.name, style: theme.textTheme.titleMedium)),
+            FilledButton(
+              onPressed: _busy ? null : _start,
+              child: const Text('Playlist starten'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _trackId,
+                keyboardType: TextInputType.number,
+                // The value is sent as typed: a negative id is what
+                // makes the server answer with its own message.
+                decoration: const InputDecoration(labelText: 'Track id aus der Bibliothek'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            FilledButton.tonal(onPressed: _busy ? null : _addSong, child: const Text('Hinzufügen')),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Expanded(
+          child: ListView.builder(
+            itemCount: _selected!.songs.length,
+            itemBuilder: (context, index) {
+              final song = _selected!.songs[index];
+              return ListTile(
+                leading: Text('${song.position}'),
+                title: Text(song.title),
+                trailing: IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: _busy ? null : () => _removeSong(song.position),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _localDetail(ThemeData theme) {
+    final playlist = _selectedLocal;
+    if (playlist == null) {
+      return Text('Eine Playlist auswählen, um ihre Songs zu sehen.', style: theme.textTheme.bodyMedium);
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(child: Text(playlist.name, style: theme.textTheme.titleMedium)),
+            FilledButton(
+              onPressed: _busy ? null : _start,
+              child: const Text('Playlist starten'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: DropdownButton<int>(
+                isExpanded: true,
+                value: _localTrack >= 0 && _localTrack < _local.tracks.length ? _localTrack : null,
+                hint: const Text('Lied aus der lokalen Bibliothek wählen'),
+                items: [
+                  for (var i = 0; i < _local.tracks.length; i++)
+                    DropdownMenuItem(value: i, child: Text(_local.tracks[i].title)),
+                ],
+                onChanged: _busy ? null : (value) => setState(() => _localTrack = value ?? -1),
+              ),
+            ),
+            const SizedBox(width: 12),
+            FilledButton.tonal(onPressed: _busy ? null : _addSong, child: const Text('Hinzufügen')),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Expanded(
+          child: ListView.builder(
+            itemCount: playlist.songs.length,
+            itemBuilder: (context, index) {
+              final song = playlist.songs[index];
+              return ListTile(
+                leading: Text('${index + 1}'),
+                title: Text(song.title),
+                trailing: IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: _busy ? null : () => _removeSong(index + 1),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }
