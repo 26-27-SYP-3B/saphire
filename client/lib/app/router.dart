@@ -3,12 +3,14 @@ import 'package:go_router/go_router.dart';
 
 import '../core/storage/session_store.dart';
 import '../core/storage/settings_store.dart';
+import '../core/utils/pick_image.dart';
 import '../features/auth/data/auth_repository.dart';
 import '../features/auth/presentation/auth_screen.dart';
 import '../features/home/presentation/home_screen.dart';
 import '../features/library/data/library_repository.dart';
 import '../features/library/data/local_library.dart';
 import '../features/library/presentation/library_screen.dart';
+import '../features/playlists/data/cover_store.dart';
 import '../features/playlists/data/playlist_repository.dart';
 import '../features/playlists/presentation/playlists_screen.dart';
 import '../features/player/data/queue_repository.dart';
@@ -42,6 +44,8 @@ GoRouter buildRouter({
   required SessionStore session,
   SettingsStore? settings,
   LocalLibrary? localLibrary,
+  CoverStore? covers,
+  PickImage? pickImage,
   required Dio dio,
 }) {
   final settingsStore = settings ?? SettingsStore();
@@ -106,11 +110,15 @@ GoRouter buildRouter({
         path: '/playlists',
         builder: (context, state) => PlaylistsScreen(
           playlists: playlists,
+          library: library,
           queues: queues,
           queue: queue,
+          player: player,
           session: session,
+          pickImage: pickImage ?? pickImageFile,
           settings: settingsStore,
           localLibrary: localLibrary,
+          covers: covers,
         ),
       ),
       GoRoute(

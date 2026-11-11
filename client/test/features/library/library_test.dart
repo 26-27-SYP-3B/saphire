@@ -16,6 +16,8 @@ import 'package:saphire_client/features/library/data/library_repository.dart';
 import 'package:saphire_client/features/library/data/local_library.dart';
 import 'package:saphire_client/features/library/presentation/library_screen.dart';
 import 'package:saphire_client/features/player/domain/player.dart';
+import 'package:saphire_client/features/player/presentation/queue_screen.dart';
+import 'package:saphire_client/features/playlists/presentation/playlists_screen.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
 import 'package:saphire_client/features/upload/domain/track.dart';
 import 'package:saphire_client/shared/widgets/player_bar.dart';
@@ -761,6 +763,15 @@ void main() {
     // The page shows the songs its adapter answered, so opening it through the navigation is
     // the same page as opening it directly.
     expect(find.text('Neutrone (Remix)'), findsOneWidget);
+
+    // Every page with the sidebar leads on from every other one.
+    await tester.tap(find.text('Playlists'));
+    await tester.pumpAndSettle();
+    expect(find.byType(PlaylistsScreen), findsOneWidget);
+
+    await tester.tap(find.text('Warteschlange'));
+    await tester.pumpAndSettle();
+    expect(find.byType(QueueScreen), findsOneWidget);
 
     await tester.tap(find.text('Home'));
     await tester.pumpAndSettle();

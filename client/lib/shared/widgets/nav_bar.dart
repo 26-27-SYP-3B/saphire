@@ -12,6 +12,9 @@ const navItems = [
   (label: 'Bibliothek', icon: Icons.library_books, to: '/library'),
   (label: 'Playlists', icon: Icons.playlist_play, to: '/playlists'),
   (label: 'Warteschlange', icon: Icons.queue_music, to: '/queue'),
+  // Alben and Künstler*innen have no screen yet, so they stay labels too.
+  (label: 'Alben', icon: Icons.album, to: ''),
+  (label: 'Künstler*innen', icon: Icons.people, to: ''),
 ];
 
 /// The navigation, as the sidebar column or as the row a page shows at its top.

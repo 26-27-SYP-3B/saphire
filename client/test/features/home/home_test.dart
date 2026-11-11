@@ -253,15 +253,24 @@ void main() {
     expect(opened, 2);
   });
 
-  testWidgets('the search field only shows what matches', (tester) async {
+  // The page shows no invented playlists; the Playlists page is where the user's own are.
+  testWidgets('the home page has no static playlist rows', (tester) async {
     await openHome(tester);
 
-    await tester.enterText(find.byType(TextField), 'techno');
-    await tester.pumpAndSettle();
+    expect(find.text('Zuletzt gehört'), findsNothing);
+    expect(find.text('Lieblingssongs'), findsNothing);
+    expect(find.text('Workout'), findsNothing);
+  });
 
-    // The rows on the page, not the list in the sidebar.
-    expect(find.descendant(of: find.byType(Wrap), matching: find.text('Techno')), findsOneWidget);
-    expect(find.descendant(of: find.byType(Wrap), matching: find.text('Workout')), findsNothing);
+  // One navigation for every page: Playlists appears once, the section heading is gone, and
+  // the two labels without a screen yet are there.
+  testWidgets('the navigation lists every page once', (tester) async {
+    await openHome(tester);
+
+    expect(find.text('Playlists'), findsOneWidget);
+    expect(find.text('Deine Inhalte'), findsNothing);
+    expect(find.text('Alben'), findsOneWidget);
+    expect(find.text('Künstler*innen'), findsOneWidget);
   });
 
   // The search is the one place this page shows real songs: it filters the library the page
