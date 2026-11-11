@@ -9,10 +9,10 @@ use axum::Router;
 use futures_util::stream::{self, Stream, TryStreamExt};
 use http_body_util::{BodyExt, Limited};
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_rusqlite::rusqlite;
 
-use crate::{clock, db, hex, pathvalue, ratelimit, respond, respond::Failure, sanitize, session, state::AppState};
+use crate::{clock, db, hex, metadata, pathvalue, ratelimit, respond, respond::Failure, sanitize, session, state::AppState};
 
 /// Upload limits. The body limit covers the multipart framing plus the file: a single song
 /// must not be able to fill the disk.
@@ -42,6 +42,10 @@ pub const AUDIO_EXTENSIONS: [(&str, &str); 7] = [
 /// the server, not to a user, so a row stores who uploaded it and under which name the file
 /// lives. `uploaded_by` is not a column; it is filled for the answer so the shared library
 /// shows a name instead of a bare user id.
+///
+/// `artist` and `duration_ms` are what the file itself said (see `metadata`). A file that does
+/// not say them stays empty or zero, and the client shows a dash. Field order is the order
+/// `api-docs.md` documents, so the answer and the documentation read the same.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Track {
     pub id: i64,
@@ -49,19 +53,34 @@ pub struct Track {
     pub user_id: i64,
     pub uploaded_by: String,
     pub title: String,
+    pub artist: String,
+    pub duration_ms: i64,
     pub stored_name: String,
     pub size: i64,
     pub content_type: String,
     pub uploaded_at: i64,
 }
 
-/// What `GET /api/music` shows for one song: the two fields a client needs to list the
-/// library, and nothing else. The name the file has inside the library folder stays on the
-/// server.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct LibraryEntry {
-    pub id: i64,
-    pub title: String,
+/// The columns a track is read with, in the order `scan_track` expects. The uploader is joined
+/// from the user table because the library answer shows a name, not a bare id.
+const TRACK_COLUMNS: &str = "track.id, track.user_id, track.title, track.artist, track.duration_ms, \
+    track.stored_name, track.size, track.content_type, track.uploaded_at, user.username";
+
+/// Reads one row into a track. A single lookup and a list both use this, so they cannot
+/// disagree about what a row contains.
+fn scan_track(row: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
+    Ok(Track {
+        id: row.get(0)?,
+        user_id: row.get(1)?,
+        title: row.get(2)?,
+        artist: row.get(3)?,
+        duration_ms: row.get(4)?,
+        stored_name: row.get(5)?,
+        size: row.get(6)?,
+        content_type: row.get(7)?,
+        uploaded_at: row.get(8)?,
+        uploaded_by: row.get(9)?,
+    })
 }
 
 pub fn ensure_table(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
@@ -70,6 +89,8 @@ pub fn ensure_table(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL REFERENCES user(id),
             title TEXT NOT NULL,
+            artist TEXT NOT NULL DEFAULT '',
+            duration_ms INTEGER NOT NULL DEFAULT 0,
             stored_name TEXT UNIQUE NOT NULL,
             size INTEGER NOT NULL,
             content_type TEXT NOT NULL,
@@ -77,6 +98,36 @@ pub fn ensure_table(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         )",
         (),
     )?;
+    ensure_columns(conn)
+}
+
+/// Adds the metadata columns to a table that was created before they existed: `CREATE TABLE IF
+/// NOT EXISTS` never changes a table that is already there, so an existing `saphire.db` needs
+/// each missing column on its own. Existing rows get the default, which is what an untagged
+/// file has anyway.
+///
+/// The column names here are fixed literals, not user input, so building the statement is safe
+/// even though every other query in this server is parameterized. `ALTER TABLE` has no
+/// `IF NOT EXISTS`, so only the columns that are missing are added.
+pub fn ensure_columns(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    let mut statement = conn.prepare("PRAGMA table_info(track)")?;
+    let names = statement.query_map((), |row| row.get::<_, String>(1))?;
+
+    let mut have: Vec<String> = Vec::new();
+    for name in names {
+        have.push(name?);
+    }
+
+    for (name, definition) in [
+        ("artist", "artist TEXT NOT NULL DEFAULT ''"),
+        ("duration_ms", "duration_ms INTEGER NOT NULL DEFAULT 0"),
+    ] {
+        if have.iter().any(|column| column == name) {
+            continue;
+        }
+        conn.execute(&format!("ALTER TABLE track ADD COLUMN {definition}"), ())?;
+    }
+
     Ok(())
 }
 
@@ -102,10 +153,12 @@ pub fn open_library() -> Result<String, Failure> {
 
 pub fn insert(conn: &rusqlite::Connection, track: &mut Track) -> Result<(), Failure> {
     conn.execute(
-        "INSERT INTO track (user_id, title, stored_name, size, content_type, uploaded_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO track (user_id, title, artist, duration_ms, stored_name, size, content_type, uploaded_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         (
             track.user_id,
             &track.title,
+            &track.artist,
+            track.duration_ms,
             &track.stored_name,
             track.size,
             &track.content_type,
@@ -120,39 +173,30 @@ pub fn insert(conn: &rusqlite::Connection, track: &mut Track) -> Result<(), Fail
 
 pub fn get_by_id(conn: &rusqlite::Connection, id: i64) -> Result<Track, Failure> {
     conn.query_row(
-        "SELECT id, user_id, title, stored_name, size, content_type, uploaded_at FROM track WHERE id = ?1",
+        &format!("SELECT {TRACK_COLUMNS} FROM track JOIN user ON user.id = track.user_id WHERE track.id = ?1"),
         (id,),
-        |row| {
-            Ok(Track {
-                id: row.get(0)?,
-                user_id: row.get(1)?,
-                uploaded_by: String::new(),
-                title: row.get(2)?,
-                stored_name: row.get(3)?,
-                size: row.get(4)?,
-                content_type: row.get(5)?,
-                uploaded_at: row.get(6)?,
-            })
-        },
+        scan_track,
     )
     .map_err(db::failure)
 }
 
-/// The whole library ordered by id. An empty library answers as an empty list, not as nothing,
-/// so a client does not have to tell the two apart.
-pub fn list(conn: &rusqlite::Connection) -> Result<Vec<LibraryEntry>, Failure> {
+/// The whole library ordered by id, as one full row per song. The library is shared, so the
+/// list shows who added a song and what the file said about itself; a row without tags reads as
+/// an empty artist and a length of 0, which the client shows as a dash rather than a guess.
+/// An empty library answers as an empty list, not as nothing, so a client does not have to tell
+/// the two apart.
+pub fn list(conn: &rusqlite::Connection) -> Result<Vec<Track>, Failure> {
     let mut statement = conn
-        .prepare("SELECT id, title FROM track ORDER BY id")
+        .prepare(&format!("SELECT {TRACK_COLUMNS} FROM track JOIN user ON user.id = track.user_id ORDER BY track.id"))
         .map_err(db::failure)?;
 
-    let mut entries = Vec::new();
-    let rows = statement
-        .query_map((), |row| Ok(LibraryEntry { id: row.get(0)?, title: row.get(1)? }))
-        .map_err(db::failure)?;
+    let rows = statement.query_map((), scan_track).map_err(db::failure)?;
+
+    let mut tracks = Vec::new();
     for row in rows {
-        entries.push(row.map_err(db::failure)?);
+        tracks.push(row.map_err(db::failure)?);
     }
-    Ok(entries)
+    Ok(tracks)
 }
 
 /// Turns an uploaded name into a name inside the library. It is generated here from random
@@ -309,7 +353,22 @@ pub async fn handle_upload(State(state): State<AppState>, req: Request) -> Respo
         Err(message) => return respond::error(StatusCode::BAD_REQUEST, &message),
     };
 
-    let title = sanitize_title(&file_name);
+    // The artist and the playing time come from the file itself. They are read before anything
+    // is stored, so the row and the answer show the same values. Only MP3 has a length that can
+    // be worked out from the bytes; the other containers keep 0, which the client shows as a dash.
+    let meta = if media_type == "audio/mpeg" {
+        metadata::read_audio_meta(&data)
+    } else {
+        metadata::AudioMeta::default()
+    };
+
+    // The title is what the file names itself when its tags do, otherwise the name the client
+    // sent.
+    let title = if meta.title.is_empty() {
+        sanitize_title(&file_name)
+    } else {
+        meta.title.clone()
+    };
     if title.is_empty() {
         return respond::error(StatusCode::BAD_REQUEST, "the uploaded file has no usable name");
     }
@@ -332,6 +391,8 @@ pub async fn handle_upload(State(state): State<AppState>, req: Request) -> Respo
         user_id: uploader.id,
         uploaded_by: uploader.username,
         title,
+        artist: meta.artist,
+        duration_ms: meta.duration_ms,
         stored_name: stored,
         size: data.len() as i64,
         content_type: media_type,
@@ -399,8 +460,8 @@ pub async fn handle_stream(State(state): State<AppState>, id: Path<String>, req:
 
     // The stored name is generated here, so it cannot name anything outside the library folder.
     let target = std::path::Path::new(&state.library).join(&track.stored_name);
-    let metadata = match tokio::fs::metadata(&target).await {
-        Ok(metadata) => metadata,
+    let file_info = match tokio::fs::metadata(&target).await {
+        Ok(file_info) => file_info,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             // The file is written before the row, so this should not happen; it is a broken
             // library, and the client needs to know the song cannot be played.
@@ -411,30 +472,129 @@ pub async fn handle_stream(State(state): State<AppState>, id: Path<String>, req:
 
     // Everything that can still be answered with the JSON error shape is decided here: after
     // the status line the status is fixed, and a later failure can only end the body.
-    let file = match tokio::fs::File::open(&target).await {
+    let mut file = match tokio::fs::File::open(&target).await {
         Ok(file) => file,
         Err(_) => return respond::error(StatusCode::INTERNAL_SERVER_ERROR, "could not read the file"),
     };
 
-    // Content-Length is the size of the file that is actually sent, so a player can show
-    // progress. It does not change how the body is written: the pieces still go out one by one.
-    let length = metadata.len().to_string();
-    respond::with_body(
-        StatusCode::OK,
-        &[("content-type", track.content_type.as_str()), ("content-length", length.as_str())],
-        Body::from_stream(chunk_stream(file)),
-    )
+    let size = file_info.len() as i64;
+    let range = req
+        .headers()
+        .get("range")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+
+    // The part that is sent, as an inclusive range. An empty file has no part, so its
+    // `Content-Length` is 0 rather than a length that cannot be sent.
+    let mut from = 0i64;
+    let mut to = size - 1;
+    if !range.is_empty() {
+        let Some((start, end)) = parse_byte_range(&range, size) else {
+            // A range that cannot be read as bytes, or one outside the file, is answered as
+            // plain text: the caller here is a player, and this error is about the transport,
+            // not about the API. It still names the size the caller asked about.
+            let content_range = format!("bytes */{size}");
+            return respond::plain_text(
+                StatusCode::RANGE_NOT_SATISFIABLE,
+                &[("content-range", content_range.as_str())],
+                "invalid range",
+            );
+        };
+        from = start;
+        to = end;
+    }
+
+    if from > 0 && file.seek(std::io::SeekFrom::Start(from as u64)).await.is_err() {
+        return respond::error(StatusCode::INTERNAL_SERVER_ERROR, "could not read the file");
+    }
+
+    // The stored name is what the file is called inside the library folder, and it is what the
+    // upload answer reported, so a player that saved the row can name the file it is fetching.
+    let disposition = format!("inline; filename=\"{}\"", base_name(&track.stored_name));
+    let content_range = format!("bytes {from}-{to}/{size}");
+    let part = to - from + 1;
+    let content_length = part.to_string();
+
+    let mut headers = vec![
+        ("content-type", track.content_type.as_str()),
+        ("accept-ranges", "bytes"),
+        ("content-disposition", disposition.as_str()),
+        ("content-length", content_length.as_str()),
+    ];
+    if !range.is_empty() {
+        headers.push(("content-range", content_range.as_str()));
+    }
+
+    // A player that asked for part of the file gets 206, even for a range that starts at the
+    // beginning of the file, because the answer describes a part and not the whole song.
+    let status = if from > 0 || !range.is_empty() {
+        StatusCode::PARTIAL_CONTENT
+    } else {
+        StatusCode::OK
+    };
+
+    respond::with_body(status, &headers, Body::from_stream(chunk_stream(file, part as u64)))
 }
 
-/// Reads the file piece by piece. Each piece is written as its own frame, which is what a
-/// flush was in the Go version: a player gets the start of a song before the rest of the file
-/// is read, and a 500 MiB song is never held in memory as a whole.
-pub fn chunk_stream(file: tokio::fs::File) -> impl Stream<Item = Result<Bytes, io::Error>> + Send + 'static {
-    stream::unfold(file, move |mut file| async move {
-        let mut buffer = vec![0u8; CHUNK_BYTES];
+/// Reads one `bytes=<from>-<to>` range for a file of the given size and says whether it can be
+/// served. A range that names nothing inside the file is not satisfiable, and a range with two
+/// parts (`bytes=0-10,20-30`) is not read here: an audio player sends one range. An open end
+/// (`bytes=900-`) means the rest of the file, and a leading dash (`bytes=-500`) means the last
+/// 500 bytes. A start past the last byte, a suffix larger than the file, or an end past the last
+/// byte is refused rather than clamped, as `api-docs.md` documents; a range that ends at the last
+/// byte is the whole file and is served.
+pub fn parse_byte_range(header: &str, size: i64) -> Option<(i64, i64)> {
+    let value = header.strip_prefix("bytes=")?;
+    if value.is_empty() || value.contains(',') || size == 0 {
+        return None;
+    }
+
+    let (from_text, to_text) = match value.split_once('-') {
+        Some((start, end)) => (start, end),
+        // No dash is not a byte range an audio player can send.
+        None => return None,
+    };
+
+    if from_text.is_empty() {
+        // bytes=-<n>: the last n bytes
+        let count = to_text.parse::<i64>().ok()?;
+        if count <= 0 || count > size {
+            return None;
+        }
+        return Some((size - count, size - 1));
+    }
+
+    let start = from_text.parse::<i64>().ok()?;
+    if start < 0 || start >= size {
+        return None;
+    }
+
+    // An open end means the rest of the file.
+    if to_text.is_empty() {
+        return Some((start, size - 1));
+    }
+
+    let end = to_text.parse::<i64>().ok()?;
+    if end < 0 || end >= size || start > end {
+        return None;
+    }
+    Some((start, end))
+}
+
+/// Reads the file piece by piece, at most `remaining` bytes of it. Each piece is written as its
+/// own frame, which is what a flush was in the Go version: a player gets the start of a song
+/// before the rest of the file is read, and a 500 MiB song is never held in memory as a whole.
+pub fn chunk_stream(file: tokio::fs::File, remaining: u64) -> impl Stream<Item = Result<Bytes, io::Error>> + Send + 'static {
+    stream::unfold((file, remaining), move |(mut file, remaining)| async move {
+        if remaining == 0 {
+            return None;
+        }
+        let want = remaining.min(CHUNK_BYTES as u64) as usize;
+        let mut buffer = vec![0u8; want];
         match file.read(&mut buffer).await {
             Ok(0) => None,
-            Ok(read) => Some((Ok(Bytes::copy_from_slice(&buffer[..read])), file)),
+            Ok(read) => Some((Ok(Bytes::copy_from_slice(&buffer[..read])), (file, remaining - read as u64))),
             // A read error after the status line cannot become a JSON error, so the body
             // simply stops here.
             Err(_) => None,

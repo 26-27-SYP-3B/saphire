@@ -95,7 +95,7 @@ async fn root() -> Response {
 /// What a path no endpoint owns gets: the plain text 404, because there is no endpoint here that
 /// could have failed and therefore no error shape to answer with.
 async fn unknown_path() -> Response {
-    respond::plain_text(StatusCode::NOT_FOUND, "404 page not found")
+    respond::plain_text(StatusCode::NOT_FOUND, &[], "404 page not found")
 }
 
 async fn clean_path(req: Request, next: Next) -> Response {

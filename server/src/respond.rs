@@ -83,14 +83,15 @@ pub fn with_body(status: StatusCode, headers: &[(&str, &str)], body: Body) -> Re
 }
 
 
-/// An answer whose body is plain text — a path no endpoint owns. The JSON error shape belongs
-/// to the documented endpoints, so a path that is not an endpoint cannot fail one.
-pub fn plain_text(status: StatusCode, message: &str) -> Response<Body> {
-    with_body(
-        status,
-        &[("content-type", "text/plain; charset=utf-8")],
-        Body::from(message.to_string()),
-    )
+/// An answer whose body is plain text — a path no endpoint owns, or a byte range a player asked
+/// for that the file cannot answer. The JSON error shape belongs to the documented endpoints, so
+/// a failure of the transport is not one of its errors. `headers` is for the plain-text answer
+/// that still has to name something, such as the size a rejected range was measured against;
+/// pass `&[]` when there is nothing extra to say.
+pub fn plain_text(status: StatusCode, headers: &[(&str, &str)], message: &str) -> Response<Body> {
+    let mut all = vec![("content-type", "text/plain; charset=utf-8")];
+    all.extend(headers);
+    with_body(status, &all, Body::from(message.to_string()))
 }
 
 /// The `{"error": "…"}` body that the client form shows below its fields.

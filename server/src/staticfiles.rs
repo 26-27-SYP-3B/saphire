@@ -131,5 +131,5 @@ fn content_type(target: &path::Path) -> &'static str {
 }
 
 fn not_found() -> Response {
-    respond::plain_text(StatusCode::NOT_FOUND, "404 page not found")
+    respond::plain_text(StatusCode::NOT_FOUND, &[], "404 page not found")
 }

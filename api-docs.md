@@ -2,12 +2,13 @@
 
 Base URL: `http://localhost:8080` (port configurable via `PORT` in `.env`).
 
-Every API answer is JSON with `Content-Type: application/json` and
-`X-Content-Type-Options: nosniff`, except `GET /api/music/{id}`, which sends the file
-itself with the content type stored for that song — there the JSON error shape applies
-only to the answers sent before the first byte. `X-Content-Type-Options: nosniff` is on
-every answer from this server, including the `OPTIONS` preflight and the plain text `404`
-for a path no endpoint defines (see the development frontend section). Errors use a single
+Every API answer is JSON with `Content-Type: application/json`, except
+`GET /api/music/{id}`, which sends the file itself with the content type stored for that
+song (there the JSON error shape applies only to the answers sent before the first byte),
+and the plain text `404` for a path no endpoint defines — that path is not an endpoint, so
+it has no error shape to answer with. `X-Content-Type-Options: nosniff` is on every answer
+from this server, including the `OPTIONS` preflight and those plain text answers (see the
+development frontend section). Errors use a single
 shape:
 
 ```json
@@ -221,7 +222,7 @@ curl -X POST localhost:8080/api/music/upload \
   is removed again, so a library entry never points at a missing file.
 - `stored_name` is what the file is called inside the library folder; `GET /api/music`
   sends it back, and `GET /api/music/{id}` names it in `Content-Disposition`.
-- `artist` and `duration_ms` are what the file says about itself (`server/metadata.go`):
+- `artist` and `duration_ms` are what the file says about itself (`server/src/metadata.rs`):
   the `TPE1` tag and the length from the frame headers. Only MP3 can be measured from
   the bytes, so the other accepted containers keep `0`, and a file with no tags keeps an
   empty artist. A client shows a dash for those rather than a guess.
@@ -241,9 +242,9 @@ curl -X POST localhost:8080/api/music/upload \
   )
   ```
 
-  A `saphire.db` created before these columns get them: `ensureTrackColumns` reads
-  `PRAGMA table_info(track)` and adds the missing ones, so an old row keeps reading as
-  an untagged file instead of failing.
+  A `saphire.db` created before these columns get them: `ensure_columns` in
+  `server/src/music.rs` reads `PRAGMA table_info(track)` and adds the missing ones, so an
+  old row keeps reading as an untagged file instead of failing.
 
 ### `GET /api/music`
 
@@ -288,10 +289,10 @@ No pagination yet: every row is returned in one answer.
 ### `GET /api/music/{id}`
 
 Sends the file of one song. Only a logged-in user may read it, with the same two 401
-messages as `GET /api/session`. The file is **streamed in chunks**: the server reads
-32 KiB at a time (`streamChunkBytes`) and flushes after each chunk, so a player gets
-the start of a song before the rest of the file is read, and a large song is never
-held in memory as a whole.
+messages as `GET /api/session`. The file is **streamed in pieces**: the server reads
+32 KiB at a time (`CHUNK_BYTES` in `server/src/music.rs`) and writes each piece as it
+reads it, so a player gets the start of a song before the rest of the file is read, and
+a large song is never held in memory as a whole.
 
 ```
 GET /api/music/{id}
@@ -311,28 +312,29 @@ Authorization: Bearer <token>
 
 `Content-Length` is known because the file is in the library, so the transfer is not
 chunk-encoded — but the bytes still leave piece by piece. One `Range` is served, not a
-list of ranges, because that is what an audio player sends; an open end (`bytes=900-`)
+list of ranges, because that is what an audio player sends; a list (`bytes=0-10,20-30`) is
+refused with `416` rather than answered as several parts. An open end (`bytes=900-`)
 means the rest of the file, and a suffix (`bytes=-500`) means the last 500 bytes. A start
-at the end of the file, a suffix larger than the file, or an end at or past the last byte
-is refused rather than clamped — that is a deliberate difference from RFC 9110, which would
-serve such a range as the whole file, so a player that sends `bytes=0-2147483647` gets
-`416` here. The JSON error shape is used for everything decided before the first byte; the
-`416` is written as plain text, because that answer is about the transport rather than the
-API.
+past the last byte, a suffix larger than the file, or an end past the last byte is refused
+rather than clamped — that is a deliberate difference from RFC 9110, which would serve such
+a range as the whole file, so a player that sends `bytes=0-2147483647` gets `416` here. A
+range that ends at the last byte is the whole file and is served as `206`. The JSON error
+shape is used for everything decided before the first byte; the `416` is written as plain
+text, because that answer is about the transport rather than the API.
 
 **Responses**
 
 | Status | When | Example body |
 |---|---|---|
-| `200 OK` | The file, in 32 KiB chunks with a flush after each | the file bytes |
-| `206 Partial Content` | A `Range` that is inside the file | the requested part, in the same 32 KiB chunks |
+| `200 OK` | The whole file, in 32 KiB pieces | the file bytes |
+| `206 Partial Content` | A `Range` that is inside the file | the requested part, in the same 32 KiB pieces |
 | `400 Bad Request` | `id` is not a plain positive number (`-1`, `0`, `0004`, `+4`, `abc`) | `{"error": "the song id must be a positive number"}` |
 | `400 Bad Request` | Digits, but too large to be an id | `{"error": "the song id is too large"}` |
 | `401 Unauthorized` | Missing `Authorization: Bearer` header | `{"error": "authorization header with a Bearer token is missing"}` |
 | `401 Unauthorized` | Unknown or expired token | `{"error": "session is not valid or expired"}` |
 | `404 Not Found` | No row with that id | `{"error": "song is not in the library"}` |
 | `404 Not Found` | The row exists but its file is gone (a broken library) | `{"error": "the file for this song is not in the library folder"}` |
-| `416 Requested Range Not Satisfiable` | A `Range` that cannot be read as bytes (`bytes=abc`), or one outside the file | plain text `invalid range`, with `Content-Range: bytes */<size>` — the only answer here that is not the JSON shape |
+| `416 Requested Range Not Satisfiable` | A `Range` that cannot be read as bytes (`bytes=abc`), a list of ranges, or one outside the file | plain text `invalid range`, with `Content-Range: bytes */<size>` — the only answer here that is not the JSON shape |
 | `429 Too Many Requests` | Rate limit reached (10 requests per IP, refilling 1 token every 10 s — its own bucket). Includes a `Retry-After` header. | `{"error": "too many requests from this address, try again later"}` |
 | `500 Internal Server Error` | Database failure, or the file could not be opened | `{"error": "could not load the song"}` or `{"error": "could not read the file"}` |
 | `500 Internal Server Error` | Database failure while checking the token, with the same answers as `GET /api/session` | `{"error": "could not load session"}` or `{"error": "could not load user"}` |
