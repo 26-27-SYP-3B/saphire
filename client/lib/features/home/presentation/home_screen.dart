@@ -62,8 +62,9 @@ const _navItems = [
 const _uploadHint = 'Erlaubt: MP3, WAV, M4A, OGG, OPUS, FLAC, AAC · höchstens 500 MiB pro Datei';
 
 /// What the local library takes: the files stay where the user keeps them, which is why
-/// a moved file is only noticed when it is played.
-const _localHint = 'MP3-Dateien von diesem Gerät · sie bleiben, wo sie sind, und spielen auch ohne Server';
+/// a moved file is only noticed when it is played. A long press puts one into the queue.
+const _localHint =
+    'MP3-Dateien von diesem Gerät · sie bleiben, wo sie sind, und spielen auch ohne Server · lange drücken für die Warteschlange';
 
 /// The home screen: the app on the left, the greeting and the rows on the right.
 /// Upload, playlists and the queue reach the server; the playlist rows below are the
@@ -291,6 +292,31 @@ class _HomeScreenState extends State<HomeScreen> {
   /// A local song plays straight from the device: no queue call and no token, so it works
   /// with no server and no account.
   Future<void> _playLocal(LocalTrack track) => _control(() => widget.player.playLocal(track));
+
+  /// Long-pressing a local card puts the song into the local queue. The queue page then
+  /// plays the list in order, still without a server.
+  void _queueLocal(LocalTrack track) {
+    setState(() {
+      _local.addToQueue(track);
+      // A song that is already playing keeps playing, and the new one follows it.
+      widget.player.syncLocalQueue(_local.queue);
+      _note = '${track.title} in die Warteschlange gelegt.';
+    });
+  }
+
+  /// What the play button starts when nothing is playing. A song that was paused continues;
+  /// otherwise the server queue wins over a local one, and the stored local queue is what
+  /// starts on a first tap after a restart.
+  Future<void> _startPlayback() {
+    // A local song that is open resumes as it is. Syncing the stored list first could drop
+    // a song that was played straight from the library and is not in the queue.
+    if (widget.player.localTitle != null) return widget.player.resume();
+    if (!widget.player.queue.isEmpty) return widget.player.playCurrent();
+
+    final local = _local.queue.isNotEmpty ? _local.queue : widget.player.localQueue;
+    if (local.isNotEmpty) return widget.player.playLocalQueue(local);
+    return widget.player.playCurrent();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -634,6 +660,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _localCard(LocalTrack track) {
     return InkWell(
       onTap: _busy ? null : () => _playLocal(track),
+      onLongPress: _busy ? null : () => _queueLocal(track),
       child: _card((title: track.title, meta: 'Lokal', icon: Icons.audiotrack)),
     );
   }
@@ -724,15 +751,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           IconButton(
             tooltip: playing ? 'Pause' : 'Abspielen',
-            onPressed: _busy
-                ? null
-                : () => _control(
-                      () => playing
-                          ? widget.player.pause()
-                          // A local song was opened directly, so there is no queue entry to
-                          // start again; the same file is simply resumed.
-                          : (localTitle != null ? widget.player.resume() : widget.player.playCurrent()),
-                    ),
+            onPressed: _busy ? null : () => _control(playing ? widget.player.pause : _startPlayback),
             icon: Icon(playing ? Icons.pause : Icons.play_arrow),
           ),
           IconButton(

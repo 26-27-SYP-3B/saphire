@@ -62,4 +62,49 @@ void main() {
     expect(restored.tracks.single.path, '/music/song.mp3');
     expect(restored.tracks.single.bytes, null);
   });
+
+  // A local playlist and the local queue are on the device, so they have to come back
+  // after a restart without any server.
+  test('a local playlist and the queue survive a restart', () async {
+    useEmptyStorage();
+
+    final library = LocalLibrary(FlutterSecureStorage())
+      ..add(name: 'song.mp3', path: '/music/song.mp3', bytes: id3Mp3());
+    final playlist = library.createPlaylist('Favoriten')!;
+    library.addToPlaylist(playlist, library.tracks.single);
+    library.addToQueue(library.tracks.single);
+    await Future<void>.delayed(Duration.zero);
+
+    final restored = await LocalLibrary.restore();
+
+    expect(restored.playlists, hasLength(1));
+    expect(restored.playlists.single.name, 'Favoriten');
+    expect(restored.playlists.single.songs.single.title, 'song.mp3');
+    expect(restored.playlists.single.songs.single.path, '/music/song.mp3');
+    expect(restored.queue.single.path, '/music/song.mp3');
+  });
+
+  // A pick in a browser has bytes only. Storing its title alone would restore a row that
+  // can never be opened, so it stays a song for this session.
+  test('a browser pick without a path does not come back as a broken row', () async {
+    useEmptyStorage();
+
+    LocalLibrary(FlutterSecureStorage()).add(name: 'kauf.mp3', bytes: id3Mp3());
+    await Future<void>.delayed(Duration.zero);
+
+    final restored = await LocalLibrary.restore();
+
+    expect(restored.tracks, isEmpty);
+  });
+
+  // Two playlists with the same name would be indistinguishable in the list, and an
+  // empty one has nothing to open. Both are refused instead of saved with a suffix.
+  test('an empty or duplicate playlist name is refused', () {
+    final library = LocalLibrary();
+
+    expect(library.createPlaylist('   '), null);
+    expect(library.createPlaylist('Favoriten'), isNotNull);
+    expect(library.createPlaylist('Favoriten'), null);
+    expect(library.playlists, hasLength(1));
+  });
 }

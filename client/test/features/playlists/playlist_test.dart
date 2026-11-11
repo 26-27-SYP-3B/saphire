@@ -1,10 +1,14 @@
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:saphire_client/app/router.dart';
 import 'package:saphire_client/core/storage/session_store.dart';
+import 'package:saphire_client/core/storage/settings_store.dart';
 import 'package:saphire_client/features/auth/data/auth_repository.dart';
+import 'package:saphire_client/features/library/data/local_library.dart';
 import 'package:saphire_client/features/playlists/data/playlist_repository.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
 
@@ -63,6 +67,37 @@ Future<Wiring> openPlaylists(WidgetTester tester, {StubAdapter? playlists, StubA
     session: session,
     settings: withServer(),
     dio: Dio(),
+  );
+
+  router.go('/playlists');
+  await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+  await tester.pumpAndSettle();
+
+  return wiring;
+}
+
+/// Opens the app in local mode, the way a user without an account does. No adapter is
+/// needed: none of these pages may call the server in this mode.
+Future<Wiring> openLocalPlaylists(WidgetTester tester, LocalLibrary local) async {
+  tester.view..physicalSize = const Size(1600, 1200)..devicePixelRatio = 1.0;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+
+  final session = SessionStore();
+  final wiring = Wiring(session);
+  addTearDown(wiring.dispose);
+
+  final router = buildRouter(
+    auth: AuthRepository(Dio(), session),
+    uploads: UploadRepository(Dio(), session),
+    library: wiring.library,
+    playlists: wiring.playlists,
+    queues: wiring.queues,
+    queue: wiring.queue,
+    player: wiring.player,
+    session: session,
+    settings: SettingsStore()..save(localMode: true),
+    localLibrary: local,
   );
 
   router.go('/playlists');
@@ -386,5 +421,43 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('playlist is not in your playlists'), findsOneWidget);
+  });
+
+  // Local mode has no server, so a playlist is created and filled from the songs on the
+  // device. Starting it puts those songs into the local queue, which the queue page then
+  // plays.
+  testWidgets('local mode creates a playlist, fills it and starts it', (tester) async {
+    final local = LocalLibrary()
+      ..add(name: 'song.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
+
+    await openLocalPlaylists(tester, local);
+
+    await tester.enterText(find.byType(TextField).first, 'Favoriten');
+    await tester.tap(find.widgetWithText(FilledButton, 'Anlegen'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('angelegt'), findsOneWidget);
+    expect(local.playlists.single.name, 'Favoriten');
+
+    await tester.tap(find.widgetWithText(ListTile, 'Favoriten'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(DropdownButton<int>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('song.mp3').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Hinzufügen'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Song an Position 1 eingefügt.'), findsOneWidget);
+    expect(local.playlists.single.songs.single.title, 'song.mp3');
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Playlist starten'));
+    await tester.pumpAndSettle();
+
+    // The queue is stored on the device, and the queue page is looking at it.
+    expect(local.queue.single.title, 'song.mp3');
+    expect(find.text('Warteschlange'), findsOneWidget);
+    expect(find.text('song.mp3'), findsOneWidget);
   });
 }
