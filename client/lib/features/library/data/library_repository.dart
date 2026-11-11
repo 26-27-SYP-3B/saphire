@@ -3,10 +3,9 @@ import 'package:dio/dio.dart';
 import '../../../core/api/server_error.dart';
 import '../../../core/config/api_config.dart';
 import '../../../core/storage/session_store.dart';
-import '../domain/library_entry.dart';
+import '../../upload/domain/track.dart';
 
-/// Raised when a library call fails. The message is the server's own, so what the page
-/// shows is what api-docs.md describes.
+/// Raised when the library cannot be read.
 class LibraryException implements Exception {
   LibraryException(this.message);
 
@@ -36,18 +35,24 @@ class LibraryRepository {
   }
 
   /// The library, ordered by id as the server answers it. An empty library answers [],
-  /// never null.
-  Future<List<LibraryEntry>> list() async {
+  /// so this is an empty list and never null. An answer that is not that list is an
+  /// error, not an empty library: the page cannot say what a library holds before it has
+  /// an answer.
+  Future<List<Track>> list() async {
     try {
       final response = await _dio.get(
         '$apiBaseUrl/api/music',
         options: Options(headers: _headers),
       );
-      return (response.data as List? ?? const [])
-          .map((entry) => LibraryEntry.fromJson(entry as Map<String, dynamic>))
-          .toList();
+
+      final data = response.data;
+      if (data is! List) throw LibraryException(unreadableAnswer);
+      return [for (final row in data) Track.fromJson(row as Map<String, dynamic>)];
     } on DioException catch (error) {
       throw LibraryException(serverErrorMessage(error));
+    } on TypeError {
+      // A row that is not the documented object throws here rather than showing half a song.
+      throw LibraryException(unreadableAnswer);
     }
   }
 }

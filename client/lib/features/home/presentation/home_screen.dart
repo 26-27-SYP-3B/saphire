@@ -1,24 +1,18 @@
 import 'dart:async';
-import 'dart:typed_data';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/utils/pick_audio.dart';
 import '../../../shared/widgets/saphire_logo.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/user.dart';
 import '../../library/data/library_repository.dart';
-import '../../library/domain/library_entry.dart';
 import '../../player/data/queue_repository.dart';
 import '../../player/domain/player.dart';
 import '../../player/domain/queue.dart';
 import '../../upload/data/upload_repository.dart';
 import '../../upload/domain/track.dart';
-
-/// A picked song: the name the server would store as the title and its bytes.
-typedef PickedAudio = ({String name, Uint8List bytes});
-typedef PickAudio = Future<List<PickedAudio>?> Function();
 
 /// One file in the upload window: what it is, how far it got, what the server
 /// said about it. Every picked file keeps its own row, so the results do not mix.
@@ -29,19 +23,6 @@ class _UploadFile {
   int percent = 0;
   String? error;
   Track? track;
-}
-
-/// The picker used when the screen is started without one. A widget test passes
-/// its own, because the plugin cannot answer there. Any file can be picked,
-/// because which formats are allowed is the server's decision (see server/music.go);
-/// a file it refuses comes back as its message and is shown on that file's row.
-Future<List<PickedAudio>?> pickAudioFiles() async {
-  final picked = await FilePicker.pickFiles(type: FileType.any);
-  if (picked.isEmpty) return null;
-
-  // shortcut: the whole file is held in memory. Upgrade: stream from the path on
-  // the platforms that give one, so a 500 MiB song is not read twice.
-  return [for (final file in picked) (name: file.name, bytes: await file.readAsBytes())];
 }
 
 /// The greeting follows the time of day.
@@ -66,9 +47,9 @@ const _placeholders = [
 const _navItems = [
   (label: 'Home', icon: Icons.home, selected: true, route: ''),
   (label: 'Suche', icon: Icons.search, selected: false, route: ''),
-  (label: 'Bibliothek', icon: Icons.library_books, selected: false, route: ''),
-  // Playlists and the queue are the two areas that have endpoints now, so they can be
-  // opened. The others stay labels.
+  // What can be opened is what has a route in app/router.dart. Suche has no page of its
+  // own — it is the search field on this page — so it stays a label.
+  (label: 'Bibliothek', icon: Icons.library_books, selected: false, route: '/library'),
   (label: 'Playlists', icon: Icons.playlist_play, selected: false, route: '/playlists'),
   (label: 'Warteschlange', icon: Icons.queue_music, selected: false, route: '/queue'),
 ];
@@ -110,7 +91,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final List<_UploadFile> _files = [];
-  List<LibraryEntry> _library = [];
+  List<Track> _library = [];
   final TextEditingController _search = TextEditingController();
 
   // The message from the session check. What a single file got is on its own row.
@@ -223,7 +204,7 @@ class _HomeScreenState extends State<HomeScreen> {
   /// What the search field finds. The server has no search endpoint (api-docs.md, Upcoming),
   /// so this filters the library the page loaded. Without a query nothing is a result, because
   /// without a query the page shows its sections instead of a result list.
-  List<LibraryEntry> _results() {
+  List<Track> _results() {
     final query = _search.text.trim().toLowerCase();
     if (query.isEmpty) return const [];
     return [for (final entry in _library) if (_matches(entry.title)) entry];
@@ -249,7 +230,7 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Opening a search result fills the queue with that one song and plays it, the way the
   /// Playlists page starts a playlist. The player only ever reads a queue, so a song picked
   /// here and a song from a playlist play exactly the same way.
-  Future<void> _play(LibraryEntry entry) => _control(() async {
+  Future<void> _play(Track entry) => _control(() async {
     widget.player.queue.fill(await widget.queues.fill(QueueSource.track(entry.id)));
     await widget.player.playCurrent();
   });
@@ -551,7 +532,7 @@ class _HomeScreenState extends State<HomeScreen> {
   /// A real library song: the same card as the placeholder rows, but it can be opened,
   /// because a search result is something the user means to play. The line under the title
   /// says where the row came from, so a real song can be told apart from a mock row.
-  Widget _songCard(LibraryEntry entry) {
+  Widget _songCard(Track entry) {
     return InkWell(
       onTap: _busy ? null : () => _play(entry),
       child: _card((title: entry.title, meta: 'Bibliothek', icon: Icons.audio_file)),

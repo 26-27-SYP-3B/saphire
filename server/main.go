@@ -104,6 +104,17 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
 }
 
+// writePlainText is for the one error that is not about the API but about how a file is
+// delivered: the file endpoint answers a range in its own words, because its success
+// answer is bytes and not JSON. A caller that sent a Range header is a player, and a
+// JSON body it cannot show is not what that caller expects here.
+func writePlainText(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(status)
+	_, _ = fmt.Fprint(w, message)
+}
+
 // writeNoContent answers a successful delete. There is no body, so the JSON content
 // type must not be set: a 204 with Content-Type: application/json and no body is what
 // a client has to read as "nothing to parse".

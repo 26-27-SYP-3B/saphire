@@ -7,6 +7,7 @@ import '../features/auth/data/auth_repository.dart';
 import '../features/auth/presentation/auth_screen.dart';
 import '../features/home/presentation/home_screen.dart';
 import '../features/library/data/library_repository.dart';
+import '../features/library/presentation/library_screen.dart';
 import '../features/playlists/data/playlist_repository.dart';
 import '../features/playlists/presentation/playlists_screen.dart';
 import '../features/player/data/queue_repository.dart';
@@ -102,6 +103,19 @@ GoRouter buildRouter({
           queue: queue,
           player: player,
           session: session,
+        ),
+      ),
+      GoRoute(
+        path: '/library',
+        // The page plays through the shared queue and shows the same bar as the queue page,
+        // so it gets the app's one queue and player rather than its own.
+        builder: (context, state) => LibraryScreen(
+          library: library,
+          playlists: playlists,
+          queues: queues,
+          queue: queue,
+          player: player,
+          uploads: uploads,
         ),
       ),
     ],

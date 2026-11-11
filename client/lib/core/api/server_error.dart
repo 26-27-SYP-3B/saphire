@@ -5,6 +5,7 @@ import '../config/api_config.dart';
 /// What a failed call to the server shows the user: the server's own message
 /// when it answered, otherwise our own explanation. Every feature that calls the
 /// API uses this, so they all say the same thing the same way.
+const unreadableAnswer = 'Die Antwort des Servers konnte nicht gelesen werden.';
 String serverErrorMessage(DioException error) {
   final data = error.response?.data;
   if (data is Map && data['error'] is String) {

@@ -304,6 +304,53 @@ func TestUploadRateLimit(t *testing.T) {
 	}
 }
 
+// The artist and the playing time come from the file itself, so the library can show
+// what a song says instead of guessing from its name. A file without tags keeps the
+// name as its title and has no artist.
+func TestUploadStoresTagsAndDuration(t *testing.T) {
+	db := openTestDB(t)
+	library := t.TempDir()
+	handler := uploadHandler(db, library, newRateLimiter(100, time.Second))
+	token := testToken(t, db, "lukas")
+
+	rec := uploadFile(t, handler, token, "file", "Mein Song.mp3", taggedMP3())
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload -> %d (%s)", rec.Code, rec.Body)
+	}
+
+	var tagged Track
+	if err := json.Unmarshal(rec.Body.Bytes(), &tagged); err != nil {
+		t.Fatalf("decode answer: %v", err)
+	}
+	if tagged.Title != "Neutrone (Remix)" || tagged.Artist != "Kraftwerk" || tagged.DurationMS != 360 {
+		t.Fatalf("the answer does not show what the file says: %s", rec.Body)
+	}
+
+	// The row holds the same values the answer shows.
+	var stored Track
+	err := db.QueryRow(`SELECT id, title, artist, duration_ms FROM track WHERE id = ?`, tagged.ID).
+		Scan(&stored.ID, &stored.Title, &stored.Artist, &stored.DurationMS)
+	if err != nil {
+		t.Fatalf("read the row: %v", err)
+	}
+	if stored.Title != tagged.Title || stored.Artist != tagged.Artist || stored.DurationMS != tagged.DurationMS {
+		t.Errorf("the row does not hold what the answer shows: %+v", stored)
+	}
+
+	// An untagged file is measured but not named, so the name stays the title.
+	rec = uploadFile(t, handler, token, "file", "ohne tags.mp3", audioOf(10))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("untagged upload -> %d (%s)", rec.Code, rec.Body)
+	}
+	var plain Track
+	if err := json.Unmarshal(rec.Body.Bytes(), &plain); err != nil {
+		t.Fatalf("decode answer: %v", err)
+	}
+	if plain.Title != "ohne tags.mp3" || plain.Artist != "" || plain.DurationMS != 360 {
+		t.Errorf("an untagged file is answered as: %s", rec.Body)
+	}
+}
+
 // get sends one GET with a Bearer token, through a mux so that r.PathValue has the
 // value main.go would give it.
 func get(t *testing.T, handler http.Handler, path, token string) *httptest.ResponseRecorder {
@@ -340,6 +387,23 @@ func (c *chunkRecorder) Flush() {
 // bigWAV is a real WAV header with enough padding to span several stream chunks.
 func bigWAV() []byte {
 	return append(tinyWAV(), bytes.Repeat([]byte{0}, 3*streamChunkBytes)...)
+}
+
+// getRange sends one GET with a Range header, through the mux so that r.PathValue is
+// filled the way main.go fills it.
+func getRange(t *testing.T, handler http.Handler, token, id, rng string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/music/"+id, nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if rng != "" {
+		req.Header.Set("Range", rng)
+	}
+	handler.ServeHTTP(rec, req)
+	return rec
 }
 
 // TestListRequiresAuth: reading the shared library needs an account, with the same two
@@ -408,11 +472,19 @@ func TestListTracks(t *testing.T) {
 		t.Errorf("the titles do not match the ids: %s", rec.Body)
 	}
 
-	// id and title only: the name the file has inside the library folder stays on the
-	// server.
+	// Every row is the full track as the upload answer shows it, including who added it:
+	// the library is shared, so a bare user id would show nothing. A row inserted without
+	// tags reads as an empty artist and a length of 0, which is what the client shows as
+	// a dash.
 	for _, e := range entries {
-		if len(e) != 2 {
-			t.Errorf("an entry carries more than id and title: %v", e)
+		if len(e) != 9 {
+			t.Errorf("an entry does not carry the documented row: %v", e)
+		}
+		if e["uploaded_by"] != "lukas" {
+			t.Errorf("an entry does not name who added it: %v", e)
+		}
+		if e["artist"] != "" || e["duration_ms"] != float64(0) {
+			t.Errorf("a row without tags is not read as empty: %v", e)
 		}
 	}
 }
@@ -547,6 +619,98 @@ func TestStreamRejectsBadRequests(t *testing.T) {
 	}
 }
 
+// TestStreamRange is what a player asks for: one part of the file, with the headers that
+// say which part. The answer is still written chunk by chunk, so a range does not turn
+// this endpoint into a whole-file read.
+func TestStreamRange(t *testing.T) {
+	db := openTestDB(t)
+	library := t.TempDir()
+	upload := uploadHandler(db, library, newRateLimiter(100, time.Second))
+	handler := musicMux(db, library, newRateLimiter(100, time.Second))
+	token := testToken(t, db, "lukas")
+
+	rec := uploadFile(t, upload, token, "file", "song.wav", bigWAV())
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload -> %d (%s)", rec.Code, rec.Body)
+	}
+	var track Track
+	if err := json.Unmarshal(rec.Body.Bytes(), &track); err != nil {
+		t.Fatalf("decode upload: %v", err)
+	}
+	size := int64(len(bigWAV()))
+	id := strconv.FormatInt(track.ID, 10)
+
+	// Without a Range the whole file is still sent, and the caller is told it can ask
+	// for parts. The download name is the stored name, which is what the upload answer
+	// reported.
+	rec = get(t, handler, "/api/music/"+id, token)
+	if rec.Code != http.StatusOK || rec.Body.Len() != len(bigWAV()) {
+		t.Fatalf("whole file -> %d (%d bytes), wanted 200 with the file", rec.Code, rec.Body.Len())
+	}
+	if rec.Header().Get("Accept-Ranges") != "bytes" {
+		t.Errorf("a player needs to know the file can be read in parts: %v", rec.Header())
+	}
+	if want := `inline; filename="` + track.StoredName + `"`; rec.Header().Get("Content-Disposition") != want {
+		t.Errorf("Content-Disposition is %q, wanted %q", rec.Header().Get("Content-Disposition"), want)
+	}
+
+	// The first four bytes, and the part from an offset to the end.
+	for _, want := range []struct {
+		header string
+		body   []byte
+		cr     string
+	}{
+		{"bytes=0-3", bigWAV()[:4], "bytes 0-3/" + strconv.FormatInt(size, 10)},
+		{"bytes=100-", bigWAV()[100:], "bytes 100-" + strconv.FormatInt(size-1, 10) + "/" + strconv.FormatInt(size, 10)},
+		{"bytes=-4", bigWAV()[size-4:], "bytes " + strconv.FormatInt(size-4, 10) + "-" + strconv.FormatInt(size-1, 10) + "/" + strconv.FormatInt(size, 10)},
+	} {
+		rec = getRange(t, handler, token, id, want.header)
+		if rec.Code != http.StatusPartialContent {
+			t.Errorf("%s -> %d, wanted 206 (%s)", want.header, rec.Code, rec.Body)
+			continue
+		}
+		if rec.Body.Len() != len(want.body) {
+			t.Errorf("%s sent %d bytes, wanted %d", want.header, rec.Body.Len(), len(want.body))
+		}
+		if rec.Header().Get("Content-Range") != want.cr {
+			t.Errorf("%s answered Content-Range %q, wanted %q", want.header, rec.Header().Get("Content-Range"), want.cr)
+		}
+		if rec.Header().Get("Content-Length") != strconv.Itoa(len(want.body)) {
+			t.Errorf("%s answered Content-Length %q, wanted %d", want.header, rec.Header().Get("Content-Length"), len(want.body))
+		}
+	}
+
+	// A range that cannot be read as bytes, or one outside the file, is plain text: the
+	// caller here is a player, and this error is about the transport. It is the one answer
+	// on this route that is not the JSON error shape.
+	//
+	// The last three are the bounds api-docs.md claims: a start at the end of the file, a
+	// suffix larger than the file, and an end at or past the last byte. They are refused
+	// rather than clamped, which is the difference from RFC 9110 the docs name, so a player
+	// that sends bytes=0-2147483647 gets 416 here.
+	outside := []string{
+		"bytes=abc",
+		"bytes=99999-100000",
+		"bytes=0-1,4-5",
+		"bytes=" + strconv.FormatInt(size, 10) + "-",
+		"bytes=-" + strconv.FormatInt(size+1, 10),
+		"bytes=0-" + strconv.FormatInt(size, 10),
+	}
+	for _, header := range outside {
+		rec = getRange(t, handler, token, id, header)
+		if rec.Code != http.StatusRequestedRangeNotSatisfiable {
+			t.Errorf("%s -> %d, wanted 416 (%s)", header, rec.Code, rec.Body)
+			continue
+		}
+		if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+			t.Errorf("%s answered %q, but api-docs.md says plain text", header, ct)
+		}
+		if cr := rec.Header().Get("Content-Range"); cr != "bytes */"+strconv.FormatInt(size, 10) {
+			t.Errorf("%s answered Content-Range %q, wanted the whole size after the slash", header, cr)
+		}
+	}
+}
+
 // TestStreamRateLimit checks that the two read buckets are separate. It uses two
 // limiter instances the way main.go wires them; that is also what it can prove — a
 // shared instance would fail here.
@@ -591,5 +755,63 @@ func TestStreamRateLimit(t *testing.T) {
 	rec = get(t, streamOpen, "/api/music/1", token)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("a full list bucket stopped playback -> %d (%s)", rec.Code, rec.Body)
+	}
+}
+
+// A table created before the metadata columns existed is not changed by CREATE TABLE
+// IF NOT EXISTS, so the columns have to be added for an existing saphire.db.
+func TestEnsureTrackColumnsAddsMissingColumns(t *testing.T) {
+	db := openTestDB(t)
+
+	if _, err := db.Exec(`DROP TABLE track`); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE track (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER NOT NULL REFERENCES user(id),
+		title TEXT NOT NULL,
+		stored_name TEXT NOT NULL UNIQUE,
+		size INTEGER NOT NULL,
+		content_type TEXT NOT NULL,
+		uploaded_at INTEGER NOT NULL
+	)`); err != nil {
+		t.Fatalf("create the old table: %v", err)
+	}
+
+	// An old row must survive and read as an untagged file, not fail.
+	res, err := db.Exec(`INSERT INTO user (username, password_hash) VALUES ('lukas', 'not-a-bcrypt-hash')`)
+	if err != nil {
+		t.Fatalf("insert a user: %v", err)
+	}
+	userID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("last insert id: %v", err)
+	}
+	res, err = db.Exec(`INSERT INTO track (user_id, title, stored_name, size, content_type, uploaded_at) VALUES (?, 'alt.mp3', 'old', 1, 'audio/mpeg', 0)`, userID)
+	if err != nil {
+		t.Fatalf("insert an old row: %v", err)
+	}
+	// The id is read from the insert, not assumed: the test must not pass because both
+	// rows happened to be the first ones.
+	trackID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("last insert id: %v", err)
+	}
+
+	if err := ensureTrackColumns(db); err != nil {
+		t.Fatalf("add the columns: %v", err)
+	}
+
+	track, err := GetTrackByID(db, trackID)
+	if err != nil {
+		t.Fatalf("read the old row: %v", err)
+	}
+	if track.Artist != "" || track.DurationMS != 0 {
+		t.Errorf("an old row read as %+v, wanted the empty defaults", track)
+	}
+
+	// Running it again does not add a column twice.
+	if err := ensureTrackColumns(db); err != nil {
+		t.Fatalf("add the columns again: %v", err)
 	}
 }
