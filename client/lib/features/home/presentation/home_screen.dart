@@ -287,8 +287,8 @@ class _HomeScreenState extends State<HomeScreen> {
   /// with no server and no account.
   Future<void> _playLocal(LocalTrack track) => _control(() => widget.player.playLocal(track));
 
-  /// Long-pressing a local card puts the song into the local queue. The queue page then
-  /// plays the list in order, still without a server.
+  /// Long-pressing a local card puts the song into the local queue. The queue in the bar
+  /// then plays the list in order, still without a server.
   Future<void> _queueLocal(LocalTrack track) async {
     _local.addToQueue(track);
     // Said before the sync, so a failure to sync overwrites it instead of being hidden.
@@ -305,6 +305,9 @@ class _HomeScreenState extends State<HomeScreen> {
     return AppShell(
       selected: '/home',
       player: widget.player,
+      queues: widget.queues,
+      library: widget.library,
+      localMode: _settings.localMode,
       localLibrary: _local,
       child: Column(
         children: [

@@ -17,7 +17,7 @@ import 'features/upload/data/upload_repository.dart';
 
 // One Dio and one session, because the upload uses the same token the login got.
 // One queue and one player for the same reason: the playlist page fills the queue and the
-// player page plays it, so both have to be looking at the same list.
+// bar at the bottom shows and plays it, so both have to be looking at the same list.
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // A session from the last run means the app opens on the home screen instead

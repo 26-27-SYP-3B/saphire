@@ -2,8 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../features/library/data/library_repository.dart';
 import '../../features/library/data/local_library.dart';
+import '../../features/player/data/queue_repository.dart';
 import '../../features/player/domain/player.dart';
+import '../../features/player/presentation/queue_sheet.dart';
 
 /// The bar every signed-in page shows at the bottom: what is current in the queue, and
 /// the buttons that move it. It is the same widget on every page, so it listens to the
@@ -11,9 +14,25 @@ import '../../features/player/domain/player.dart';
 /// own has no tap behind it, and a bar that only rebuilt on a tap would keep showing the
 /// song that just finished.
 class PlayerBar extends StatefulWidget {
-  const PlayerBar({super.key, required this.player, this.localLibrary});
+  const PlayerBar({
+    super.key,
+    required this.player,
+    required this.queues,
+    required this.library,
+    this.localMode = false,
+    this.localLibrary,
+  });
 
   final QueuePlayer player;
+
+  /// The queue behind the list button: the sheet it opens reads and appends through this.
+  final QueueRepository queues;
+
+  /// What the sheet's add tab lists.
+  final LibraryRepository library;
+
+  /// Without a server the queue is the stored one and the songs come from the device.
+  final bool localMode;
 
   /// The queue stored on the device. Without a server that queue is all there is, and the
   /// player only learns it once it is started, so the bar reads it here. Null in a test
@@ -117,6 +136,18 @@ class _PlayerBarState extends State<PlayerBar> {
                 ),
               ],
             ),
+          ),
+          IconButton(
+            tooltip: 'Warteschlange',
+            onPressed: () => showQueueSheet(
+              context,
+              queues: widget.queues,
+              library: widget.library,
+              player: widget.player,
+              localMode: widget.localMode,
+              localLibrary: widget.localLibrary,
+            ),
+            icon: const Icon(Icons.queue_music),
           ),
           IconButton(
             tooltip: playing ? 'Pause' : 'Abspielen',

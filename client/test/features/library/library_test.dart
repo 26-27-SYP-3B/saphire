@@ -16,7 +16,7 @@ import 'package:saphire_client/features/library/data/library_repository.dart';
 import 'package:saphire_client/features/library/data/local_library.dart';
 import 'package:saphire_client/features/library/presentation/library_screen.dart';
 import 'package:saphire_client/features/player/domain/player.dart';
-import 'package:saphire_client/features/player/presentation/queue_screen.dart';
+import 'package:saphire_client/features/player/presentation/queue_sheet.dart';
 import 'package:saphire_client/features/playlists/presentation/playlists_screen.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
 import 'package:saphire_client/features/upload/domain/track.dart';
@@ -769,9 +769,14 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(PlaylistsScreen), findsOneWidget);
 
-    await tester.tap(find.text('Warteschlange'));
+    await tester.tap(find.byTooltip('Warteschlange'));
     await tester.pumpAndSettle();
-    expect(find.byType(QueueScreen), findsOneWidget);
+    expect(find.byType(QueueSheet), findsOneWidget);
+
+    // The sheet is over the page, so it has to be closed before the navigation is
+    // reachable again.
+    await tester.tap(find.byTooltip('Schließen'));
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('Home'));
     await tester.pumpAndSettle();

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../features/library/data/library_repository.dart';
 import '../../features/library/data/local_library.dart';
+import '../../features/player/data/queue_repository.dart';
 import '../../features/player/domain/player.dart';
 import 'nav_bar.dart';
 import 'player_bar.dart';
@@ -19,13 +21,23 @@ class AppShell extends StatelessWidget {
     super.key,
     required this.selected,
     required this.player,
+    required this.queues,
+    required this.library,
     required this.child,
+    this.localMode = false,
     this.sidebarExtra,
     this.localLibrary,
   });
 
   final String selected;
   final QueuePlayer player;
+
+  /// What the bar's list button opens: the shared queue and the songs it can add.
+  final QueueRepository queues;
+  final LibraryRepository library;
+
+  /// Without a server the queue is the stored one and the songs come from the device.
+  final bool localMode;
   final Widget child;
 
   /// What the bar starts when no song is open yet: a queue stored on the device. null in a
@@ -85,7 +97,13 @@ class AppShell extends StatelessWidget {
                     ],
                   ),
                 ),
-                PlayerBar(player: player, localLibrary: localLibrary),
+                PlayerBar(
+                  player: player,
+                  queues: queues,
+                  library: library,
+                  localMode: localMode,
+                  localLibrary: localLibrary,
+                ),
               ],
             ),
           ),

@@ -16,7 +16,6 @@ import '../features/playlists/presentation/playlists_screen.dart';
 import '../features/player/data/queue_repository.dart';
 import '../features/player/domain/player.dart';
 import '../features/player/domain/queue.dart';
-import '../features/player/presentation/queue_screen.dart';
 import '../features/setup/presentation/settings_screen.dart';
 import '../features/setup/presentation/setup_screen.dart';
 import '../features/upload/data/upload_repository.dart';
@@ -31,8 +30,9 @@ import '../features/upload/data/upload_repository.dart';
 /// kein Weg am Setup vorbei, mit ihm öffnet sich die app direkt wie früher.
 ///
 /// The queue and the player are passed in, not created here: one queue and one player
-/// belong to the whole app, so opening the queue page from a playlist keeps the list that
-/// was just filled. A route that made its own queue would lose it on the next navigation.
+/// belong to the whole app, so the bar at the bottom of every page shows the same list a
+/// playlist just filled. A route that made its own queue would lose it on the next
+/// navigation.
 GoRouter buildRouter({
   required AuthRepository auth,
   required UploadRepository uploads,
@@ -94,8 +94,8 @@ GoRouter buildRouter({
       ),
       GoRoute(
         path: '/home',
-        // The home bar shows the same queue and player as the queue page, so they are the
-        // shared ones rather than a second set built for this page.
+        // The home page's bar shows the shared queue and player rather than a second set
+        // built for this page.
         builder: (context, state) => HomeScreen(
           repository: auth,
           uploads: uploads,
@@ -122,20 +122,9 @@ GoRouter buildRouter({
         ),
       ),
       GoRoute(
-        path: '/queue',
-        builder: (context, state) => QueueScreen(
-          queues: queues,
-          queue: queue,
-          player: player,
-          session: session,
-          settings: settingsStore,
-          localLibrary: localLibrary,
-        ),
-      ),
-      GoRoute(
         path: '/library',
-        // The page plays through the shared queue and shows the same bar as the queue page,
-        // so it gets the app's one queue and player rather than its own.
+        // The page plays through the shared queue and shows the bar that opens it, so it
+        // gets the app's one queue and player rather than its own.
         builder: (context, state) => LibraryScreen(
           library: library,
           playlists: playlists,

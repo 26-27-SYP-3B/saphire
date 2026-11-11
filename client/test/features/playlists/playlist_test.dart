@@ -14,7 +14,7 @@ import 'package:saphire_client/features/auth/data/auth_repository.dart';
 import 'package:saphire_client/features/library/data/local_library.dart';
 import 'package:saphire_client/features/playlists/data/cover_store.dart';
 import 'package:saphire_client/features/playlists/data/playlist_repository.dart';
-import 'package:saphire_client/features/player/presentation/queue_screen.dart';
+import 'package:saphire_client/features/player/presentation/queue_sheet.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
 
 import '../../support/stub_adapter.dart';
@@ -367,13 +367,34 @@ void main() {
     expect(find.text('Position 1 entfernt.'), findsOneWidget);
   });
 
-  // The page stays in the navigation stack after it opens the queue, so a flag left set
-  // would keep its buttons disabled when the person comes back.
-  testWidgets('the page is usable again after a refused call', (tester) async {
+  // A playlist without songs cannot fill a queue, so the page says that instead of sending a
+  // call that would answer an empty list nobody can play.
+  testWidgets('starting an empty playlist sends nothing', (tester) async {
     final adapter = StubAdapter(200, <Object>[]);
     adapter.queue.addAll([
       (200, <Object>[playlistAnswer]),
       (200, {...playlistAnswer, 'songs': <Object>[]}),
+    ]);
+    final queues = StubAdapter(200, <Object>[]);
+
+    await openPlaylists(tester, playlists: adapter, queues: queues);
+    await tester.tap(find.text('Favoriten'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Playlist starten'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Diese Playlist hat noch keine Lieder.'), findsOneWidget);
+    expect(queues.requests, isEmpty);
+  });
+
+  // The page stays in the navigation stack while the first song opens, so a flag left set
+  // would keep its buttons disabled after a refused call.
+  testWidgets('the page is usable again after a refused call', (tester) async {
+    final adapter = StubAdapter(200, <Object>[]);
+    adapter.queue.addAll([
+      (200, <Object>[playlistAnswer]),
+      (200, detailAnswer),
       (201, playlistAnswer),
     ]);
 
@@ -394,12 +415,12 @@ void main() {
     expect(adapter.requests.length, 3);
   });
 
-  // The point of the whole feature: starting a playlist does not play a song, it fills
-  // the queue, and the queue page shows that list. The queue never learned that a
-  // playlist filled it.
-  testWidgets('starting a playlist fills the shared queue and opens it', (tester) async {
-    // The list, then opening it. The queue answers the fill and the read the page does
-    // after navigation.
+  // The point of the whole feature: starting a playlist fills the queue and starts its
+  // first song. The queue never learned that a playlist filled it, and it now lives in the
+  // bar instead of a page of its own.
+  testWidgets('starting a playlist fills the shared queue and plays it', (tester) async {
+    // The list, then the detail. The queue answers the fill and the read the sheet does
+    // when it is opened.
     final playlistAdapter = StubAdapter(200, <Object>[]);
     playlistAdapter.queue.addAll([(200, <Object>[playlistAnswer]), (200, detailAnswer)]);
 
@@ -412,19 +433,21 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Playlist starten'));
     await tester.pumpAndSettle();
 
-    // The body is what the endpoint documents: source and source_id, nothing else. The
-    // page then reads the queue again, so this is the first call, not the last.
+    // The body is what the endpoint documents: source and source_id, nothing else.
     final fill = queueAdapter.requests.first;
     expect(fill.method, 'POST');
     expect(fill.uri.path, '/api/queue');
     expect(fill.data, {'source': 'playlist', 'source_id': 1});
 
-    // The page that shows the queue is looking at the same list the app shares.
-    expect(find.widgetWithText(FilledButton, 'Spielen'), findsOneWidget);
-    expect(find.descendant(of: find.byType(QueueScreen), matching: find.text('Technogal.mp3')), findsOneWidget);
-    expect(find.descendant(of: find.byType(QueueScreen), matching: find.text('lied.wav')), findsOneWidget);
+    // The player reads the same list the app shares.
     expect(wiring.queue.length, 2);
     expect(wiring.queue.entries.map((entry) => entry.trackId), [8, 4]);
+
+    // The bar is where the queue shows up now.
+    await tester.tap(find.byTooltip('Warteschlange'));
+    await tester.pumpAndSettle();
+    expect(find.descendant(of: find.byType(QueueSheet), matching: find.text('Technogal.mp3')), findsWidgets);
+    expect(find.descendant(of: find.byType(QueueSheet), matching: find.text('lied.wav')), findsWidgets);
   });
 
   testWidgets('a rate limit shows the message without signing the user out', (tester) async {
@@ -484,18 +507,26 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Playlist starten'));
     await tester.pumpAndSettle();
 
-    // The queue is stored on the device, and the queue page is looking at it.
+    // Starting a playlist fills the stored queue and plays its first song; the queue is
+    // looked at through the bar.
     expect(local.queue.single.title, 'song.mp3');
-    expect(find.widgetWithText(FilledButton, 'Spielen'), findsOneWidget);
-    expect(find.descendant(of: find.byType(QueueScreen), matching: find.text('song.mp3')), findsOneWidget);
+    expect(wiring.player.localTitle, 'song.mp3');
 
-    // Starting a playlist only fills the stored queue. "Nächstes Lied" from here starts
-    // the first song; it must not answer that the list has already ended.
-    await tester.tap(find.widgetWithText(TextButton, 'Nächstes Lied'));
+    // A second song on the device can be put into the queue from the sheet.
+    local.add(name: 'zwei.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
+    await tester.tap(find.byTooltip('Warteschlange'));
+    await tester.pumpAndSettle();
+    expect(find.descendant(of: find.byType(QueueSheet), matching: find.text('song.mp3')), findsWidgets);
+
+    await tester.tap(find.text('Lieder hinzufügen'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+      of: find.widgetWithText(ListTile, 'zwei.mp3'),
+      matching: find.byType(IconButton),
+    ));
     await tester.pumpAndSettle();
 
-    expect(wiring.player.localTitle, 'song.mp3');
-    expect(find.text('Gerade: song.mp3'), findsOneWidget);
+    expect(local.queue.map((track) => track.title), ['song.mp3', 'zwei.mp3']);
   });
 
   test('a cover is kept under the key it was saved with', () {
@@ -573,16 +604,15 @@ void main() {
     expect(wiring.player.localTitle, 'song.mp3');
   });
 
-  // The Playlists page draws the navigation every other page draws, so it is not a dead
-  // end: the sidebar reaches the queue from here.
-  testWidgets('the page navigates to another screen', (tester) async {
+  // The Playlists page draws the bar every page draws, and the queue is in it.
+  testWidgets('the bar opens the queue from here', (tester) async {
     final queues = StubAdapter(200, <Object>[]);
     await openPlaylists(tester, playlists: StubAdapter(200, <Object>[]), queues: queues);
 
-    await tester.tap(find.text('Warteschlange'));
+    await tester.tap(find.byTooltip('Warteschlange'));
     await tester.pumpAndSettle();
 
-    expect(find.byType(QueueScreen), findsOneWidget);
+    expect(find.byType(QueueSheet), findsOneWidget);
   });
 }
 

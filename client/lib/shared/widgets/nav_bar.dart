@@ -11,7 +11,7 @@ const navItems = [
   (label: 'Suche', icon: Icons.search, to: ''),
   (label: 'Bibliothek', icon: Icons.library_books, to: '/library'),
   (label: 'Playlists', icon: Icons.playlist_play, to: '/playlists'),
-  (label: 'Warteschlange', icon: Icons.queue_music, to: '/queue'),
+  // The queue is in the bar at the bottom, so it has no page in the navigation.
   // Alben and Künstler*innen have no screen yet, so they stay labels too.
   (label: 'Alben', icon: Icons.album, to: ''),
   (label: 'Künstler*innen', icon: Icons.people, to: ''),

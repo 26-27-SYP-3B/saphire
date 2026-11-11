@@ -66,7 +66,7 @@ class QueuePlayer {
   Stream<void> get changes => _changes.stream;
 
   /// The local songs that were started as one list, and which of them is current. A
-  /// local song has no slot in the server queue, so the bar and the queue page read this
+  /// local song has no slot in the server queue, so the bar and the queue sheet read this
   /// instead of queue.current.
   final List<LocalTrack> _local = [];
   int _localIndex = -1;
@@ -205,7 +205,7 @@ class QueuePlayer {
   /// Replaces the order without interrupting a song that is still in it. Used when a song
   /// is added to the queue while another one is open: the next song has to be the new list.
   /// A song that is no longer in the list stops with it, paused or not — otherwise the bar
-  /// would name a song the queue page no longer shows.
+  /// would name a song the queue no longer shows.
   Future<void> syncLocalQueue(List<LocalTrack> tracks) async {
     final current = localCurrent;
     _local

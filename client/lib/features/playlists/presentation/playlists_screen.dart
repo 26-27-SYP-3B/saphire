@@ -1,7 +1,6 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../../core/config/api_config.dart';
 import '../../../core/storage/session_store.dart';
@@ -23,10 +22,10 @@ const _emptyNote = 'Noch keine Playlist. Eine Playlist gehört dir, nicht der ge
 
 /// Playlists: create one with a title and a cover, put songs in it, start it.
 ///
-/// Starting a playlist does not play anything by itself. It fills the queue from that
-/// playlist, and the player only ever reads a queue — so a queue filled from a playlist
-/// and a queue filled from anything else behave the same. That is why this page hands
-/// the work to the queue instead of playing songs itself.
+/// Starting a playlist fills the queue from that playlist and plays its first song. The
+/// player only ever reads a queue — so a queue filled from a playlist and a queue filled
+/// from anything else behave the same. That is why this page hands the work to the queue
+/// instead of playing songs itself; the queue itself lives in the bar at the bottom.
 ///
 /// The cover is picked on this device and stays here: the server keeps a playlist as a
 /// name and song positions (api-docs.md), so there is no image to upload.
@@ -413,15 +412,37 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
         return;
       }
 
-      // The stored queue is what the queue page plays, so it works again after a restart.
+      // The stored queue is what the bar plays, so it works again after a restart.
       _local.setQueue(playlist.songs);
-      setState(() => _note = null);
-      context.push('/queue');
+      setState(() => _busy = true);
+      try {
+        // Starting a playlist fills the queue and plays its first song; the bar is where the
+        // queue shows up now, so there is no page to open.
+        await widget.player.playLocalQueue(playlist.songs);
+        if (!mounted) return;
+        setState(() {
+          _note = null;
+          _busy = false;
+        });
+      } catch (error) {
+        if (!mounted) return;
+        setState(() {
+          _note = switch (error) {
+            PlaybackException(:final message) => message,
+            _ => 'Die Playlist konnte nicht gestartet werden: $error',
+          };
+          _busy = false;
+        });
+      }
       return;
     }
 
     final detail = _selected;
     if (detail == null) return;
+    if (detail.songs.isEmpty) {
+      setState(() => _note = 'Diese Playlist hat noch keine Lieder.');
+      return;
+    }
 
     setState(() => _busy = true);
     try {
@@ -431,16 +452,24 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
       if (!mounted) return;
       widget.queue.fill(entries);
 
-      // The page stays alive in the navigation stack, so the flag has to be released
-      // before leaving: coming back here would otherwise leave every button disabled.
-      setState(() => _busy = false);
-      context.push('/queue');
+      // The first song is opened as well: the queue itself lives in the bar, so filling it
+      // without playing would look like nothing happened.
+      await widget.player.playCurrent();
+      if (!mounted) return;
+      setState(() => _note = null);
     } on QueueException catch (error) {
       if (!mounted) return;
-      setState(() {
-        _note = error.message;
-        _busy = false;
+      setState(() => _note = error.message);
+    } catch (error) {
+      // A song that cannot be opened is not a queue error, so it is reported like the local
+      // branch does.
+      if (!mounted) return;
+      setState(() => _note = switch (error) {
+        PlaybackException(:final message) => message,
+        _ => 'Das Lied konnte nicht gespielt werden: $error',
       });
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -452,6 +481,9 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
     return AppShell(
       selected: '/playlists',
       player: widget.player,
+      queues: widget.queues,
+      library: widget.library,
+      localMode: _isLocal,
       localLibrary: _local,
       child: Padding(
         padding: const EdgeInsets.all(20),
