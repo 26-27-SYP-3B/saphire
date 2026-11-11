@@ -5,7 +5,10 @@ Base URL: `http://localhost:8080` (port configurable via `PORT` in `.env`).
 Every API answer is JSON with `Content-Type: application/json` and
 `X-Content-Type-Options: nosniff`, except `GET /api/music/{id}`, which sends the file
 itself with the content type stored for that song — there the JSON error shape applies
-only to the answers sent before the first byte. Errors use a single shape:
+only to the answers sent before the first byte. `X-Content-Type-Options: nosniff` is on
+every answer from this server, including the `OPTIONS` preflight and the plain text `404`
+for a path no endpoint defines (see the development frontend section). Errors use a single
+shape:
 
 ```json
 { "error": "human readable description of what went wrong" }
@@ -14,7 +17,7 @@ only to the answers sent before the first byte. Errors use a single shape:
 Authenticated requests carry the session token in
 `Authorization: Bearer <token>`.
 
-Browser clients work because of a CORS middleware (`server/cors.go`): the
+Browser clients work because of a CORS middleware (`server/src/cors.rs`): the
 `Origin` is reflected on every answer, `OPTIONS` preflights get `204 No Content`
 with the allowed methods and headers, and a request without an `Origin` (a plain
 HTTP client) gets no CORS headers. On a phone or an Android emulator the default
@@ -623,8 +626,8 @@ Planned, in rough order:
 ## Development frontend
 
 `server/static/` holds a plain HTML page for calling these endpoints from a browser
-while they are being built. `main.go` serves it for `GET /static/` through
-`static.go`, from the folder relative to the directory the server is started from
+while they are being built. `src/main.rs` serves it for `GET /static/` through
+`src/staticfiles.rs`, from the folder relative to the directory the server is started from
 (`just run` inside `server/`); nothing is compiled into the binary, so editing a
 file and reloading the page is enough.
 
@@ -636,16 +639,18 @@ over; it only forwards a browser to the page.
 
 These answers are not part of the API: they are `text/html`, `text/css` and
 `text/javascript` (with `X-Content-Type-Options: nosniff`, like every other answer
-from this server), and a missing file is the plain text `404 page not found` of
-`http.FileServer` rather than the JSON error shape:
+from this server), and a missing file is the plain text `404 page not found` rather
+than the JSON error shape:
 
 | Route | Status | What it answers |
 |---|---|---|
 | `GET /` | `301 Moved Permanently` | `Location: /static/`, so a tab opened at the root reaches the page |
 | `GET /static/` | `200 OK` | `static/index.html` |
-| `GET /static/index.html` | `301 Moved Permanently` | `Location: ./`, because `http.FileServer` treats the index file as its folder — the page has one address |
+| `GET /static/index.html` | `301 Moved Permanently` | `Location: ./`, because the page folder treats its index file as the folder itself — the page has one address |
 | `GET /static/style.css`, `GET /static/app.js` | `200 OK` | the files the page links |
 | `GET /static/<anything else>` | `404 Not Found` | plain text `404 page not found` |
+| `GET /<a path no endpoint defines>` | `404 Not Found` | the same plain text `404 page not found` — a path that is not an endpoint cannot fail an endpoint, so the JSON error shape does not apply here |
+| `GET /static/../<name>` | `307 Temporary Redirect` | the path is cleaned before a handler is chosen, so a `..` element is resolved as part of the path; following the `Location` still answers the plain text `404` above, because nothing above the page folder can be served |
 | `POST /static/` | `405 Method Not Allowed` | only GET serves the page |
 
 The page sends exactly what is typed and shows what the server answered: the status

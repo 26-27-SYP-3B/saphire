@@ -1,16 +1,19 @@
 default: run
 
 run:
-    go run .
+    cargo run
 
 run-release:
-    go run .
+    cargo run --release
 
 build:
-    go build -o build/saphire-server .
+    cargo build --release
 
 test:
-    go test ./...
+    cargo test
+
+check:
+    cargo clippy --all-targets -- -D warnings
 
 clean:
-    rm -rf build
+    cargo clean
