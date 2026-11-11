@@ -419,9 +419,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     if (!_settings.localMode)
                       FilledButton(
                         onPressed: _loading || _picking || _uploading ? null : _upload,
-                        // The theme's minimum size asks for the whole width, which a row cannot
-                        // give; this button takes only its label and the theme's height.
-                        style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
                         child: Text(_uploading ? 'Wird hochgeladen…' : 'Song hochladen'),
                       ),
                   ],

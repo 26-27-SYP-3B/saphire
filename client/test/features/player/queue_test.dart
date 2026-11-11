@@ -346,7 +346,8 @@ void main() {
     fake.complete();
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('Das Lied konnte nicht gespielt werden'), findsOneWidget);
+    // The page and the bar both report the player's failure.
+    expect(find.textContaining('Das Lied konnte nicht gespielt werden'), findsWidgets);
   });
 
   // A page that keeps its busy flag after an error leaves every button disabled for the rest

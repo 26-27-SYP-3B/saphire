@@ -6,6 +6,7 @@ import '../core/storage/settings_store.dart';
 import '../features/auth/data/auth_repository.dart';
 import '../features/library/data/library_repository.dart';
 import '../features/library/data/local_library.dart';
+import '../features/playlists/data/cover_store.dart';
 import '../features/playlists/data/playlist_repository.dart';
 import '../features/player/data/queue_repository.dart';
 import '../features/player/domain/player.dart';
@@ -33,6 +34,7 @@ class SaphireApp extends StatefulWidget {
     required this.session,
     this.settings,
     this.localLibrary,
+    this.covers,
     required this.dio,
   });
 
@@ -46,6 +48,7 @@ class SaphireApp extends StatefulWidget {
   final SessionStore session;
   final SettingsStore? settings;
   final LocalLibrary? localLibrary;
+  final CoverStore? covers;
   final Dio dio;
 
   @override
@@ -77,6 +80,7 @@ class _SaphireAppState extends State<SaphireApp> {
         session: widget.session,
         settings: widget.settings,
         localLibrary: widget.localLibrary,
+        covers: widget.covers,
         dio: widget.dio,
       ),
     );

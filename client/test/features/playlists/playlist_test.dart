@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -5,11 +6,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:saphire_client/app/router.dart';
+import 'package:saphire_client/app/theme.dart';
 import 'package:saphire_client/core/storage/session_store.dart';
 import 'package:saphire_client/core/storage/settings_store.dart';
+import 'package:saphire_client/core/utils/pick_image.dart';
 import 'package:saphire_client/features/auth/data/auth_repository.dart';
 import 'package:saphire_client/features/library/data/local_library.dart';
+import 'package:saphire_client/features/playlists/data/cover_store.dart';
 import 'package:saphire_client/features/playlists/data/playlist_repository.dart';
+import 'package:saphire_client/features/player/presentation/queue_screen.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
 
 import '../../support/stub_adapter.dart';
@@ -44,14 +49,21 @@ const queueAnswer = [
 /// Opens the app on the Playlists page with a valid session, so the guard lets a test
 /// reach it the way a logged-in user does. The page needs the shared queue, so the test
 /// gets the wiring back and can look at what the page put into it.
-Future<Wiring> openPlaylists(WidgetTester tester, {StubAdapter? playlists, StubAdapter? queues}) async {
+Future<Wiring> openPlaylists(
+  WidgetTester tester, {
+  StubAdapter? playlists,
+  StubAdapter? queues,
+  StubAdapter? library,
+  CoverStore? covers,
+  PickImage? pickImage,
+}) async {
   // The two-pane layout needs more room than the default test window.
   tester.view..physicalSize = const Size(1600, 1200)..devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
 
   final session = loggedIn();
-  final wiring = Wiring(session, playlistAdapter: playlists, queueAdapter: queues);
+  final wiring = Wiring(session, playlistAdapter: playlists, queueAdapter: queues, libraryAdapter: library);
   addTearDown(wiring.dispose);
 
   // The guard only reads the session, so a repository that is never called is enough.
@@ -66,11 +78,15 @@ Future<Wiring> openPlaylists(WidgetTester tester, {StubAdapter? playlists, StubA
     player: wiring.player,
     session: session,
     settings: withServer(),
+    covers: covers,
+    // A test does not tap the real picker; the one it passes answers instead.
+    pickImage: pickImage ?? () async => null,
     dio: Dio(),
   );
 
   router.go('/playlists');
-  await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+  // The real theme, because its button sizes are what a Row has to live with.
+  await tester.pumpWidget(MaterialApp.router(theme: buildTheme(), routerConfig: router));
   await tester.pumpAndSettle();
 
   return wiring;
@@ -102,7 +118,7 @@ Future<Wiring> openLocalPlaylists(WidgetTester tester, LocalLibrary local) async
   );
 
   router.go('/playlists');
-  await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+  await tester.pumpWidget(MaterialApp.router(theme: buildTheme(), routerConfig: router));
   await tester.pumpAndSettle();
 
   return wiring;
@@ -232,7 +248,7 @@ void main() {
   });
 
   // A song is added at the end, and the position the page shows is the one the server
-  // answered with.
+  // answered with. The song is chosen from the library by its title, not by a number.
   testWidgets('adding a song shows the position the server gave it', (tester) async {
     // Answers in the order the page calls them: the list, opening the playlist with no
     // songs yet, then the add.
@@ -243,17 +259,24 @@ void main() {
       (201, {'position': 1.0, 'track_id': 8.0, 'title': 'Technogal.mp3'}),
     ]);
 
-    await openPlaylists(tester, playlists: adapter);
+    final library = StubAdapter(200, [
+      {'id': 8.0, 'title': 'Technogal.mp3'},
+      {'id': 4.0, 'title': 'lied.wav'},
+    ]);
+
+    await openPlaylists(tester, playlists: adapter, library: library);
     await tester.tap(find.text('Favoriten'));
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField).last, '8');
+    await tester.tap(find.byType(DropdownButton<int>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Technogal.mp3').last);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Hinzufügen'));
     await tester.pumpAndSettle();
 
     expect(find.text('Song an Position 1 eingefügt.'), findsOneWidget);
-    expect(find.text('1'), findsOneWidget);
-    expect(find.text('Technogal.mp3'), findsOneWidget);
+    expect(find.widgetWithText(ListTile, 'Technogal.mp3'), findsOneWidget);
   });
 
   // Removing a middle slot: the server renumbers, so the row that moves up takes the
@@ -287,10 +310,9 @@ void main() {
     expect(find.text('2'), findsNothing);
   });
 
-  // The page does not send a value it did not get from the person typing: an id that is not
-  // a number is named here, because an invented -1 would make the server answer about a
-  // number nobody typed.
-  testWidgets('a track id that is not a number is named before anything is sent', (tester) async {
+  // The page does not send a value it did not get from the person: without a picked song
+  // there is nothing to add, so nothing is sent.
+  testWidgets('adding without a picked song sends nothing', (tester) async {
     final adapter = StubAdapter(200, <Object>[]);
     adapter.queue.addAll([(200, <Object>[playlistAnswer]), (200, detailAnswer)]);
 
@@ -298,11 +320,10 @@ void main() {
     await tester.tap(find.text('Favoriten'));
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField).last, 'abc');
     await tester.tap(find.text('Hinzufügen'));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('als Zahl eingeben'), findsOneWidget);
+    expect(find.textContaining('Bitte ein Lied aus der Bibliothek'), findsOneWidget);
     // The list and the detail, and nothing else: no request was invented.
     expect(adapter.requests.length, 2);
   });
@@ -317,17 +338,23 @@ void main() {
       (201, {'position': 1.0, 'track_id': 8.0, 'title': 'Technogal.mp3'}),
       (204, {}),
     ]);
+    final library = StubAdapter(200, [
+      {'id': 8.0, 'title': 'Technogal.mp3'},
+    ]);
 
-    await openPlaylists(tester, playlists: adapter);
+    await openPlaylists(tester, playlists: adapter, library: library);
     await tester.tap(find.text('Favoriten'));
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField).last, '8');
+    await tester.tap(find.byType(DropdownButton<int>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Technogal.mp3').last);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Hinzufügen'));
     await tester.pumpAndSettle();
 
     // The list said 0 before; the page has one row, so the list says one too.
-    expect(find.text('1 Songs'), findsOneWidget);
+    expect(find.widgetWithText(ListTile, '1 Songs'), findsOneWidget);
 
     await tester.tap(find.descendant(
       of: find.widgetWithText(ListTile, 'Technogal.mp3'),
@@ -335,7 +362,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    expect(find.text('0 Songs'), findsOneWidget);
+    expect(find.widgetWithText(ListTile, '0 Songs'), findsOneWidget);
     expect(find.text('Position 1 entfernt.'), findsOneWidget);
   });
 
@@ -392,9 +419,9 @@ void main() {
     expect(fill.data, {'source': 'playlist', 'source_id': 1});
 
     // The page that shows the queue is looking at the same list the app shares.
-    expect(find.text('Warteschlange'), findsOneWidget);
-    expect(find.text('Technogal.mp3'), findsOneWidget);
-    expect(find.text('lied.wav'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Spielen'), findsOneWidget);
+    expect(find.descendant(of: find.byType(QueueScreen), matching: find.text('Technogal.mp3')), findsOneWidget);
+    expect(find.descendant(of: find.byType(QueueScreen), matching: find.text('lied.wav')), findsOneWidget);
     expect(wiring.queue.length, 2);
     expect(wiring.queue.entries.map((entry) => entry.trackId), [8, 4]);
   });
@@ -458,8 +485,8 @@ void main() {
 
     // The queue is stored on the device, and the queue page is looking at it.
     expect(local.queue.single.title, 'song.mp3');
-    expect(find.text('Warteschlange'), findsOneWidget);
-    expect(find.text('song.mp3'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Spielen'), findsOneWidget);
+    expect(find.descendant(of: find.byType(QueueScreen), matching: find.text('song.mp3')), findsOneWidget);
 
     // Starting a playlist only fills the stored queue. "Nächstes Lied" from here starts
     // the first song; it must not answer that the list has already ended.
@@ -469,4 +496,49 @@ void main() {
     expect(wiring.player.localTitle, 'song.mp3');
     expect(find.text('Gerade: song.mp3'), findsOneWidget);
   });
+
+  test('a cover is kept under the key it was saved with', () {
+    final covers = CoverStore()..save('server:1', Uint8List.fromList([1, 2, 3]));
+
+    expect(covers['server:1'], [1, 2, 3]);
+    expect(covers['server:2'], isNull);
+  });
+
+  // An image picked for a playlist that does not exist yet has no id to be stored under;
+  // it belongs to the playlist the create then makes.
+  testWidgets('a picked image becomes the cover of the created playlist', (tester) async {
+    final adapter = StubAdapter(200, <Object>[]);
+    adapter.queue.addAll([(200, <Object>[]), (201, playlistAnswer)]);
+    final covers = CoverStore();
+
+    await openPlaylists(tester, playlists: adapter, covers: covers, pickImage: () async => _png);
+
+    await tester.tap(find.byIcon(Icons.add_photo_alternate_outlined));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).first, 'Favoriten');
+    await tester.tap(find.widgetWithText(FilledButton, 'Anlegen'));
+    await tester.pumpAndSettle();
+
+    expect(covers['server:1'], _png);
+    // The row in the list and the detail show the image instead of the mark.
+    expect(find.byType(Image), findsWidgets);
+  });
+
+  // The Playlists page draws the navigation every other page draws, so it is not a dead
+  // end: the sidebar reaches the queue from here.
+  testWidgets('the page navigates to another screen', (tester) async {
+    final queues = StubAdapter(200, <Object>[]);
+    await openPlaylists(tester, playlists: StubAdapter(200, <Object>[]), queues: queues);
+
+    await tester.tap(find.text('Warteschlange'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(QueueScreen), findsOneWidget);
+  });
 }
+
+/// A 1x1 transparent PNG: what the picker answers in the cover test.
+final _png = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+);

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/storage/session_store.dart';
 import '../../../core/storage/settings_store.dart';
+import '../../../shared/widgets/app_shell.dart';
 import '../../library/data/local_library.dart';
 import '../data/queue_repository.dart';
 import '../domain/player.dart';
@@ -316,8 +317,10 @@ class _QueueScreenState extends State<QueueScreen> {
     final message = _message();
     final currentTitle = _settings.localMode ? widget.player.localTitle : widget.queue.current?.title;
 
-    return Scaffold(
-      body: Column(
+    return AppShell(
+      selected: '/queue',
+      player: widget.player,
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(

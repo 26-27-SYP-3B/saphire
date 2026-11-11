@@ -7,6 +7,7 @@ import 'core/storage/settings_store.dart';
 import 'features/auth/data/auth_repository.dart';
 import 'features/library/data/library_repository.dart';
 import 'features/library/data/local_library.dart';
+import 'features/playlists/data/cover_store.dart';
 import 'features/playlists/data/playlist_repository.dart';
 import 'features/player/data/just_audio_player.dart';
 import 'features/player/data/queue_repository.dart';
@@ -26,6 +27,8 @@ Future<void> main() async {
   final session = await SessionStore.restore();
   final settings = await SettingsStore.restore();
   final localLibrary = await LocalLibrary.restore();
+  // The covers belong to this device, like the local library, so they are restored here.
+  final covers = await CoverStore.restore();
   final dio = Dio();
 
   final queue = PlaybackQueue();
@@ -43,6 +46,7 @@ Future<void> main() async {
       session: session,
       settings: settings,
       localLibrary: localLibrary,
+      covers: covers,
       dio: dio,
     ),
   );

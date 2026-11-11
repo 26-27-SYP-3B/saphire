@@ -5,7 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/storage/settings_store.dart';
 import '../../../core/utils/pick_audio.dart';
-import '../../../shared/widgets/saphire_logo.dart';
+import '../../../shared/widgets/app_shell.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/user.dart';
 import '../../library/data/library_repository.dart';
@@ -34,28 +34,6 @@ String greetingFor(DateTime now) {
   if (now.hour < 18) return 'Guten Nachmittag';
   return 'Guten Abend';
 }
-
-/// What the page shows. The uploaded songs are real; the playlist rows are placeholder,
-/// because they would need the real playlists from GET /api/playlists, and this page does
-/// not load them — the Playlists page is where a playlist exists. The only real songs on
-/// this page are the search results, which come from GET /api/music.
-const _placeholders = [
-  (title: 'Lieblingssongs', meta: 'Playlist · 150 Songs', icon: Icons.favorite),
-  (title: 'Workout', meta: 'Playlist · 87 Songs', icon: Icons.local_activity),
-  (title: 'Chill Vibes', meta: 'Playlist · 122 Songs', icon: Icons.wb_sunny),
-  (title: 'Techno', meta: 'Playlist · 95 Songs', icon: Icons.graphic_eq),
-  (title: 'Good Times', meta: 'Playlist · 78 Songs', icon: Icons.west),
-];
-
-const _navItems = [
-  (label: 'Home', icon: Icons.home, selected: true, route: ''),
-  (label: 'Suche', icon: Icons.search, selected: false, route: ''),
-  // What can be opened is what has a route in app/router.dart. Suche has no page of its
-  // own — it is the search field on this page — so it stays a label.
-  (label: 'Bibliothek', icon: Icons.library_books, selected: false, route: '/library'),
-  (label: 'Playlists', icon: Icons.playlist_play, selected: false, route: '/playlists'),
-  (label: 'Warteschlange', icon: Icons.queue_music, selected: false, route: '/queue'),
-];
 
 /// What the server accepts (server/music.go): the client only says it up front,
 /// the upload itself is still checked on the server.
@@ -318,178 +296,85 @@ class _HomeScreenState extends State<HomeScreen> {
     await _control(() => widget.player.syncLocalQueue(_local.queue));
   }
 
-  /// What the play button starts when nothing is playing. A song that was paused continues;
-  /// otherwise the server queue wins over a local one, and the stored local queue is what
-  /// starts on a first tap after a restart.
-  Future<void> _startPlayback() {
-    // A local song that is open resumes as it is. Syncing the stored list first could drop
-    // a song that was played straight from the library and is not in the queue.
-    if (widget.player.localTitle != null) return widget.player.resume();
-    // A paused server song continues where it was; opening it again would start from zero.
-    if (widget.player.queue.current != null && widget.player.failure == null) return widget.player.resume();
-    if (!widget.player.queue.isEmpty) return widget.player.playCurrent();
-
-    final local = _local.queue.isNotEmpty ? _local.queue : widget.player.localQueue;
-    if (local.isNotEmpty) return widget.player.playLocalQueue(local);
-    return widget.player.playCurrent();
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final results = _results();
 
-    return LayoutBuilder(builder: (context, constraints) {
-      // Below this width the sidebar has no room, the content takes the screen.
-      // For a phone the upgrade would be a drawer.
-      final wide = constraints.maxWidth >= 760;
-      final results = _results();
-
-      return Scaffold(
-        backgroundColor: scheme.surface,
-        body: SafeArea(
-          child: Row(
-            children: [
-              if (wide) _sidebar(constraints.maxHeight),
-              Expanded(
-                child: Column(
-                  children: [
-                    _topBar(),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _greeting(),
-                            if (_note != null) ...[
-                              const SizedBox(height: 16),
-                              Text(_note!, style: TextStyle(color: scheme.error)),
-                            ],
-                            if (results.isNotEmpty) ...[
-                              _section('Suchergebnisse'),
-                              _row([for (final entry in results) _songCard(entry)]),
-                            ],
-                            _section(
-                              'Lokale Songs',
-                              action: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  IconButton(
-                                    tooltip: 'Lokale Songs hinzufügen',
-                                    onPressed: _picking ? null : _addLocal,
-                                    icon: Icon(Icons.add, color: scheme.primary),
-                                  ),
-                                  IconButton(
-                                    tooltip: 'Ordner auswählen',
-                                    onPressed: _picking ? null : () => _addLocal(folder: true),
-                                    icon: Icon(Icons.create_new_folder, color: scheme.primary),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Text(
-                              _localHint,
-                              style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-                            ),
-                            const SizedBox(height: 12),
-                            _row([
-                              for (final track in _local.tracks.where((track) => _matches(track.title)))
-                                _localCard(track),
-                            ]),
-                            _section('Zuletzt gehört'),
-                            _row([
-                              for (final item in _placeholders.where((item) => _matches(item.title))) _card(item),
-                            ]),
-                            // Local mode has no server to upload to, so only the songs on
-                            // this device are shown.
-                            if (!_settings.localMode) ...[
-                              _section(
-                                'In aktueller Sitzung hinzugefügt',
-                                action: IconButton(
-                                  tooltip: 'Datei auswählen',
-                                  onPressed: _picking ? null : _upload,
-                                  icon: Icon(Icons.add, color: scheme.primary),
-                                ),
-                              ),
-                              Text(
-                                _uploadHint,
-                                style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-                              ),
-                              const SizedBox(height: 12),
-                              _row([
-                                for (final file in _files.where((file) => _matches(_title(file)))) _fileCard(file),
-                              ]),
-                            ],
-                          ],
+    return AppShell(
+      selected: '/home',
+      player: widget.player,
+      child: Column(
+        children: [
+          _topBar(),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _greeting(),
+                  if (_note != null) ...[
+                    const SizedBox(height: 16),
+                    Text(_note!, style: TextStyle(color: scheme.error)),
+                  ],
+                  if (results.isNotEmpty) ...[
+                    _section('Suchergebnisse'),
+                    _row([for (final entry in results) _songCard(entry)]),
+                  ],
+                  _section(
+                    'Lokale Songs',
+                    action: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          tooltip: 'Lokale Songs hinzufügen',
+                          onPressed: _picking ? null : _addLocal,
+                          icon: Icon(Icons.add, color: scheme.primary),
                         ),
+                        IconButton(
+                          tooltip: 'Ordner auswählen',
+                          onPressed: _picking ? null : () => _addLocal(folder: true),
+                          icon: Icon(Icons.create_new_folder, color: scheme.primary),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Text(
+                    _localHint,
+                    style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 12),
+                  _row([
+                    for (final track in _local.tracks.where((track) => _matches(track.title)))
+                      _localCard(track),
+                  ]),
+                  // Local mode has no server to upload to, so only the songs on
+                  // this device are shown.
+                  if (!_settings.localMode) ...[
+                    _section(
+                      'In aktueller Sitzung hinzugefügt',
+                      action: IconButton(
+                        tooltip: 'Datei auswählen',
+                        onPressed: _picking ? null : _upload,
+                        icon: Icon(Icons.add, color: scheme.primary),
                       ),
                     ),
-                    _playerBar(),
+                    Text(
+                      _uploadHint,
+                      style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                    ),
+                    const SizedBox(height: 12),
+                    _row([
+                      for (final file in _files.where((file) => _matches(_title(file)))) _fileCard(file),
+                    ]),
                   ],
-                ),
+                ],
               ),
-            ],
-          ),
-        ),
-      );
-    });
-  }
-
-  Widget _sidebar(double height) {
-    return SizedBox(
-      width: 248,
-      height: height,
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // The lines in the logo asset are thin, so at this size they come out
-            // soft — that is the small mark the mock shows.
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-              child: SaphireLogo(size: 44),
             ),
-            for (final item in _navItems) _navItem(item.label, item.icon, selected: item.selected, route: item.route),
-            _heading('Deine Inhalte'),
-            for (final item in [
-              (label: 'Playlists', icon: Icons.playlist_play),
-              (label: 'Alben', icon: Icons.album),
-              (label: 'Künstler*innen', icon: Icons.people),
-            ])
-              _navItem(item.label, item.icon),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _heading(String title) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
-      child: Text(title, style: Theme.of(context).textTheme.titleMedium),
-    );
-  }
-
-  Widget _navItem(String label, IconData icon, {bool selected = false, String route = ''}) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-
-    // A row with no route behind it stays a label. Only what has an endpoint can be
-    // opened, and that is what the routes in app/router.dart are.
-    final canOpen = route.isNotEmpty;
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
-      child: InkWell(
-        onTap: canOpen ? () => context.go(route) : null,
-        child: Row(
-          children: [
-            Icon(icon, size: 20, color: selected ? scheme.primary : scheme.onSurfaceVariant),
-            const SizedBox(width: 14),
-            Flexible(child: Text(label, style: theme.textTheme.labelLarge)),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -736,56 +621,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _playerBar() {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final current = widget.player.queue.current;
-    // A local file has no slot in the server queue, so the bar follows what the player
-    // opened last rather than the queue alone.
-    final localTitle = widget.player.localTitle;
-    final playing = widget.player.playing;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-      decoration: BoxDecoration(border: Border(top: BorderSide(color: scheme.outline))),
-      child: Row(
-        children: [
-          Icon(Icons.audio_file, size: 22, color: scheme.onSurfaceVariant),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  localTitle ?? current?.title ?? 'Nichts wird abgespielt',
-                  style: theme.textTheme.labelLarge,
-                ),
-                Text(
-                  widget.player.failure ??
-                      (localTitle != null
-                          ? 'Lokal · dieses Gerät'
-                          : current == null
-                              ? 'Suche ein Lied und öffne es, oder fülle die Warteschlange.'
-                              : 'Warteschlange · Slot ${current.position}'),
-                  style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            tooltip: playing ? 'Pause' : 'Abspielen',
-            onPressed: _busy ? null : () => _control(playing ? widget.player.pause : _startPlayback),
-            icon: Icon(playing ? Icons.pause : Icons.play_arrow),
-          ),
-          IconButton(
-            tooltip: 'Nächstes Lied',
-            onPressed: _busy ? null : () => _control(() => widget.player.next()),
-            icon: const Icon(Icons.skip_next),
-          ),
-        ],
       ),
     );
   }

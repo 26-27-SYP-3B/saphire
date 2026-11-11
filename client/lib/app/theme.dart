@@ -71,7 +71,9 @@ ThemeData buildTheme() {
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        minimumSize: const Size.fromHeight(48),
+        // Sizing stays up to the page: a Row has no width to fill, so the theme must not
+        // force the whole width.
+        minimumSize: const Size(0, 48),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
       ),

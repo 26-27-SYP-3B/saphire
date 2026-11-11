@@ -74,7 +74,10 @@ class AuthPage extends StatelessWidget {
                       Text(note!, style: TextStyle(color: theme.colorScheme.error)),
                     ],
                     const SizedBox(height: 24),
-                    FilledButton(onPressed: onSubmitted, child: Text(buttonLabel)),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(onPressed: onSubmitted, child: Text(buttonLabel)),
+                    ),
                     if (label != null) ...[
                       const SizedBox(height: 24),
                       Wrap(
