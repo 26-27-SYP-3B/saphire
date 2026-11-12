@@ -517,29 +517,39 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// A section title, with the control that belongs to the section at the end of the row: the
-  /// title stays where the eye looks for it, and the button is a thumb's reach away on a phone.
+  /// A section title, with the control that belongs to the section. A phone puts the control at
+  /// the end of the row, where the title stays where the eye looks for it and the button is a
+  /// thumb's reach away; the wide frame keeps it next to the title, where the mock has it.
   Widget _section(String title, {Widget? action}) {
     final theme = Theme.of(context);
+    final phone = MediaQuery.sizeOf(context).width < AppShell.wideAt;
+    final label = Expanded(
+      child: Text(title, style: theme.textTheme.titleLarge, maxLines: 1, overflow: TextOverflow.ellipsis),
+    );
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(0, 24, 0, 12),
       child: Row(
-        children: [
-          Expanded(child: Text(title, style: theme.textTheme.titleLarge, maxLines: 1, overflow: TextOverflow.ellipsis)),
-          ?action,
-        ],
+        children: phone
+            ? [label, ?action]
+            : [
+                if (action != null) ...[action, const SizedBox(width: 10)],
+                label,
+              ],
       ),
     );
   }
 
   /// The cards of one section. A phone fits two of them side by side, and two are what fills the
-  /// row: one 186 px card there would leave half the width empty.
+  /// row: one 186 px card there would leave half the width empty. A wide frame keeps the 186 px of
+  /// the mock whatever width the queue column leaves it, so opening the queue does not resize them.
   Widget _row(List<Widget> cards) {
+    final phone = MediaQuery.sizeOf(context).width < AppShell.wideAt;
+
     return LayoutBuilder(
       builder: (context, constraints) {
-        final wide = constraints.maxWidth >= 420;
-        final width = wide ? 186.0 : (constraints.maxWidth - 12) / 2;
+        final half = (constraints.maxWidth - 12) / 2;
+        final width = phone && half < 186 ? half : 186.0;
         return Wrap(
           spacing: 12,
           runSpacing: 12,

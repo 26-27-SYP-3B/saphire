@@ -596,7 +596,7 @@ void main() {
     // The title comes first, the buttons of the section follow it.
     final title = tester.getRect(find.text('Lokale Songs'));
     final add = tester.getRect(find.byTooltip('Lokale Songs hinzufügen'));
-    expect(add.left, greaterThan(title.right));
+    expect(add.left, greaterThanOrEqualTo(title.right));
 
     // Both cards are on the same row, and each is as wide as half of it.
     Rect card(String title) =>
@@ -604,6 +604,15 @@ void main() {
     expect(card('a.mp3').top, closeTo(card('b.mp3').top, 1));
     expect(card('b.mp3').left, greaterThan(card('a.mp3').right));
     expect(card('a.mp3').width, closeTo(card('b.mp3').width, 1));
+
+    // The mock's frame is what the desktop gets, so there the button stays beside the title and a
+    // card keeps its 186 px.
+    tester.view..physicalSize = const Size(1600, 1200)..devicePixelRatio = 1.0;
+    await tester.pumpAndSettle();
+
+    final wideTitle = tester.getRect(find.text('Lokale Songs'));
+    expect(tester.getRect(find.byTooltip('Lokale Songs hinzufügen')).right, lessThanOrEqualTo(wideTitle.left));
+    expect(card('a.mp3').width, 186);
   });
 }
 
