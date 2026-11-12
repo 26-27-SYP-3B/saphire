@@ -7,6 +7,9 @@ import 'package:saphire_client/features/player/domain/player.dart';
 /// tested against this instead of against the real player.
 class FakePlayer implements SongPlayer {
   final StreamController<void> _completed = StreamController<void>.broadcast();
+  final StreamController<Duration> _positions = StreamController<Duration>.broadcast();
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
 
   /// The URLs opened, in order. The URL is what the streaming endpoint serves, so this is
   /// how a test sees which song the queue chose.
@@ -50,9 +53,45 @@ class FakePlayer implements SongPlayer {
   @override
   bool get playing => _playing;
 
+  @override
+  Stream<Duration> get positionStream => _positions.stream;
+
+  @override
+  Duration get position => _position;
+
+  @override
+  Duration get duration => _duration;
+
+  /// What the player was asked to jump to, and what it was asked to set as the volume. A test
+  /// that checks a progress bar or a volume slider reads these.
+  final List<Duration> sought = [];
+  final List<double> volumes = [];
+
+  /// Where a test says the song is, and how long it is, so a seek can be checked against a real
+  /// length instead than against nothing.
+  void at(Duration position) {
+    _position = position;
+    _positions.add(position);
+  }
+
+  void length(Duration total) => _duration = total;
+
+  @override
+  Future<void> seek(Duration at) async {
+    sought.add(at);
+    _position = at;
+    _positions.add(at);
+  }
+
+  @override
+  Future<void> setVolume(double volume) async => volumes.add(volume);
+
   /// Says "this song ended", which is what moves a queue to the next entry.
   void complete() => _completed.add(null);
 
   @override
-  Future<void> dispose() => _completed.close();
+  Future<void> dispose() async {
+    await _completed.close();
+    await _positions.close();
+  }
 }

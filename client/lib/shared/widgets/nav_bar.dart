@@ -40,9 +40,8 @@ class NavBar extends StatelessWidget {
         children: [
           Icon(icon, size: 20, color: isCurrent ? scheme.primary : scheme.onSurfaceVariant),
           const SizedBox(width: 10),
-          // The sidebar has a fixed width, so a long label has to give way; the row that
-          // scrolls sideways sizes itself and must not hold a flex child.
-          if (vertical) Flexible(child: labelText) else labelText,
+          // A label that does not fit gives way, in the sidebar as in the row at the bottom.
+          Flexible(child: labelText),
         ],
       );
 
@@ -51,25 +50,25 @@ class NavBar extends StatelessWidget {
       return InkWell(
         onTap: to.isEmpty || isCurrent ? null : () => context.go(to),
         child: Padding(
-          // The column keeps the sidebar's own indent; a row starts at the margin the
-          // page already uses, so its first item lines up with the content below it.
+          // The column keeps the sidebar's own indent. The row at the bottom is the one a thumb
+          // aims at, so its items are 48 px tall — the smallest height a touch is aimed at without
+          // missing.
           padding: vertical
               ? const EdgeInsets.fromLTRB(20, 10, 20, 10)
-              : const EdgeInsets.fromLTRB(4, 8, 4, 8),
+              : const EdgeInsets.fromLTRB(12, 14, 12, 14),
           child: row,
         ),
       );
     }
 
-    final entries = [for (final item in navItems) entry(item.label, item.icon, item.to)];
+    // In the sidebar an item with no screen stays a label, because the sidebar shows what the app
+    // is planned to have. In the row at the bottom such an item would be a thing that cannot be
+    // tapped on a screen a person is trying to reach with one thumb, so only what leads somewhere
+    // is on it.
+    final entries = [for (final item in navItems) if (vertical || item.to.isNotEmpty) entry(item.label, item.icon, item.to)];
 
-    // The row of a narrow page scrolls sideways: with every item on it, a phone is
-    // narrower than the list, and an overflowing Row throws instead of scrolling.
     return vertical
         ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: entries)
-        : SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(mainAxisSize: MainAxisSize.min, children: entries),
-          );
+        : Row(children: [for (final row in entries) Expanded(child: row)]);
   }
 }

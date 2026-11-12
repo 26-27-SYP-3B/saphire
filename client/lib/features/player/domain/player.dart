@@ -22,6 +22,17 @@ abstract interface class SongPlayer {
 
   bool get playing;
 
+  /// Where the song is and how long it is. A page that shows a progress bar needs both, and the
+  /// media notification on a phone shows the same thing.
+  Stream<Duration> get positionStream;
+  Duration get position;
+  Duration get duration;
+
+  /// Jumps to a moment inside the song, and sets how loud it plays. Both are what the
+  /// full-screen player on a phone has buttons for.
+  Future<void> seek(Duration at);
+  Future<void> setVolume(double volume);
+
   /// Releases the audio object behind the player. The queue is the only thing that holds a
   /// player for the life of the app, so this is where it is closed.
   Future<void> dispose();
@@ -305,6 +316,55 @@ class QueuePlayer {
       await player.stop();
       return false;
     }
+
+    _changes.add(null);
+    await playCurrent();
+    return true;
+  }
+
+  /// Jumps inside the song that is open. Clamped to the song, because a progress bar can be
+  /// dragged to its end and a player asked past the end throws.
+  Future<void> seek(Duration at) async {
+    var to = at < Duration.zero ? Duration.zero : at;
+    final total = player.duration;
+    if (total > Duration.zero && to > total) to = total;
+    await player.seek(to);
+  }
+
+  /// Jumps by a number of seconds from where the song is now. This is what the ten-second
+  /// buttons on a phone do, and it does not move to another song.
+  Future<void> skip(Duration by) => seek(player.position + by);
+
+  /// How loud the song plays, 0 to 1. A page that shows a slider keeps the value it set; the
+  /// player is the thing that actually turns the volume down.
+  Future<void> setVolume(double volume) => player.setVolume(volume.clamp(0.0, 1.0));
+
+  Stream<Duration> get positionStream => player.positionStream;
+  Duration get position => player.position;
+  Duration get duration => player.duration;
+
+  /// Goes back to the song before the current one. At the first song there is nothing before it,
+  /// so this says false and the page does not claim a jump it did not do.
+  Future<bool> previous() async {
+    _leave(null);
+
+    if (_localIndex >= 0) {
+      if (_localIndex == 0) return false;
+
+      _localIndex -= 1;
+      try {
+        await _openLocal();
+      } catch (error) {
+        failure = error is PlaybackException ? error.message : '$error';
+        _changes.add(null);
+        return false;
+      }
+
+      _changes.add(null);
+      return true;
+    }
+
+    if (queue.back() == null) return false;
 
     _changes.add(null);
     await playCurrent();

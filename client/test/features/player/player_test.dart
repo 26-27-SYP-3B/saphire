@@ -307,6 +307,107 @@ void main() {
     expect(player.failure, contains('nicht gefunden'));
   });
 
+  // The previous button is the other way through the same list. At the first row there is nothing
+  // before it, so it says so and nothing is opened.
+  test('previous moves back to the row before the current one', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final queue = PlaybackQueue();
+    queue.fill([
+      QueueEntry(position: 1, trackId: 8, title: 'a'),
+      QueueEntry(position: 2, trackId: 4, title: 'b'),
+    ]);
+    final player = QueuePlayer(queue: queue, player: fake, session: loggedIn());
+    addTearDown(player.dispose);
+
+    await player.playCurrent();
+
+    // The first row: nothing before it, so the player does not claim a jump it did not do.
+    expect(await player.previous(), isFalse);
+    expect(fake.opened, ['$apiBaseUrl/api/music/8']);
+    expect(queue.current?.trackId, 8);
+
+    expect(await player.next(), isTrue);
+    expect(await player.previous(), isTrue);
+    expect(queue.current?.trackId, 8);
+    expect(fake.opened, ['$apiBaseUrl/api/music/8', '$apiBaseUrl/api/music/4', '$apiBaseUrl/api/music/8']);
+  });
+
+  // A local list has no slots, but it moves back the same way, and the song that is opened is the
+  // file on this device — a local song has no id to ask the server for.
+  test('previous moves back through a local list and opens the file on this device', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final player = QueuePlayer(queue: PlaybackQueue(), player: fake, session: SessionStore());
+    addTearDown(player.dispose);
+
+    await player.playLocalQueue([
+      LocalTrack(title: 'a.mp3', bytes: Uint8List.fromList([0xFF, 0xFB])),
+      LocalTrack(title: 'b.mp3', bytes: Uint8List.fromList([0xFF, 0xFB])),
+    ]);
+
+    await player.next();
+    expect(player.localTitle, 'b.mp3');
+
+    expect(await player.previous(), isTrue);
+    expect(player.localTitle, 'a.mp3');
+    // Nothing was asked from the server: the third open is the bytes of the first file.
+    expect(fake.opened.last, startsWith('data:audio/mpeg'));
+    expect(fake.played, hasLength(3));
+  });
+
+  // A progress bar can be dragged to its end, and a player asked past the end throws, so the jump
+  // is clamped to the song.
+  test('a seek past the length goes to the end and a negative one to the start', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final player = QueuePlayer(queue: PlaybackQueue(), player: fake, session: SessionStore());
+    addTearDown(player.dispose);
+
+    fake.length(const Duration(seconds: 30));
+
+    await player.seek(const Duration(seconds: 45));
+    expect(fake.sought, [const Duration(seconds: 30)]);
+
+    await player.seek(const Duration(seconds: -5));
+    expect(fake.sought.last, Duration.zero);
+  });
+
+  // The ten-second buttons move inside the song that is open, from where it currently is, and not
+  // back to the start of it.
+  test('skip moves from where the song currently is', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final player = QueuePlayer(queue: PlaybackQueue(), player: fake, session: SessionStore());
+    addTearDown(player.dispose);
+
+    fake.length(const Duration(seconds: 30));
+    fake.at(const Duration(seconds: 10));
+
+    await player.skip(const Duration(seconds: 10));
+    expect(fake.sought, [const Duration(seconds: 20)]);
+
+    await player.skip(const Duration(seconds: -10));
+    expect(fake.sought.last, const Duration(seconds: 10));
+  });
+
+  // The slider gives its value to the player, but a value outside 0..1 is not a volume.
+  test('setVolume passes the value through and clamps it', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final player = QueuePlayer(queue: PlaybackQueue(), player: fake, session: SessionStore());
+    addTearDown(player.dispose);
+
+    await player.setVolume(0.5);
+    expect(fake.volumes, [0.5]);
+
+    await player.setVolume(1.5);
+    expect(fake.volumes.last, 1.0);
+
+    await player.setVolume(-0.2);
+    expect(fake.volumes.last, 0.0);
+  });
+
   // The stored queue was reloaded and the song that is open — paused or not — is no longer
   // in it, so it must not stay the one the bar names.
   test('a song that left the local queue stops with it', () async {
