@@ -2,13 +2,19 @@
 /// reference to a library song: it has no file of its own, and the title can change
 /// under it.
 class QueueEntry {
-  const QueueEntry({required this.position, required this.trackId, required this.title});
+  const QueueEntry({required this.position, required this.trackId, required this.title, this.manual = false});
 
   /// 1-based, as the server numbers the slots. The positions stay contiguous, so a row
   /// can be addressed without knowing what was removed before it.
   final int position;
   final int trackId;
   final String title;
+
+  /// Whether this device put the song in the queue itself or got it from a list. The server
+  /// stores only the order and nothing about what filled it, so this is only what the app
+  /// remembers from the last fill or append. It is what separates "Als Nächstes in der
+  /// Warteschlange" from "Als Nächstes aus: …", and what "Warteschlange leeren" removes.
+  final bool manual;
 
   factory QueueEntry.fromJson(Map<String, dynamic> json) => QueueEntry(
     position: (json['position'] as num).toInt(),
@@ -19,7 +25,12 @@ class QueueEntry {
   /// The same song at another slot. The mirror renumbers this way, so a page shows the
   /// numbers the next read from the server would return.
   QueueEntry withPosition(int position) =>
-      QueueEntry(position: position, trackId: trackId, title: title);
+      QueueEntry(position: position, trackId: trackId, title: title, manual: manual);
+
+  /// The same song, known to be one the person put in the queue by hand.
+  QueueEntry asManual() => manual
+      ? this
+      : QueueEntry(position: position, trackId: trackId, title: title, manual: true);
 }
 
 /// Where a queue gets its songs. These are the three sources api-docs.md lists. A queue
@@ -62,8 +73,19 @@ class PlaybackQueue {
 
   final List<QueueEntry> _entries;
 
-  /// -1 means nothing is current. The server never says which song a device plays.
+  /// -1 means nothing is current. The server never says which device plays what.
   int index = -1;
+
+  /// What this device last filled the queue from, in the words a section heading needs.
+  /// The server does not store a source, so a page can only show what this device was told
+  /// when the list was filled.
+  String? filledFrom;
+
+  /// The songs this device played, newest first — the "Zuletzt gespielt" list. There is no
+  /// history endpoint, so this lives only while the app runs.
+  /// shortcut: capped at 50 so a player left open for days does not grow without end.
+  /// Upgrade: a store, if the app should remember across restarts.
+  final List<QueueEntry> history = [];
 
   List<QueueEntry> get entries => List.unmodifiable(_entries);
   int get length => _entries.length;
@@ -74,14 +96,27 @@ class PlaybackQueue {
   /// Replaces the queue, the way POST /api/queue does: starting a second playlist must
   /// not keep the songs of the first. Nothing becomes current by filling: a queue is an
   /// order, and which song is playing is the device's decision, not the list's.
-  void fill(List<QueueEntry> from) {
+  ///
+  /// `fromName` is the list the rows came from. Rows with no list behind them are songs the
+  /// person put there by hand, and those are the ones "Warteschlange leeren" removes.
+  void fill(List<QueueEntry> from, {String? fromName}) {
     _entries
       ..clear()
-      ..addAll(from);
+      ..addAll([for (final entry in from) fromName == null ? entry.asManual() : entry]);
     index = -1;
+    filledFrom = fromName;
   }
 
-  void append(QueueEntry entry) => _entries.add(entry);
+  /// Adds one song at the end — the plain queue feature, POST /api/queue/songs. An entry
+  /// added this way is always one the person put there themselves.
+  void append(QueueEntry entry) => _entries.add(entry.asManual());
+
+  /// Records a song as played, newest first, for the "Zuletzt gespielt" tab. Only a song
+  /// this device actually started belongs here, so this is called when playback moves on.
+  void recordPlayed(QueueEntry entry) {
+    history.insert(0, entry);
+    if (history.length > 50) history.removeLast();
+  }
 
   /// Removes one 1-based slot and renumbers the rest. The server does the same, so the
   /// mirror stays the same shape without asking again. Returns false when the mirror is
@@ -111,9 +146,33 @@ class PlaybackQueue {
     return true;
   }
 
-  void clear() {
-    _entries.clear();
-    index = -1;
+  /// Moves a row to another slot and renumbers, the way the server would after a move. The
+  /// song that is playing is not touched: dragging a row must not change what is audible.
+  /// Returns false for a slot the mirror does not have.
+  /// shortcut: there is no reorder endpoint (api-docs.md, Upcoming), so this order exists
+  /// only on this device and a read would give the server order back. Upgrade: the
+  /// documented PUT /api/playlists/{id}/songs/{position} rule, once the queue has one too.
+  bool move(int from, int to) {
+    if (from < 0 || from >= _entries.length || to < 0 || to >= _entries.length) return false;
+    if (from == to) return true;
+
+    final wasCurrent = index == from;
+    final entry = _entries.removeAt(from);
+    _entries.insert(to, entry);
+
+    for (var i = 0; i < _entries.length; i++) {
+      _entries[i] = _entries[i].withPosition(i + 1);
+    }
+
+    if (wasCurrent) {
+      index = to;
+    } else if (index >= 0) {
+      // Every row that passed the current one shifts it, and so does every row it passed.
+      if (index > from) index -= 1;
+      if (index >= to) index += 1;
+    }
+
+    return true;
   }
 
   /// Moves to the next song and returns what should play next, or null when the queue is

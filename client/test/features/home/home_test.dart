@@ -6,11 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:saphire_client/core/config/api_config.dart';
-import 'package:saphire_client/core/storage/settings_store.dart';
-import 'package:saphire_client/core/utils/pick_audio.dart';
 import 'package:saphire_client/features/auth/data/auth_repository.dart';
 import 'package:saphire_client/features/home/presentation/home_screen.dart';
-import 'package:saphire_client/features/library/data/local_library.dart';
 import 'package:saphire_client/features/player/domain/player.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
 
@@ -47,6 +44,7 @@ const twoSongQueue = [
   {'position': 2.0, 'track_id': 4.0, 'title': 'lied.wav'},
 ];
 
+
 /// Opens the start page with a valid session, so the greeting has a name, and hands the
 /// wiring back so a test can check what the page does with the session, the adapters and
 /// the player it was given. The player is the one the app shares, so a test can say "this
@@ -58,18 +56,16 @@ Future<Wiring> openHome(
   int uploadStatus = 201,
   Map<String, Object> uploadBody = uploadAnswer,
   PickAudio? pickAudio,
-  PickLocalAudio? pickLocal,
-  PickLocalAudio? pickFolder,
-  SettingsStore? settings,
-  LocalLibrary? localLibrary,
   StubAdapter? uploads,
   StubAdapter? library,
   StubAdapter? queues,
   SongPlayer? audio,
+  bool narrow = false,
 }) async {
-  // The test font draws every glyph as wide as the font size, so this page needs
-  // more room than the default test window.
-  tester.view..physicalSize = const Size(1600, 1200)..devicePixelRatio = 1.0;
+  // The test font draws every glyph as wide as the font size, so this page needs more room
+  // than the default test window. For the phone shape the window stays below the width where
+  // HomeScreen switches to its one-column layout.
+  tester.view..physicalSize = narrow ? const Size(700, 1200) : const Size(1600, 1200)..devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
 
@@ -84,12 +80,10 @@ Future<Wiring> openHome(
             UploadRepository(Dio()..httpClientAdapter = uploads ?? StubAdapter(uploadStatus, uploadBody), wiring.session),
         library: wiring.library,
         queues: wiring.queues,
+        playlists: wiring.playlists,
         player: wiring.player,
+        session: wiring.session,
         pickAudio: pickAudio ?? pickedFiles,
-        pickLocal: pickLocal ?? (() async => null),
-        pickFolder: pickFolder ?? (() async => null),
-        settings: settings,
-        localLibrary: localLibrary,
       ),
     ),
   );
@@ -99,7 +93,7 @@ Future<Wiring> openHome(
 }
 
 Future<void> upload(WidgetTester tester) async {
-  await tester.tap(find.byTooltip('Datei auswählen'));
+  await tester.tap(find.widgetWithText(FilledButton, 'Eigene Dateien hochladen'));
   await tester.pumpAndSettle();
 }
 
@@ -190,7 +184,8 @@ void main() {
       ],
     );
 
-    await upload(tester);
+    await tester.tap(find.widgetWithText(FilledButton, 'Eigene Dateien hochladen'));
+    await tester.pumpAndSettle();
 
     // The first file is held by the gate, so its row still shows its own progress.
     expect(find.textContaining('wird hochgeladen ·'), findsOneWidget);
@@ -218,7 +213,8 @@ void main() {
       ],
     );
 
-    await upload(tester);
+    await tester.tap(find.widgetWithText(FilledButton, 'Eigene Dateien hochladen'));
+    await tester.pumpAndSettle();
 
     await tester.pumpWidget(const SizedBox());
     gate.complete();
@@ -235,42 +231,29 @@ void main() {
       return picker.future;
     });
 
-    final pick = find.byTooltip('Datei auswählen');
-    await tester.tap(pick);
+    await tester.tap(find.widgetWithText(FilledButton, 'Eigene Dateien hochladen'));
     await tester.pump();
 
-    // The button is off while the picker is open, so the second tap does nothing.
-    await tester.tap(pick);
-    await tester.pump();
+    // The chip is a plain label while the picker is open, so there is nothing to tap.
+    expect(find.widgetWithText(FilledButton, 'Eigene Dateien hochladen'), findsNothing);
     expect(opened, 1);
 
     picker.complete(null);
     await tester.pumpAndSettle();
 
-    // It works again once the picker answered.
-    await tester.tap(pick);
-    await tester.pump();
-    expect(opened, 2);
+    expect(find.widgetWithText(FilledButton, 'Eigene Dateien hochladen'), findsOneWidget);
+    expect(opened, 1);
   });
 
-  // The page shows no invented playlists; the Playlists page is where the user's own are.
-  testWidgets('the home page has no static playlist rows', (tester) async {
+  testWidgets('the search field only shows what matches', (tester) async {
     await openHome(tester);
 
-    expect(find.text('Zuletzt gehört'), findsNothing);
-    expect(find.text('Lieblingssongs'), findsNothing);
-    expect(find.text('Workout'), findsNothing);
-  });
+    await tester.enterText(find.byType(TextField), 'techno');
+    await tester.pumpAndSettle();
 
-  // One navigation for every page: Playlists appears once, the section heading is gone, and
-  // the two labels without a screen yet are there.
-  testWidgets('the navigation lists every page once', (tester) async {
-    await openHome(tester);
-
-    expect(find.text('Playlists'), findsOneWidget);
-    expect(find.text('Deine Inhalte'), findsNothing);
-    expect(find.text('Alben'), findsOneWidget);
-    expect(find.text('Künstler*innen'), findsOneWidget);
+    // The rows on the page, not the list in the sidebar.
+    expect(find.descendant(of: find.byType(Wrap), matching: find.text('Techno')), findsOneWidget);
+    expect(find.descendant(of: find.byType(Wrap), matching: find.text('Workout')), findsNothing);
   });
 
   // The search is the one place this page shows real songs: it filters the library the page
@@ -385,99 +368,68 @@ void main() {
     expect(find.textContaining('Das Lied konnte nicht gespielt werden'), findsOneWidget);
   });
 
-  // A local song that is not in the stored queue must not be dropped by a tap on play: the
-  // bar keeps naming it and the file is not opened again.
-  testWidgets('the bar resumes a local song that is not in the stored queue', (tester) async {
+  // Opening the queue must not touch playback: the panel only reads, so the song that was
+  // playing when it opened is still playing when it closes.
+  testWidgets('the queue icon opens the panel on the side without interrupting playback', (tester) async {
     final audio = FakePlayer();
     addTearDown(audio.dispose);
-
-    final wiring = await openHome(
-      tester,
-      settings: SettingsStore()..save(localMode: true),
-      localLibrary: LocalLibrary(),
-      audio: audio,
-      pickLocal: () async => [(name: 'song.mp3', path: null, bytes: Uint8List.fromList([0x49, 0x44, 0x33]))],
-    );
-
-    await tester.tap(find.byTooltip('Lokale Songs hinzufügen'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('song.mp3'));
-    await tester.pumpAndSettle();
-    expect(wiring.player.localTitle, 'song.mp3');
-
-    await tester.tap(find.widgetWithIcon(IconButton, Icons.pause));
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithIcon(IconButton, Icons.play_arrow));
-    await tester.pumpAndSettle();
-
-    expect(wiring.player.localTitle, 'song.mp3');
-    expect(audio.opened, hasLength(1));
-    expect(audio.played, hasLength(2));
-  });
-
-  // A local song can be put into the local queue without a server. It is stored with the
-  // library, so the queue page can play it after a restart too.
-  testWidgets('a long press puts a local song into the local queue', (tester) async {
-    final local = LocalLibrary();
-
-    final wiring = await openHome(
-      tester,
-      settings: SettingsStore()..save(localMode: true),
-      localLibrary: local,
-      pickLocal: () async => [(name: 'song.mp3', path: null, bytes: Uint8List.fromList([0x49, 0x44, 0x33]))],
-    );
-
-    await tester.tap(find.byTooltip('Lokale Songs hinzufügen'));
-    await tester.pumpAndSettle();
-    await tester.longPress(find.text('song.mp3'));
-    await tester.pumpAndSettle();
-
-    expect(local.queue.single.title, 'song.mp3');
-    // The shared player has the same order, so a tap on play starts this song.
-    expect(wiring.player.localQueue.single.title, 'song.mp3');
-    expect(find.textContaining('in die Warteschlange gelegt'), findsOneWidget);
-  });
-
-  // A whole folder is added at once, without picking every file.
-  testWidgets('a folder is added as its songs', (tester) async {
-    final local = LocalLibrary();
-
+    // The page fills the queue with the tapped song, then the panel reads it back; the same
+    // answer is what both get.
     await openHome(
       tester,
-      settings: SettingsStore()..save(localMode: true),
-      localLibrary: local,
-      pickFolder: () async => [
-        (name: 'a.mp3', path: 'C:/musik/a.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33])),
-        (name: 'b.mp3', path: 'C:/musik/b.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33])),
-      ],
+      library: StubAdapter(200, libraryAnswer),
+      queues: StubAdapter(200, twoSongQueue),
+      audio: audio,
     );
 
-    await tester.tap(find.byTooltip('Ordner auswählen'));
+    await tester.enterText(find.byType(TextField), 'techno');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Technogal.mp3'));
     await tester.pumpAndSettle();
 
-    expect(local.tracks.map((track) => track.title), ['a.mp3', 'b.mp3']);
-    expect(find.text('a.mp3'), findsOneWidget);
+    await tester.tap(find.byTooltip('Warteschlange öffnen'));
+    await tester.pumpAndSettle();
+
+    // The panel is open on the side: its close button and the section with the song that plays.
+    expect(find.byIcon(Icons.close), findsOneWidget);
+    expect(find.text('Läuft gerade'), findsOneWidget);
+    expect(find.textContaining('Warteschlange · Slot 1'), findsOneWidget);
+    expect(audio.opened, ['$apiBaseUrl/api/music/8']);
+    expect(audio.playing, isTrue);
+
+    await tester.tap(find.byIcon(Icons.close));
+    await tester.pumpAndSettle();
+
+    // Closing only takes the panel away. The bar still shows the same song, and the same song is
+    // still what the audio has open.
+    expect(find.byIcon(Icons.close), findsNothing);
+    expect(find.textContaining('Warteschlange · Slot 1'), findsOneWidget);
+    expect(audio.opened, ['$apiBaseUrl/api/music/8']);
+    expect(audio.playing, isTrue);
   });
 
-  // A browser has no folders, so the picker can fail. That is not a refused file, so the
-  // page says what to do next instead of naming one file.
-  testWidgets('a folder that cannot be read says what to do next', (tester) async {
-    await openHome(tester, pickFolder: () async => throw UnsupportedError('keine Ordner'));
+  // On a phone there is no room beside the content, so the queue takes the whole page and
+  // the page it replaced is gone until the queue is closed.
+  testWidgets('on a phone the queue is its own view and giving it back returns to the content', (tester) async {
+    await openHome(
+      tester,
+      narrow: true,
+      library: StubAdapter(200, libraryAnswer),
+      queues: StubAdapter(200, twoSongQueue),
+    );
 
-    await tester.tap(find.byTooltip('Ordner auswählen'));
+    expect(find.text('Eigene Dateien hochladen'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Warteschlange öffnen'));
     await tester.pumpAndSettle();
 
-    // The picker's own reason is kept: "try again" would never work here.
-    expect(find.text('keine Ordner'), findsOneWidget);
-  });
+    // Nothing was played here, so the panel shows the rows it read as the person's own.
+    expect(find.text('Als Nächstes in der Warteschlange'), findsOneWidget);
+    expect(find.text('Eigene Dateien hochladen'), findsNothing);
 
-  testWidgets('a folder without songs says so', (tester) async {
-    await openHome(tester, pickFolder: () async => []);
-
-    await tester.tap(find.byTooltip('Ordner auswählen'));
+    await tester.tap(find.byIcon(Icons.close));
     await tester.pumpAndSettle();
 
-    expect(find.text('In diesem Ordner sind keine MP3-Dateien.'), findsOneWidget);
+    expect(find.text('Eigene Dateien hochladen'), findsOneWidget);
   });
 }
-
