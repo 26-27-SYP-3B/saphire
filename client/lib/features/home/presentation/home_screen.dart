@@ -37,14 +37,14 @@ String greetingFor(DateTime now) {
   return 'Guten Abend';
 }
 
-/// What the server accepts (server/music.go): the client only says it up front,
-/// the upload itself is still checked on the server.
-const _uploadHint = 'Erlaubt: MP3, WAV, M4A, OGG, OPUS, FLAC, AAC · höchstens 500 MiB pro Datei';
+/// What the server accepts (server/src/music.rs): every audio file, and the client only says what
+/// it knows up front — the upload itself is still checked on the server.
+const _uploadHint = 'Jede Audiodatei · höchstens 500 MiB pro Datei';
 
 /// What the local library takes: the files stay where the user keeps them, which is why
 /// a moved file is only noticed when it is played. A long press puts one into the queue.
 const _localHint =
-    'MP3-Dateien von diesem Gerät · sie bleiben, wo sie sind, und spielen auch ohne Server · lange drücken für die Warteschlange';
+    'Audiodateien von diesem Gerät · sie bleiben, wo sie sind, und spielen auch ohne Server · lange drücken für die Warteschlange';
 
 /// The home screen: the app on the left, the greeting and the rows on the right.
 /// Upload, playlists and the queue reach the server; the playlist rows below are the
@@ -211,8 +211,9 @@ class _HomeScreenState extends State<HomeScreen> {
       if (mounted) setState(() => _note = '${error.message}');
       return;
     } catch (_) {
-      // A folder that cannot be read is not a refused file, so no row can name it.
-      if (mounted) setState(() => _note = 'Die Dateien konnten nicht gelesen werden. Versuch es erneut.');
+      // A folder that cannot be read is not a refused file, so no row can name it. The app has
+      // no storage access on most phones, and saying so beats "no songs in here".
+      if (mounted) setState(() => _note = 'Dieser Ordner konnte nicht gelesen werden. Wähle die Songs stattdessen einzeln aus.');
       return;
     } finally {
       if (mounted) setState(() => _picking = false);
@@ -220,7 +221,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (picked == null || !mounted) return;
 
     if (picked.isEmpty) {
-      if (folder) setState(() => _note = 'In diesem Ordner sind keine MP3-Dateien.');
+      if (folder) setState(() => _note = 'In diesem Ordner sind keine Audiodateien.');
       return;
     }
 

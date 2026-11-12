@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -513,7 +514,21 @@ void main() {
     await tester.tap(find.byTooltip('Ordner auswählen'));
     await tester.pumpAndSettle();
 
-    expect(find.text('In diesem Ordner sind keine MP3-Dateien.'), findsOneWidget);
+    expect(find.text('In diesem Ordner sind keine Audiodateien.'), findsOneWidget);
+  });
+
+  // A folder the app may not read is not an empty folder, and the answer must not say it is: on a
+  // phone the storage belongs to the system, and only picking the songs one by one works there.
+  testWidgets('a folder that cannot be read says what to do instead', (tester) async {
+    await openHome(tester, pickFolder: () async => throw const FileSystemException('denied'));
+
+    await tester.tap(find.byTooltip('Ordner auswählen'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Dieser Ordner konnte nicht gelesen werden. Wähle die Songs stattdessen einzeln aus.'),
+      findsOneWidget,
+    );
   });
 
   // Below AppShell.wideAt the sidebar has no room, so the navigation becomes the row at the bottom

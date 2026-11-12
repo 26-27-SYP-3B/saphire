@@ -23,11 +23,9 @@ pub const MAX_TITLE_LEN: usize = 200;
 /// the whole file is read, large enough that a 500 MiB song is not sent in tiny pieces.
 pub const CHUNK_BYTES: usize = 32 << 10;
 
-/// The formats the library accepts, with the content type they are reported as.
-///
-/// Not every audio container can be sniffed (M4A reads as plain binary), so the extension
-/// decides those cases; for the formats the sniffer can name, the bytes must actually agree
-/// with it.
+/// The audio formats whose extension alone names their content type, for the files whose bytes
+/// say nothing (most containers have no signature the sniffer can read). Any other audio file is
+/// still accepted — see `detect_audio_type`.
 pub const AUDIO_EXTENSIONS: [(&str, &str); 7] = [
     (".mp3", "audio/mpeg"),
     (".wav", "audio/wav"),
@@ -224,24 +222,33 @@ pub fn extension_of(name: &str) -> String {
     }
 }
 
-/// What an uploaded file is. The extension must be an allowed audio format, and the bytes must
-/// agree with it where they can be sniffed. Formats the sniffer cannot name read as plain
-/// binary and are accepted on their extension alone; a text file or an image renamed `.mp3` is
-/// refused.
+/// What an uploaded file is.
+///
+/// Every audio file is accepted, not only the containers listed in `AUDIO_EXTENSIONS`: there are
+/// more formats than a table can keep up with (AIFF, WMA, AMR, MIDI, …), and a song refused for
+/// its extension is a song the person cannot upload.
+///
+/// The bytes still decide what they can. A file whose content is provably not audio — text, an
+/// image, a PDF, an archive — is refused under any name, and a content type the sniffer names wins
+/// over the extension. When the bytes are just binary, the extension is taken at its word: the
+/// listed formats get their documented type, everything else is served as `audio/<extension>`.
 pub fn detect_audio_type(extension: &str, data: &[u8]) -> Result<String, String> {
-    let by_extension = match AUDIO_EXTENSIONS.iter().find(|(ext, _)| *ext == extension) {
-        Some((_, media_type)) => *media_type,
-        None => return Err("only audio files are accepted (mp3, wav, m4a, ogg, opus, flac, aac)".to_string()),
-    };
-
     let sniffed = normalize_audio_type(&sniff(data));
-    if sniffed == "application/octet-stream" {
-        return Ok(by_extension.to_string());
+
+    if is_audio(&sniffed) {
+        return Ok(sniffed);
     }
-    if !is_audio(&sniffed) {
+    if sniffed != "application/octet-stream" {
         return Err(format!("the uploaded file is not audio, its content reads as {sniffed}"));
     }
-    Ok(sniffed)
+
+    if let Some((_, media_type)) = AUDIO_EXTENSIONS.iter().find(|(ext, _)| *ext == extension) {
+        return Ok((*media_type).to_string());
+    }
+    if extension.is_empty() {
+        return Err("the uploaded file has no extension that says what it is".to_string());
+    }
+    Ok(format!("audio/{}", extension.trim_start_matches('.')))
 }
 
 /// The sniffer reports WAV as `audio/wave` and Ogg as `application/ogg`. Both are audio, and
@@ -263,7 +270,7 @@ fn is_audio(media_type: &str) -> bool {
 /// containers it recognizes, and the formats a file renamed `.mp3` turns out to be. Unknown
 /// bytes answer as plain binary, which is what lets an extension decide.
 fn sniff(data: &[u8]) -> String {
-    const SIGNATURES: [(&[u8], &str); 8] = [
+    const SIGNATURES: [(&[u8], &str); 11] = [
         (b"RIFF", "audio/wave"),
         (b"ID3", "audio/mpeg"),
         (b"ID2", "audio/mpeg"),
@@ -272,6 +279,9 @@ fn sniff(data: &[u8]) -> String {
         (b"\xff\xd8\xff", "image/jpeg"),
         (b"GIF8", "image/gif"),
         (b"%PDF", "application/pdf"),
+        (b"PK\x03\x04", "application/zip"),
+        (b"\x1f\x8b", "application/gzip"),
+        (b"\x7fELF", "application/x-elf"),
     ];
 
     for (signature, media_type) in SIGNATURES {

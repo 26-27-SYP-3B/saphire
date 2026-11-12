@@ -280,7 +280,15 @@ async fn upload_rejects_bad_uploads() {
             b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR".to_vec(),
             StatusCode::BAD_REQUEST,
         ),
-        ("extension not allowed", "file", "song.zip", common::not_audio(), StatusCode::BAD_REQUEST),
+        ("extension not allowed", "file", "song.zip", b"PK\x03\x04\x14\x00\x00\x00".to_vec(), StatusCode::BAD_REQUEST),
+        (
+            "an archive renamed .mp3",
+            "file",
+            "song.mp3",
+            b"PK\x03\x04\x14\x00\x00\x00".to_vec(),
+            StatusCode::BAD_REQUEST,
+        ),
+        ("a name without an extension", "file", "song", common::not_audio(), StatusCode::BAD_REQUEST),
         ("empty file", "file", "empty.wav", Vec::new(), StatusCode::BAD_REQUEST),
         ("field is not a file", "file", "", common::not_audio(), StatusCode::BAD_REQUEST),
         ("wrong field name", "upload", "song.flac", common::not_audio(), StatusCode::BAD_REQUEST),
@@ -339,6 +347,23 @@ async fn an_ogg_file_is_accepted_as_audio() {
 
     let track = common::json(&reply.body);
     assert_eq!(track["content_type"].as_str(), Some("audio/ogg"), "Ogg is not stored as the documented type: {}", reply.body);
+}
+
+/// A format the table does not list is still a song: `AIFF` has no signature the sniffer reads, so
+/// the extension decides, and the file is kept under the extension it came with.
+#[tokio::test]
+async fn an_audio_format_the_table_does_not_list_is_accepted() {
+    let test = common::setup().await;
+    let token = common::token(&test, "lukas", "valid-password").await;
+
+    let aiff = b"FORM\x00\x00\x00\x00AIFFCOMM\x00\x00\x00\x00".to_vec();
+    let reply = common::upload(&test, &token, "file", "song.aiff", &aiff).await;
+    assert_eq!(reply.status, StatusCode::CREATED, "aiff upload -> {} ({})", reply.status, reply.body);
+
+    let track = common::json(&reply.body);
+    assert_eq!(track["content_type"].as_str(), Some("audio/aiff"), "the extension does not name the type: {}", reply.body);
+    let stored = track["stored_name"].as_str().unwrap_or_default();
+    assert!(stored.ends_with(".aiff"), "the extension is not kept: {stored}");
 }
 
 #[tokio::test]
