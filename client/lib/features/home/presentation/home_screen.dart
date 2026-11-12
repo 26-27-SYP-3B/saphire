@@ -413,15 +413,20 @@ class _HomeScreenState extends State<HomeScreen> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final name = _user?.username;
+    // The chevrons belong to the mock's wide frame and go nowhere; on a phone they would only
+    // press the search field that is worth more than they are.
+    final wide = MediaQuery.sizeOf(context).width >= AppShell.wideAt;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
       child: Row(
         children: [
-          Icon(Icons.chevron_left, color: scheme.onSurfaceVariant),
-          const SizedBox(width: 8),
-          Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
-          const SizedBox(width: 16),
+          if (wide) ...[
+            Icon(Icons.chevron_left, color: scheme.onSurfaceVariant),
+            const SizedBox(width: 8),
+            Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
+            const SizedBox(width: 16),
+          ],
           Expanded(
             // The server has no search endpoint, so what is typed here filters the library
             // this page loaded once (see the shortcut in library/data/library_repository.dart).
@@ -512,7 +517,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// A section title, with the control for that section on its left when there is one.
+  /// A section title, with the control that belongs to the section at the end of the row: the
+  /// title stays where the eye looks for it, and the button is a thumb's reach away on a phone.
   Widget _section(String title, {Widget? action}) {
     final theme = Theme.of(context);
 
@@ -520,67 +526,77 @@ class _HomeScreenState extends State<HomeScreen> {
       padding: const EdgeInsets.fromLTRB(0, 24, 0, 12),
       child: Row(
         children: [
-          if (action != null) ...[action, const SizedBox(width: 10)],
-          Flexible(child: Text(title, style: theme.textTheme.titleLarge, maxLines: 1, overflow: TextOverflow.ellipsis)),
+          Expanded(child: Text(title, style: theme.textTheme.titleLarge, maxLines: 1, overflow: TextOverflow.ellipsis)),
+          ?action,
         ],
       ),
     );
   }
 
-  Widget _row(List<Widget> cards) => Wrap(spacing: 12, runSpacing: 12, children: cards);
+  /// The cards of one section. A phone fits two of them side by side, and two are what fills the
+  /// row: one 186 px card there would leave half the width empty.
+  Widget _row(List<Widget> cards) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 420;
+        final width = wide ? 186.0 : (constraints.maxWidth - 12) / 2;
+        return Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [for (final card in cards) SizedBox(width: width, height: 186, child: card)],
+        );
+      },
+    );
+  }
 
   Widget _card(({String title, String meta, IconData icon}) item) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
-    return SizedBox(
-      width: 186,
-      height: 186,
-      child: Container(
-        decoration: BoxDecoration(
-          color: scheme.surfaceContainer,
-          border: Border.all(color: scheme.outline),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // The mock has pictures here. Until the library has an API, a
-              // gradient in the brand color stands in for one.
-              Container(
-                width: double.infinity,
-                height: 96,
-                alignment: Alignment.bottomLeft,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [scheme.primary.withValues(alpha: 0.35), scheme.surface],
-                  ),
-                  borderRadius: BorderRadius.circular(8),
+    return Container(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainer,
+        border: Border.all(color: scheme.outline),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // The mock has pictures here. Until the library has an API, a
+            // gradient in the brand color stands in for one.
+            Container(
+              width: double.infinity,
+              height: 96,
+              alignment: Alignment.bottomLeft,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [scheme.primary.withValues(alpha: 0.35), scheme.surface],
                 ),
-                child: Padding(
-                  padding: const EdgeInsets.all(10),
-                  child: Icon(item.icon, color: scheme.onSurface),
-                ),
+                borderRadius: BorderRadius.circular(8),
               ),
-              const SizedBox(height: 10),
-              Text(
-                item.title,
-                style: theme.textTheme.titleMedium,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Icon(item.icon, color: scheme.onSurface),
               ),
-              Text(
-                item.meta,
-                style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              item.title,
+              style: theme.textTheme.titleMedium,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            Text(
+              item.meta,
+              style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
         ),
       ),
     );
@@ -613,43 +629,39 @@ class _HomeScreenState extends State<HomeScreen> {
     final scheme = theme.colorScheme;
     final failed = file.error != null;
 
-    return SizedBox(
-      width: 186,
-      height: 186,
-      child: Container(
-        decoration: BoxDecoration(
-          color: scheme.surfaceContainer,
-          // A refused file is marked as refused, so the row can be told apart.
-          border: Border.all(color: failed ? scheme.error : scheme.outline),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(failed ? Icons.error : Icons.audio_file, color: failed ? scheme.error : scheme.primary),
-              const Spacer(),
-              Text(
-                _title(file),
-                style: theme.textTheme.titleMedium,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 6),
-              Text(
-                _result(file),
-                style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              // The bar is only for a file that is still on its way.
-              if (!failed && file.track == null) ...[
-                const SizedBox(height: 8),
-                LinearProgressIndicator(value: file.percent / 100, minHeight: 3),
-              ],
+    return Container(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainer,
+        // A refused file is marked as refused, so the row can be told apart.
+        border: Border.all(color: failed ? scheme.error : scheme.outline),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(failed ? Icons.error : Icons.audio_file, color: failed ? scheme.error : scheme.primary),
+            const Spacer(),
+            Text(
+              _title(file),
+              style: theme.textTheme.titleMedium,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _result(file),
+              style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            // The bar is only for a file that is still on its way.
+            if (!failed && file.track == null) ...[
+              const SizedBox(height: 8),
+              LinearProgressIndicator(value: file.percent / 100, minHeight: 3),
             ],
-          ),
+          ],
         ),
       ),
     );

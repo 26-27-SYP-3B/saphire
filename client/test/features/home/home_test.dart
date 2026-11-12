@@ -57,6 +57,7 @@ const twoSongQueue = [
 /// song ended" and see what the bar shows.
 Future<Wiring> openHome(
   WidgetTester tester, {
+  Size size = const Size(1600, 1200),
   int userStatus = 200,
   Map<String, Object> userBody = userAnswer,
   int uploadStatus = 201,
@@ -73,7 +74,7 @@ Future<Wiring> openHome(
 }) async {
   // The test font draws every glyph as wide as the font size, so this page needs
   // more room than the default test window.
-  tester.view..physicalSize = const Size(1600, 1200)..devicePixelRatio = 1.0;
+  tester.view..physicalSize = size..devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
 
@@ -571,6 +572,38 @@ void main() {
 
     expect(find.byType(LibraryScreen), findsOneWidget);
     expect(find.text('Technogal.mp3'), findsOneWidget);
+  });
+
+  // A phone is 360 px wide and the page cannot borrow room from anywhere: the search field keeps
+  // the space the mock's chevrons took, the button of a section sits at the end of its row, and
+  // two cards share a row instead of one card leaving half the width empty.
+  testWidgets('on a phone the page is laid out for the width it has', (tester) async {
+    final local = LocalLibrary()
+      ..add(name: 'a.mp3', path: 'C:/musik/a.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]))
+      ..add(name: 'b.mp3', path: 'C:/musik/b.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
+
+    await openHome(
+      tester,
+      size: const Size(360, 740),
+      settings: SettingsStore()..save(localMode: true),
+      localLibrary: local,
+    );
+
+    // The field is what a person aims at, so the decoration that goes nowhere gives it its room.
+    expect(tester.getRect(find.byType(TextField)).width, greaterThan(200));
+    expect(find.byIcon(Icons.chevron_left), findsNothing);
+
+    // The title comes first, the buttons of the section follow it.
+    final title = tester.getRect(find.text('Lokale Songs'));
+    final add = tester.getRect(find.byTooltip('Lokale Songs hinzufügen'));
+    expect(add.left, greaterThan(title.right));
+
+    // Both cards are on the same row, and each is as wide as half of it.
+    Rect card(String title) =>
+        tester.getRect(find.ancestor(of: find.text(title), matching: find.byType(InkWell)).first);
+    expect(card('a.mp3').top, closeTo(card('b.mp3').top, 1));
+    expect(card('b.mp3').left, greaterThan(card('a.mp3').right));
+    expect(card('a.mp3').width, closeTo(card('b.mp3').width, 1));
   });
 }
 
