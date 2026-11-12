@@ -281,7 +281,10 @@ class QueuePlayer {
     // Nothing is current until a player starts one. A queue that was just filled plays
     // from its first song, which is what pressing play means.
     final entry = queue.current ?? queue.advance();
-    if (entry == null) return;
+    if (entry == null) {
+      _changes.add(null);
+      return;
+    }
 
     failure = null;
 
@@ -294,6 +297,10 @@ class QueuePlayer {
       headers: token == null ? const {} : {'Authorization': 'Bearer $token'},
     );
     await player.play();
+
+    // Reported here, because a row opened from a page has no next() or previous() behind it: without
+    // this the bar, the queue and the notification would keep the song that was there before.
+    _changes.add(null);
   }
 
   /// Starts the song that was opened last again. A local file has no queue entry, so the
@@ -317,7 +324,7 @@ class QueuePlayer {
       return false;
     }
 
-    _changes.add(null);
+    // playCurrent reports the song it opened, so nothing is reported here.
     await playCurrent();
     return true;
   }
@@ -346,28 +353,49 @@ class QueuePlayer {
   /// Goes back to the song before the current one. At the first song there is nothing before it,
   /// so this says false and the page does not claim a jump it did not do.
   Future<bool> previous() async {
-    _leave(null);
+    // The check comes first: a press that does nothing must not write the song to the history a
+    // second time.
+    if ((_localIndex >= 0 ? _localIndex : queue.index) <= 0) return false;
+
+    // The song being left is taken before the list moves, and recorded only when the move worked:
+    // a song that could not be opened leaves the same song playing, and must not be written twice.
+    final left = _localIndex >= 0
+        ? QueueEntry.fromLocal(_localIndex + 1, _local[_localIndex])
+        : queue.current;
 
     if (_localIndex >= 0) {
-      if (_localIndex == 0) return false;
-
+      final from = _localIndex;
       _localIndex -= 1;
       try {
         await _openLocal();
       } catch (error) {
+        // The song that could not be opened is not the one being played, so the list stays at the
+        // song it was at.
+        _localIndex = from;
         failure = error is PlaybackException ? error.message : '$error';
         _changes.add(null);
         return false;
       }
 
+      if (left != null) queue.recordPlayed(left);
       _changes.add(null);
       return true;
     }
 
-    if (queue.back() == null) return false;
+    final from = queue.index;
+    queue.back();
+    try {
+      await playCurrent();
+    } catch (error) {
+      // The same repair as for a local list: the slot goes back to the song that is still playing.
+      queue.index = from;
+      failure = error is PlaybackException ? error.message : '$error';
+      _changes.add(null);
+      return false;
+    }
 
+    if (left != null) queue.recordPlayed(left);
     _changes.add(null);
-    await playCurrent();
     return true;
   }
 
@@ -378,6 +406,18 @@ class QueuePlayer {
   /// Whether audio is playing right now. A page that removes a row needs this: the row it
   /// is taking out may be the one that is audible, and then the audio has to move with it.
   bool get playing => player.playing;
+
+  /// What the bar and the full player write under the title. One place, because both show it and
+  /// the two must not say different things about the same song.
+  String get statusNote {
+    if (failure != null) return failure!;
+
+    final local = localCurrent;
+    if (local != null) return 'Lokal · dieses Gerät';
+
+    final entry = queue.current;
+    return entry == null ? 'Suche ein Lied und öffne es, oder fülle die Warteschlange.' : 'Warteschlange · Slot ${entry.position}';
+  }
 
   Future<void> _onCompleted() async {
     // The song that just ended is what was played, so it belongs to the history before the
@@ -405,9 +445,9 @@ class QueuePlayer {
       // that stops in the middle is not a JSON error either: the status was already sent,
       // so the only sign is that the body stopped.
       failure = 'Das Lied konnte nicht gespielt werden: $error';
+      // playCurrent reports a song it opened; a song it could not open has to be reported here.
+      _changes.add(null);
     }
-
-    _changes.add(null);
   }
 
   Future<void> dispose() async {

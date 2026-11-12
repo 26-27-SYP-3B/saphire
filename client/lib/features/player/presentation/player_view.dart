@@ -46,6 +46,10 @@ class _PlayerViewState extends State<PlayerView> {
   // needs the value it last had.
   double _volume = 1.0;
 
+  // Where the thumb is while a finger is on the progress bar. The position stream keeps running,
+  // so without this the thumb would be pulled back under the finger.
+  double? _drag;
+
   @override
   void initState() {
     super.initState();
@@ -107,14 +111,8 @@ class _PlayerViewState extends State<PlayerView> {
                       // shortcut: the acceptance criteria ask for an Interpret, but neither a queue
                       // answer nor a picked file names one, so this line says where the song is.
                       // Upgrade: `artist` in the queue response (api-docs.md), then this line shows
-                      // it.
-                      _note ??
-                          widget.player.failure ??
-                          (local != null
-                              ? 'Lokal · dieses Gerät'
-                              : entry == null
-                                  ? 'Warteschlange ist leer'
-                                  : 'Warteschlange · Slot ${entry.position}'),
+                      // it. The player names the line, so the bar and this view agree.
+                      _note ?? widget.player.statusNote,
                       style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
                     ),
                   ],
@@ -131,17 +129,27 @@ class _PlayerViewState extends State<PlayerView> {
           const SizedBox(height: 12),
           Row(
             children: [
-              const Text('0:00'),
+              Text(_clock(_at)),
               Expanded(
                 child: Slider(
                   // A song whose length the player does not know cannot be seeked to a tenth of it,
                   // so the bar stays where it is.
                   max: total.inMilliseconds > 0 ? total.inMilliseconds.toDouble() : 1,
                   value: total.inMilliseconds > 0
-                      ? (_at.inMilliseconds.clamp(0, total.inMilliseconds)).toDouble()
+                      ? (_drag ?? (_at.inMilliseconds.clamp(0, total.inMilliseconds)).toDouble())
                       : 0,
-                  onChanged: total.inMilliseconds > 0
-                      ? (value) => _run(() => widget.player.seek(Duration(milliseconds: value.round())))
+                  onChanged: total.inMilliseconds > 0 ? (value) => setState(() => _drag = value) : null,
+                  // Only the release seeks: one seek per drag frame fights the position stream and
+                  // most of the jumps would be thrown away.
+                  onChangeEnd: total.inMilliseconds > 0
+                      ? (value) {
+                          final to = Duration(milliseconds: value.round());
+                          setState(() {
+                            _drag = null;
+                            _at = to;
+                          });
+                          _run(() => widget.player.seek(to));
+                        }
                       : null,
                 ),
               ),

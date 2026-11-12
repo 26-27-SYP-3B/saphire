@@ -1,5 +1,7 @@
 package at.htlleonding.saphire_client
 
-import io.flutter.embedding.android.FlutterActivity
+import com.ryanheise.audioservice.AudioServiceActivity
 
-class MainActivity : FlutterActivity()
+// AudioServiceActivity instead of FlutterActivity, so a tap on the media notification comes back to
+// this app's engine instead of starting a second one.
+class MainActivity : AudioServiceActivity()
