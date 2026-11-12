@@ -199,7 +199,7 @@ curl -X POST localhost:8080/api/music/upload \
 
 | Part | Rules |
 |---|---|
-| `file` | Not empty, at most 500 MiB. Accepted audio extensions: `mp3`, `wav`, `m4a`, `ogg`, `opus`, `flac`, `aac`. If the content can be sniffed it must actually be audio, so a text file renamed `.mp3` is refused; formats the sniffer cannot name (M4A, Ogg, FLAC) are accepted on their extension. |
+| `file` | Not empty, at most 500 MiB. **Every audio file is accepted** — the extension does not have to be one the server knows. The bytes decide what they can: content the server recognizes as not audio (text, PNG/JPEG/GIF, a PDF, a ZIP/gzip/RAR/7z archive, an ELF or Windows executable) is refused under any name, and a content type the server can read wins over the extension. Otherwise the extension names the type: `mp3`, `m4a`, `ogg`/`opus`, `wav`, `flac`, `aac` map to the documented types, any other extension is served as `audio/<extension>` (e.g. `song.aiff` → `audio/aiff`). That extension must be letters and digits, at most ten, because it becomes the content type; a name without one (or ending in a dot) is refused when its bytes say nothing. |
 | name | Base name only, no control characters, at most 200 characters. An MP3 whose tags name a title (`TIT2`) uses that instead, so a file is titled by what it says about itself; the name is the fallback. The file itself is stored under a generated name (16 random bytes as hex + the extension), so no client name can escape the library folder and no upload overwrites another song. |
 
 **Responses**
@@ -209,7 +209,7 @@ curl -X POST localhost:8080/api/music/upload \
 | `201 Created` | File saved in the library and the row inserted | `{"id": 4, "uploaded_by": "lukas", "title": "Neutrone (Remix)", "artist": "Kraftwerk", "duration_ms": 261000, "stored_name": "18cfd7db41d243d98cc87c4ab33dded6.mp3", "size": 4237, "content_type": "audio/mpeg", "uploaded_at": 1793974311}` |
 | `401 Unauthorized` | Missing `Authorization: Bearer` header | `{"error": "authorization header with a Bearer token is missing"}` |
 | `401 Unauthorized` | Unknown or expired token | `{"error": "session is not valid or expired"}` |
-| `400 Bad Request` | Not `multipart/form-data`, no file, the field is not named `file`, an empty file, a name with no usable characters, or content that is not audio | `{"error": "only audio files are accepted (mp3, wav, m4a, ogg, opus, flac, aac)"}` |
+| `400 Bad Request` | Not `multipart/form-data`, no file, the field is not named `file`, an empty file, a name with no usable characters, a file without an extension whose bytes say nothing, or content that is not audio | `{"error": "the uploaded file is not audio, its content reads as application/zip"}` |
 | `413 Request Entity Too Large` | Upload larger than 500 MiB | `{"error": "upload is larger than 500 MiB"}` |
 | `429 Too Many Requests` | Upload rate limit reached (3 requests per IP, refilling 1 token every 30 s — its own bucket). Includes a `Retry-After` header (seconds until the next token, at most the 30 s refill window). | `{"error": "too many uploads from this address, try again later"}` |
 | `500 Internal Server Error` | Writing the file or inserting the row failed | `{"error": "could not save the file"}` |
