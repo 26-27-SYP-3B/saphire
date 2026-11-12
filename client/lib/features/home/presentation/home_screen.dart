@@ -1,21 +1,27 @@
 import 'dart:async';
+import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../core/storage/settings_store.dart';
-import '../../../core/utils/pick_audio.dart';
-import '../../../shared/widgets/app_shell.dart';
+import '../../../core/storage/session_store.dart';
+import '../../../shared/widgets/saphire_logo.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/user.dart';
 import '../../library/data/library_repository.dart';
-import '../../library/data/local_library.dart';
-import '../../library/domain/local_track.dart';
+import '../../library/domain/library_entry.dart';
 import '../../player/data/queue_repository.dart';
 import '../../player/domain/player.dart';
 import '../../player/domain/queue.dart';
+import '../../player/presentation/queue_panel.dart';
+import '../../playlists/data/playlist_repository.dart';
 import '../../upload/data/upload_repository.dart';
 import '../../upload/domain/track.dart';
+
+/// A picked song: the name the server would store as the title and its bytes.
+typedef PickedAudio = ({String name, Uint8List bytes});
+typedef PickAudio = Future<List<PickedAudio>?> Function();
 
 /// One file in the upload window: what it is, how far it got, what the server
 /// said about it. Every picked file keeps its own row, so the results do not mix.
@@ -28,6 +34,19 @@ class _UploadFile {
   Track? track;
 }
 
+/// The picker used when the screen is started without one. A widget test passes
+/// its own, because the plugin cannot answer there. Any file can be picked,
+/// because which formats are allowed is the server's decision (see server/music.go);
+/// a file it refuses comes back as its message and is shown on that file's row.
+Future<List<PickedAudio>?> pickAudioFiles() async {
+  final picked = await FilePicker.pickFiles(type: FileType.any);
+  if (picked.isEmpty) return null;
+
+  // shortcut: the whole file is held in memory. Upgrade: stream from the path on
+  // the platforms that give one, so a 500 MiB song is not read twice.
+  return [for (final file in picked) (name: file.name, bytes: await file.readAsBytes())];
+}
+
 /// The greeting follows the time of day.
 String greetingFor(DateTime now) {
   if (now.hour < 11) return 'Guten Morgen';
@@ -35,14 +54,31 @@ String greetingFor(DateTime now) {
   return 'Guten Abend';
 }
 
+/// What the page shows. The uploaded songs are real; the playlist rows are placeholder,
+/// because they would need the real playlists from GET /api/playlists, and this page does
+/// not load them — the Playlists page is where a playlist exists. The only real songs on
+/// this page are the search results, which come from GET /api/music.
+const _placeholders = [
+  (title: 'Lieblingssongs', meta: 'Playlist · 150 Songs', icon: Icons.favorite),
+  (title: 'Workout', meta: 'Playlist · 87 Songs', icon: Icons.local_activity),
+  (title: 'Chill Vibes', meta: 'Playlist · 122 Songs', icon: Icons.wb_sunny),
+  (title: 'Techno', meta: 'Playlist · 95 Songs', icon: Icons.graphic_eq),
+  (title: 'Good Times', meta: 'Playlist · 78 Songs', icon: Icons.west),
+];
+
+const _navItems = [
+  (label: 'Home', icon: Icons.home, selected: true, route: ''),
+  (label: 'Suche', icon: Icons.search, selected: false, route: ''),
+  (label: 'Bibliothek', icon: Icons.library_books, selected: false, route: ''),
+  // Playlists and the queue are the two areas that have endpoints now, so they can be
+  // opened. The others stay labels.
+  (label: 'Playlists', icon: Icons.playlist_play, selected: false, route: '/playlists'),
+  (label: 'Warteschlange', icon: Icons.queue_music, selected: false, route: '/queue'),
+];
+
 /// What the server accepts (server/music.go): the client only says it up front,
 /// the upload itself is still checked on the server.
 const _uploadHint = 'Erlaubt: MP3, WAV, M4A, OGG, OPUS, FLAC, AAC · höchstens 500 MiB pro Datei';
-
-/// What the local library takes: the files stay where the user keeps them, which is why
-/// a moved file is only noticed when it is played. A long press puts one into the queue.
-const _localHint =
-    'MP3-Dateien von diesem Gerät · sie bleiben, wo sie sind, und spielen auch ohne Server · lange drücken für die Warteschlange';
 
 /// The home screen: the app on the left, the greeting and the rows on the right.
 /// Upload, playlists and the queue reach the server; the playlist rows below are the
@@ -60,26 +96,20 @@ class HomeScreen extends StatefulWidget {
     required this.uploads,
     required this.library,
     required this.queues,
+    required this.playlists,
     required this.player,
+    required this.session,
     this.pickAudio = pickAudioFiles,
-    this.pickLocal = pickLocalAudioFiles,
-    this.pickFolder = pickLocalFolder,
-    this.settings,
-    this.localLibrary,
   });
 
   final AuthRepository repository;
   final UploadRepository uploads;
   final LibraryRepository library;
   final QueueRepository queues;
+  final PlaylistRepository playlists;
   final QueuePlayer player;
+  final SessionStore session;
   final PickAudio pickAudio;
-  final PickLocalAudio pickLocal;
-  final PickLocalAudio pickFolder;
-
-  /// Null in a test that does not care about local mode: the stores then stay in memory.
-  final SettingsStore? settings;
-  final LocalLibrary? localLibrary;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -87,11 +117,8 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final List<_UploadFile> _files = [];
-  List<Track> _library = [];
+  List<LibraryEntry> _library = [];
   final TextEditingController _search = TextEditingController();
-
-  late final SettingsStore _settings = widget.settings ?? SettingsStore();
-  late final LocalLibrary _local = widget.localLibrary ?? LocalLibrary();
 
   // The message from the session check. What a single file got is on its own row.
   String? _note;
@@ -100,6 +127,10 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _picking = false;
   // While a queue call is running the same tap must not start it again.
   bool _busy = false;
+  // The queue is opened from the player bar. On a desktop it is the panel on the right and
+  // this page stays; on a phone the panel takes the page. Opening it never touches the
+  // player, so the song that is running keeps running.
+  bool _queueOpen = false;
   StreamSubscription<void>? _changes;
 
   @override
@@ -112,13 +143,10 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     // The name in the greeting is the account name, so it comes from the session
     // check: the session store holds only the token, nothing that says who we are.
-    // Local mode has no account and no server to ask, so both reads are skipped there.
-    if (!_settings.localMode) {
-      _loadUser();
-      // The search has nothing to filter until the library is here, so it is read once
-      // when the page opens rather than on every keystroke.
-      _loadLibrary();
-    }
+    _loadUser();
+    // The search has nothing to filter until the library is here, so it is read once
+    // when the page opens rather than on every keystroke.
+    _loadLibrary();
   }
 
   @override
@@ -187,43 +215,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// Adds picked files to the local library. Each file is checked on its own, so a
-  /// refused one says why and the rest still land in the library. `folder` takes a whole
-  /// directory instead of single files; a browser has no folders, so that path throws.
-  Future<void> _addLocal({bool folder = false}) async {
-    if (_picking) return;
-
-    setState(() => _picking = true);
-    final List<PickedLocal>? picked;
-    try {
-      picked = await (folder ? widget.pickFolder() : widget.pickLocal());
-    } on UnsupportedError catch (error) {
-      // A browser has no folders, so "try again" would never work there.
-      if (mounted) setState(() => _note = '${error.message}');
-      return;
-    } catch (_) {
-      // A folder that cannot be read is not a refused file, so no row can name it.
-      if (mounted) setState(() => _note = 'Die Dateien konnten nicht gelesen werden. Versuch es erneut.');
-      return;
-    } finally {
-      if (mounted) setState(() => _picking = false);
-    }
-    if (picked == null || !mounted) return;
-
-    if (picked.isEmpty) {
-      if (folder) setState(() => _note = 'In diesem Ordner sind keine MP3-Dateien.');
-      return;
-    }
-
-    setState(() {
-      for (final file in picked!) {
-        final refused = _local.add(name: file.name, path: file.path, bytes: file.bytes);
-        // The message names the file, so with a batch it is clear which one was refused.
-        if (refused != null) _note = '${file.name}: $refused';
-      }
-    });
-  }
-
   /// The name the row shows: before the answer the picked name, after it the title
   /// the server stored (base name only, see api-docs.md).
   String _title(_UploadFile file) => file.track?.title ?? file.name;
@@ -243,7 +234,7 @@ class _HomeScreenState extends State<HomeScreen> {
   /// What the search field finds. The server has no search endpoint (api-docs.md, Upcoming),
   /// so this filters the library the page loaded. Without a query nothing is a result, because
   /// without a query the page shows its sections instead of a result list.
-  List<Track> _results() {
+  List<LibraryEntry> _results() {
     final query = _search.text.trim().toLowerCase();
     if (query.isEmpty) return const [];
     return [for (final entry in _library) if (_matches(entry.title)) entry];
@@ -259,17 +250,8 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       await action();
     } catch (error) {
-      // A player that cannot open a song is not a JSON error, so the message is ours
-      // there. A missing local file already says what is wrong.
-      if (mounted) {
-        setState(() {
-          _note = switch (error) {
-            QueueException(:final message) => message,
-            PlaybackException(:final message) => message,
-            _ => 'Das Lied konnte nicht gespielt werden: $error',
-          };
-        });
-      }
+      // A player that cannot open a song is not a JSON error, so the message is ours there.
+      if (mounted) setState(() => _note = error is QueueException ? error.message : 'Das Lied konnte nicht gespielt werden: $error');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -278,107 +260,192 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Opening a search result fills the queue with that one song and plays it, the way the
   /// Playlists page starts a playlist. The player only ever reads a queue, so a song picked
   /// here and a song from a playlist play exactly the same way.
-  Future<void> _play(Track entry) => _control(() async {
-    widget.player.queue.fill(await widget.queues.fill(QueueSource.track(entry.id)));
+  Future<void> _play(LibraryEntry entry) => _control(() async {
+    // The name the queue panel shows for these rows is what this page filled them with: the
+    // library. The server answer does not say that.
+    widget.player.queue.fill(await widget.queues.fill(QueueSource.track(entry.id)), fromName: 'der Bibliothek');
     await widget.player.playCurrent();
   });
 
-  /// A local song plays straight from the device: no queue call and no token, so it works
-  /// with no server and no account.
-  Future<void> _playLocal(LocalTrack track) => _control(() => widget.player.playLocal(track));
-
-  /// Long-pressing a local card puts the song into the local queue. The queue in the bar
-  /// then plays the list in order, still without a server.
-  Future<void> _queueLocal(LocalTrack track) async {
-    _local.addToQueue(track);
-    // Said before the sync, so a failure to sync overwrites it instead of being hidden.
-    setState(() => _note = '${track.title} in die Warteschlange gelegt.');
-    await _control(() => widget.player.syncLocalQueue(_local.queue));
-  }
+  /// The queue panel, with this page's own wiring. It is the same widget the queue route
+  /// builds, so a song started here is the same song the panel shows.
+  Widget _queuePanel() => QueuePanel(
+    queues: widget.queues,
+    playlists: widget.playlists,
+    queue: widget.player.queue,
+    player: widget.player,
+    session: widget.session,
+    // Closing goes back to the page the panel was opened from. The player is the app's
+    // player, so nothing about the audio changes.
+    onClose: () => setState(() => _queueOpen = false),
+  );
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final results = _results();
 
-    return AppShell(
-      selected: '/home',
-      player: widget.player,
-      queues: widget.queues,
-      library: widget.library,
-      localMode: _settings.localMode,
-      localLibrary: _local,
-      child: Column(
-        children: [
-          _topBar(),
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _greeting(),
-                  if (_note != null) ...[
-                    const SizedBox(height: 16),
-                    Text(_note!, style: TextStyle(color: scheme.error)),
-                  ],
-                  if (results.isNotEmpty) ...[
-                    _section('Suchergebnisse'),
-                    _row([for (final entry in results) _songCard(entry)]),
-                  ],
-                  _section(
-                    'Lokale Songs',
-                    action: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          tooltip: 'Lokale Songs hinzufügen',
-                          onPressed: _picking ? null : _addLocal,
-                          icon: Icon(Icons.add, color: scheme.primary),
-                        ),
-                        IconButton(
-                          tooltip: 'Ordner auswählen',
-                          onPressed: _picking ? null : () => _addLocal(folder: true),
-                          icon: Icon(Icons.create_new_folder, color: scheme.primary),
-                        ),
-                      ],
+    return LayoutBuilder(builder: (context, constraints) {
+      // Below this width the sidebar has no room, the content takes the screen.
+      // For a phone the upgrade would be a drawer.
+      final wide = constraints.maxWidth >= 760;
+      final results = _results();
+
+      return Scaffold(
+        backgroundColor: scheme.surface,
+        body: SafeArea(
+          child: Row(
+            children: [
+              if (wide) _sidebar(constraints.maxHeight),
+              Expanded(
+                child: Column(
+                  children: [
+                    _topBar(),
+                    // On a phone the queue is its own view, so it takes the place of the page.
+                    Expanded(
+                      child: _queueOpen && !wide
+                          ? _queuePanel()
+                          : SingleChildScrollView(
+                              padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _greeting(),
+                                  const SizedBox(height: 24),
+                                  Wrap(
+                                    spacing: 10,
+                                    runSpacing: 10,
+                                    children: [
+                                      _chip('Dein Mix', Icons.equalizer),
+                                      _chip('Charts', Icons.star),
+                                      _chip('Radio', Icons.radio),
+                                      _chip('Eigene Dateien hochladen', Icons.upload, onPressed: _picking ? null : _upload),
+                                      _chip('Entdecken', Icons.explore),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    _uploadHint,
+                                    style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                                  ),
+                                  if (_note != null) ...[
+                                    const SizedBox(height: 16),
+                                    Text(_note!, style: TextStyle(color: scheme.error)),
+                                  ],
+                                  if (results.isNotEmpty) ...[
+                                    _section('Suchergebnisse'),
+                                    _row([for (final entry in results) _songCard(entry)]),
+                                  ],
+                                  _section('Eigene Dateien'),
+                                  _row([
+                                    for (final file in _files.where((file) => _matches(_title(file)))) _fileCard(file),
+                                    if (_files.isEmpty && _matches('Eigene Dateien')) _uploadCard(),
+                                  ]),
+                                  _section('Zuletzt gehört'),
+                                  _row([
+                                    for (final item in _placeholders.where((item) => _matches(item.title))) _card(item),
+                                  ]),
+                                ],
+                              ),
+                            ),
                     ),
-                  ),
-                  Text(
-                    _localHint,
-                    style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-                  ),
-                  const SizedBox(height: 12),
-                  _row([
-                    for (final track in _local.tracks.where((track) => _matches(track.title)))
-                      _localCard(track),
-                  ]),
-                  // Local mode has no server to upload to, so only the songs on
-                  // this device are shown.
-                  if (!_settings.localMode) ...[
-                    _section(
-                      'In aktueller Sitzung hinzugefügt',
-                      action: IconButton(
-                        tooltip: 'Datei auswählen',
-                        onPressed: _picking ? null : _upload,
-                        icon: Icon(Icons.add, color: scheme.primary),
+                    _playerBar(),
+                  ],
+                ),
+              ),
+              // On a desktop the page stays where it is and the queue is the panel beside it.
+              if (_queueOpen && wide) SizedBox(width: 360, height: constraints.maxHeight, child: _queuePanel()),
+            ],
+          ),
+        ),
+      );
+    });
+  }
+
+  Widget _sidebar(double height) {
+    final theme = Theme.of(context);
+
+    return SizedBox(
+      width: 248,
+      height: height,
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // The lines in the logo asset are thin, so at this size they come out
+            // soft — that is the small mark the mock shows.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+              child: SaphireLogo(size: 44),
+            ),
+            for (final item in _navItems) _navItem(item.label, item.icon, selected: item.selected, route: item.route),
+            _heading('Deine Inhalte'),
+            for (final item in [
+              (label: 'Eigene Dateien', icon: Icons.add),
+              (label: 'Playlists', icon: Icons.playlist_play),
+              (label: 'Alben', icon: Icons.album),
+              (label: 'Künstler*innen', icon: Icons.people),
+            ])
+              _navItem(item.label, item.icon),
+            _heading('Playlists'),
+            // The sidebar is the list of what is there, the search field above
+            // only filters the page.
+            for (final item in _placeholders)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 6, 20, 6),
+                child: Row(
+                  children: [
+                    _thumb(item.icon),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(item.title, style: theme.textTheme.labelLarge),
+                          Text(
+                            item.meta,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    Text(
-                      _uploadHint,
-                      style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-                    ),
-                    const SizedBox(height: 12),
-                    _row([
-                      for (final file in _files.where((file) => _matches(_title(file)))) _fileCard(file),
-                    ]),
                   ],
-                ],
+                ),
               ),
-            ),
-          ),
-        ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _heading(String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+      child: Text(title, style: Theme.of(context).textTheme.titleMedium),
+    );
+  }
+
+  Widget _navItem(String label, IconData icon, {bool selected = false, String route = ''}) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    // A row with no route behind it stays a label. Only what has an endpoint can be
+    // opened, and that is what the routes in app/router.dart are.
+    final canOpen = route.isNotEmpty;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
+      child: InkWell(
+        onTap: canOpen ? () => context.go(route) : null,
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: selected ? scheme.primary : scheme.onSurfaceVariant),
+            const SizedBox(width: 14),
+            Flexible(child: Text(label, style: theme.textTheme.labelLarge)),
+          ],
+        ),
       ),
     );
   }
@@ -412,30 +479,14 @@ class _HomeScreenState extends State<HomeScreen> {
             tooltip: 'Konto',
             offset: const Offset(0, 44),
             onSelected: (value) {
-              if (value == 'settings') {
-                context.go('/settings');
-                return;
-              }
-              // Local mode ends with a login: the form saves that choice, so the next
-              // start asks for the password again instead of opening the home screen.
-              if (value == 'connect') {
-                // Ohne gespeicherten Server gibt es keine Adresse für das Login; der
-                // Start fragt danach. Sonst ginge die Anmeldung an den Standard-Server.
-                context.go(_settings.serverBase == null ? '/setup' : '/login');
-                return;
-              }
               if (value != 'logout') return;
               // There is no logout endpoint yet (api-docs.md, Upcoming), so
               // dropping the token here is the whole logout on this side.
               widget.repository.logout();
               context.go('/login');
             },
-            itemBuilder: (context) => [
-              const PopupMenuItem(value: 'settings', child: Text('Einstellungen')),
-              if (_settings.localMode)
-                const PopupMenuItem(value: 'connect', child: Text('Mit Server verbinden'))
-              else
-                const PopupMenuItem(value: 'logout', child: Text('Abmelden')),
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: 'logout', child: Text('Abmelden')),
             ],
             child: Container(
               width: 34,
@@ -469,9 +520,8 @@ class _HomeScreenState extends State<HomeScreen> {
             style: theme.textTheme.displayLarge,
             children: [
               TextSpan(
-                // The session check is still running on the first frames. Local mode has
-                // no account, so there is nobody to name.
-                text: _settings.localMode ? 'du' : (name ?? '…'),
+                // The session check is still running on the first frames.
+                text: name ?? '…',
                 style: TextStyle(color: theme.colorScheme.primary),
               ),
             ],
@@ -486,18 +536,10 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// A section title, with the control for that section on its left when there is one.
-  Widget _section(String title, {Widget? action}) {
-    final theme = Theme.of(context);
-
+  Widget _section(String title) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(0, 24, 0, 12),
-      child: Row(
-        children: [
-          if (action != null) ...[action, const SizedBox(width: 10)],
-          Flexible(child: Text(title, style: theme.textTheme.titleLarge, maxLines: 1, overflow: TextOverflow.ellipsis)),
-        ],
-      ),
+      child: Text(title, style: Theme.of(context).textTheme.titleLarge),
     );
   }
 
@@ -563,20 +605,10 @@ class _HomeScreenState extends State<HomeScreen> {
   /// A real library song: the same card as the placeholder rows, but it can be opened,
   /// because a search result is something the user means to play. The line under the title
   /// says where the row came from, so a real song can be told apart from a mock row.
-  Widget _songCard(Track entry) {
+  Widget _songCard(LibraryEntry entry) {
     return InkWell(
       onTap: _busy ? null : () => _play(entry),
       child: _card((title: entry.title, meta: 'Bibliothek', icon: Icons.audio_file)),
-    );
-  }
-
-  /// A local song: the same card as a library song, but the line under the title says it
-  /// comes from this device and not from the server.
-  Widget _localCard(LocalTrack track) {
-    return InkWell(
-      onTap: _busy ? null : () => _playLocal(track),
-      onLongPress: _busy ? null : () => _queueLocal(track),
-      child: _card((title: track.title, meta: 'Lokal', icon: Icons.audiotrack)),
     );
   }
 
@@ -625,6 +657,153 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _uploadCard() {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return SizedBox(
+      width: 186,
+      height: 186,
+      child: FilledButton(
+        onPressed: _picking ? null : _upload,
+        style: FilledButton.styleFrom(
+          // The card stays in the card color, only the plus is the accent.
+          backgroundColor: scheme.surfaceContainer,
+          foregroundColor: scheme.onSurface,
+          padding: const EdgeInsets.all(14),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.add, color: scheme.primary),
+            const Spacer(),
+            Text(
+              'Datei auswählen',
+              style: theme.textTheme.titleMedium,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            Text(
+              'Noch nichts hochgeladen',
+              style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _chip(String label, IconData icon, {VoidCallback? onPressed}) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    if (onPressed == null) {
+      // Nothing is behind this on the server, so it is a label and not a button.
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainer,
+          border: Border.all(color: scheme.outline),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18, color: scheme.onSurfaceVariant),
+            const SizedBox(width: 10),
+            Text(label, style: theme.textTheme.labelLarge),
+          ],
+        ),
+      );
+    }
+
+    return FilledButton(
+      onPressed: onPressed,
+      style: FilledButton.styleFrom(
+        minimumSize: const Size(0, 44),
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [Icon(icon, size: 18), const SizedBox(width: 10), Text(label)],
+      ),
+    );
+  }
+
+  Widget _thumb(IconData icon) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainer,
+        border: Border.all(color: scheme.outline),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Icon(icon, size: 18, color: scheme.onSurfaceVariant),
+    );
+  }
+
+  /// The bar at the bottom: the song the shared player is playing. This page does not own a
+  /// player, so the bar shows the same queue the Playlists page filled, and its buttons go
+  /// through the same player. What the player cannot do — seek, repeat, shuffle — is not here.
+  Widget _playerBar() {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final current = widget.player.queue.current;
+    final playing = widget.player.playing;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      decoration: BoxDecoration(border: Border(top: BorderSide(color: scheme.outline))),
+      child: Row(
+        children: [
+          Icon(Icons.audio_file, size: 22, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  current == null ? 'Nichts wird abgespielt' : current.title,
+                  style: theme.textTheme.labelLarge,
+                ),
+                Text(
+                  widget.player.failure ??
+                      (current == null
+                          ? 'Suche ein Lied und öffne es, oder fülle die Warteschlange.'
+                          : 'Warteschlange · Slot ${current.position}'),
+                  style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: playing ? 'Pause' : 'Abspielen',
+            onPressed: _busy ? null : () => _control(() => playing ? widget.player.pause() : widget.player.playCurrent()),
+            icon: Icon(playing ? Icons.pause : Icons.play_arrow),
+          ),
+          IconButton(
+            tooltip: 'Nächstes Lied',
+            onPressed: _busy ? null : () => _control(() => widget.player.next()),
+            icon: const Icon(Icons.skip_next),
+          ),
+          IconButton(
+            // Opening the queue from the bar must not interrupt what is playing: the panel
+            // only reads the list, it never touches the player.
+            tooltip: _queueOpen ? 'Warteschlange schließen' : 'Warteschlange öffnen',
+            onPressed: () => setState(() => _queueOpen = !_queueOpen),
+            icon: const Icon(Icons.queue_music),
+          ),
+        ],
       ),
     );
   }
