@@ -16,7 +16,7 @@ import 'package:saphire_client/features/library/data/library_repository.dart';
 import 'package:saphire_client/features/library/data/local_library.dart';
 import 'package:saphire_client/features/library/presentation/library_screen.dart';
 import 'package:saphire_client/features/player/domain/player.dart';
-import 'package:saphire_client/features/player/presentation/queue_sheet.dart';
+import 'package:saphire_client/features/player/presentation/queue_panel.dart';
 import 'package:saphire_client/features/playlists/presentation/playlists_screen.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
 import 'package:saphire_client/features/upload/domain/track.dart';
@@ -117,6 +117,7 @@ Future<Wiring> openLibrary(
         queues: wiring.queues,
         queue: wiring.queue,
         player: wiring.player,
+        session: wiring.session,
         uploads: UploadRepository(Dio()..httpClientAdapter = uploadAdapter ?? list, wiring.session),
         pickAudio: pickAudio ?? (() async => [(name: 'song.mp3', bytes: Uint8List.fromList([1, 2, 3]))]),
         settings: settings,
@@ -771,12 +772,13 @@ void main() {
 
     await tester.tap(find.byTooltip('Warteschlange'));
     await tester.pumpAndSettle();
-    expect(find.byType(QueueSheet), findsOneWidget);
+    expect(find.byType(QueuePanel), findsOneWidget);
 
-    // The sheet is over the page, so it has to be closed before the navigation is
-    // reachable again.
-    await tester.tap(find.byTooltip('Schließen'));
+    // The panel is the column on the right, so the navigation stays reachable; closing it gives the
+    // page back.
+    await tester.tap(find.byTooltip('Warteschlange schließen'));
     await tester.pumpAndSettle();
+    expect(find.byType(QueuePanel), findsNothing);
 
     await tester.tap(find.text('Home'));
     await tester.pumpAndSettle();

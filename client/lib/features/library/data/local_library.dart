@@ -26,6 +26,15 @@ class LocalLibrary {
   final List<LocalPlaylist> playlists = [];
   final List<LocalTrack> queue = [];
 
+  /// The rows the person put in the queue themselves, as opposed to the ones a list filled.
+  /// Keyed by the song itself, because the queue holds the songs themselves and a page
+  /// recognizes a row by the song it is — a copy of a song would break that.
+  final Set<LocalTrack> handAdded = {};
+
+  /// Which list the queue was filled with. A row cannot say where it came from after the fill,
+  /// so the page names the queue by this. Not stored: a restart starts a new queue.
+  String? queueOrigin;
+
   /// A broken keychain must not keep the app from starting: it then looks like a first
   /// run, the same way SessionStore handles it.
   static Future<LocalLibrary> restore() async {
@@ -100,25 +109,45 @@ class LocalLibrary {
     _write();
   }
 
-  void setQueue(List<LocalTrack> tracks) {
+  void setQueue(List<LocalTrack> tracks, {String? fromName}) {
     queue
       ..clear()
       ..addAll(tracks);
+    // A fill comes from one list, so nothing in it was put there by hand.
+    handAdded.clear();
+    queueOrigin = fromName;
     _write();
   }
 
   void addToQueue(LocalTrack track) {
     queue.add(track);
+    handAdded.add(track);
     _write();
   }
 
   void removeFromQueue(int index) {
+    if (index < 0 || index >= queue.length) return;
+    handAdded.remove(queue[index]);
     queue.removeAt(index);
     _write();
   }
 
+  /// Moves one row to another slot, 1-based like the server queue, so a page moves rows the
+  /// same way in both modes. A device queue has no slots the server knows, so the order only
+  /// exists here.
+  bool move(int from, int to) {
+    if (from < 1 || from > queue.length || to < 1 || to > queue.length) return false;
+    if (from == to) return false;
+
+    final row = queue.removeAt(from - 1);
+    queue.insert(to - 1, row);
+    _write();
+    return true;
+  }
+
   void clearQueue() {
     queue.clear();
+    handAdded.clear();
     _write();
   }
 
