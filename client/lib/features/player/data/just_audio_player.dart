@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:just_audio/just_audio.dart';
 
 import '../domain/player.dart';
@@ -14,8 +12,16 @@ class JustAudioPlayer implements SongPlayer {
     await _player.setAudioSource(AudioSource.uri(Uri.parse(url), headers: headers));
   }
 
+  /// just_audio's `play()` future completes only when the song ends or is paused, not when
+  /// playback starts. Awaiting it would keep every caller busy for the whole song — the pause
+  /// button and every row in the queue would stay dead while a song plays.
+  ///
+  /// The request is not dropped: a start that fails surfaces as the player's state, and nobody is
+  /// left to return that error to, so it must not become an uncaught error in the console.
   @override
-  Future<void> play() => _player.play();
+  Future<void> play() async {
+    _player.play().ignore();
+  }
 
   @override
   Future<void> pause() => _player.pause();

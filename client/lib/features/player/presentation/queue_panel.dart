@@ -1,9 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../../core/storage/session_store.dart';
+import '../../library/data/library_repository.dart';
 import '../../library/data/local_library.dart';
 import '../../playlists/data/playlist_repository.dart';
 import '../../playlists/domain/playlist.dart';
@@ -12,12 +12,12 @@ import '../domain/player.dart';
 import '../domain/queue.dart';
 
 /// The queue as a person sees it: what is playing, what comes next, what was played, and the
-/// order that can be changed.
+/// order that can be changed — with a field on top that finds a song without leaving the page.
 ///
 /// One widget for both shapes, because the only difference is the space the parent gives it:
-/// inside the app it is the side panel on the right, on a phone it is the whole page. Nothing
-/// here touches the audio — opening the queue only reads the list, so a song keeps playing and
-/// closing the panel changes nothing.
+/// inside the app it is the side panel on the right, on a phone it is the drop-up over the page.
+/// Nothing here touches the audio — opening the queue only reads the list, so a song keeps
+/// playing and closing the panel changes nothing.
 ///
 /// The rows are the shared queue, and a row is a row whatever filled it: a song the server has,
 /// or a song on this device. So the same rows move the same way in both modes, and only where a
@@ -27,6 +27,7 @@ class QueuePanel extends StatefulWidget {
     super.key,
     required this.queues,
     required this.playlists,
+    required this.library,
     required this.queue,
     required this.player,
     required this.session,
@@ -38,6 +39,9 @@ class QueuePanel extends StatefulWidget {
 
   final QueueRepository queues;
   final PlaylistRepository playlists;
+
+  /// Where the songs the search offers come from when no playlist is playing.
+  final LibraryRepository library;
   final PlaybackQueue queue;
   final QueuePlayer player;
   final SessionStore session;
@@ -66,9 +70,17 @@ class _QueuePanelState extends State<QueuePanel> {
   String? _note;
   bool _busy = false;
 
-  // Which row the pointer is on. A row only shows the play symbol in place of its cover while
-  // it is hovered, so the row needs to know that.
-  int? _hovered;
+  // The field at the top of the panel. A drop-up that only shows the queue makes a song that is
+  // not in it reachable only by leaving the page; this is the same search the start page has,
+  // in the place the queue is open.
+  final TextEditingController _query = TextEditingController();
+
+  /// What the field looks through. Read once when the panel opens: the six under the finger must
+  /// not change because the list behind them did.
+  List<QueueEntry> _pool = [];
+
+  /// The six an empty field offers: songs of the list that is playing, otherwise of the library.
+  List<QueueEntry> _top = [];
 
   // The playlists the menu can add a song to. A queue row is a reference to a library song, so
   // adding one is the documented POST /api/playlists/{id}/songs; on a device without a server
@@ -89,14 +101,20 @@ class _QueuePanelState extends State<QueuePanel> {
     });
     _read();
     // The menu adds to a playlist, and the only playlists that can be chosen are the caller's
-    // own — a queue answer does not name them.
-    if (!widget.localMode) _loadPlaylists();
+    // own — a queue answer does not name them. Without a server the songs are on this device, so
+    // there is nothing to list and the field fills from them at once.
+    if (widget.localMode) {
+      _loadSuggestions();
+    } else {
+      _loadPlaylists();
+    }
   }
 
   @override
   void dispose() {
     // The player belongs to the whole app, so only this panel's listener is dropped here.
     _changes?.cancel();
+    _query.dispose();
     super.dispose();
   }
 
@@ -160,6 +178,61 @@ class _QueuePanelState extends State<QueuePanel> {
       if (!mounted) return;
       _report(error.message, error.statusCode);
     }
+    // After the names are here, because a playing playlist is what decides the suggestions.
+    await _loadSuggestions();
+  }
+
+  /// The songs the field offers: the list the queue was filled from while that list is still the
+  /// one playing, otherwise the library. Nothing here touches the queue — a suggestion is played
+  /// the same way a row is, by being put into the queue first.
+  Future<void> _loadSuggestions() async {
+    if (widget.localMode) {
+      final origin = _local.queueOrigin;
+      for (final playlist in _local.playlists) {
+        if (playlist.name == origin) {
+          return _offer([for (final track in playlist.songs) QueueEntry.fromLocal(0, track)]);
+        }
+      }
+      return _offer([for (final track in _local.tracks) QueueEntry.fromLocal(0, track)]);
+    }
+
+    try {
+      final origin = _origin();
+      Playlist? playing;
+      for (final playlist in _playlists) {
+        if (playlist.name == origin) playing = playlist;
+      }
+
+      if (playing != null) {
+        final songs = (await widget.playlists.get(playing.id)).songs;
+        if (!mounted) return;
+        return _offer([
+          for (final song in songs) QueueEntry(position: 0, trackId: song.trackId, title: song.title),
+        ]);
+      }
+
+      final tracks = await widget.library.list();
+      if (!mounted) return;
+      _offer([for (final track in tracks) QueueEntry(position: 0, trackId: track.id, title: track.title)]);
+    } catch (_) {
+      // A suggestion that cannot be read is not a queue that cannot be read: the queue reports
+      // its own errors, and the panel stays usable without anything to suggest.
+    }
+  }
+
+  void _offer(List<QueueEntry> pool) {
+    setState(() {
+      _pool = pool..shuffle();
+      _top = _pool.take(6).toList();
+    });
+  }
+
+  /// What the field shows: six songs while nothing is typed, otherwise every song the pool has
+  /// that matches what was typed.
+  List<QueueEntry> _suggestions() {
+    final query = _query.text.trim().toLowerCase();
+    if (query.isEmpty) return _top;
+    return [for (final entry in _pool) if (entry.title.toLowerCase().contains(query)) entry];
   }
 
   /// Only a 401 says this token is gone; a 429 or a 400 is not a lost login. When the app does
@@ -180,7 +253,11 @@ class _QueuePanelState extends State<QueuePanel> {
 
     for (final row in widget.queue.entries) {
       if (entry.local != null) {
-        if (identical(row.local, entry.local)) return row;
+        // A stored queue and the stored library are read separately, so the same file is not the
+        // same object after a restart: its path is what says it is the same song.
+        if (identical(row.local, entry.local) || (entry.local!.path != null && row.local?.path == entry.local!.path)) {
+          return row;
+        }
       } else if (row.trackId == entry.trackId) {
         return row;
       }
@@ -206,8 +283,11 @@ class _QueuePanelState extends State<QueuePanel> {
 
     final added = await widget.queues.append(entry.trackId);
     if (!mounted) return null;
-    widget.queue.append(added);
-    return added;
+    // The request came from a person, so the row is theirs: "Warteschlange leeren" takes it out
+    // again, and the panel says so under the title.
+    final own = added.asManual();
+    widget.queue.append(own);
+    return own;
   }
 
   /// Puts the mirror back in step with the queue stored on this device. A change that only
@@ -505,7 +585,12 @@ class _QueuePanelState extends State<QueuePanel> {
           Row(
             children: [
               const Expanded(
-                child: TabBar(tabs: [Tab(text: 'Warteschlange'), Tab(text: 'Zuletzt gespielt')]),
+                child: TabBar(
+                  tabs: [
+                    Tab(icon: Tooltip(message: 'Warteschlange', child: Icon(Icons.queue_music))),
+                    Tab(icon: Tooltip(message: 'Zuletzt gespielt', child: Icon(Icons.history))),
+                  ],
+                ),
               ),
               IconButton(tooltip: 'Warteschlange schließen', icon: const Icon(Icons.close), onPressed: widget.onClose),
             ],
@@ -516,12 +601,15 @@ class _QueuePanelState extends State<QueuePanel> {
               child: Text(_note!, style: theme.textTheme.bodyMedium?.copyWith(color: scheme.error)),
             ),
           Expanded(child: TabBarView(children: [_queueTab(widget.phone), _historyTab()])),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-            child: FilledButton.tonal(
-              onPressed: _busy ? null : _clearOwn,
-              style: FilledButton.styleFrom(minimumSize: const Size(0, 40)),
-              child: const Text('Warteschlange leeren'),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+              child: IconButton(
+                tooltip: 'Warteschlange leeren',
+                onPressed: _busy ? null : _clearOwn,
+                icon: const Icon(Icons.playlist_remove),
+              ),
             ),
           ),
         ],
@@ -530,30 +618,81 @@ class _QueuePanelState extends State<QueuePanel> {
   }
 
   Widget _queueTab(bool phone) {
-    if (widget.queue.isEmpty) return _empty();
-
-    // Headings and rows are one list here rather than two lists, so a row can be dropped on any
-    // other row. Inside a group the rows are in the order the player goes through them.
     final current = widget.queue.current;
     final own = _upcoming(own: true);
     final fromList = _upcoming();
+    final suggestions = _suggestions();
 
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(0, 8, 0, 12),
+    // The field belongs to this tab: it narrows the songs of the queue, and the history is not a
+    // list it could search. It stays on top while the rows scroll under it.
+    return Column(
       children: [
-        if (current != null) ...[
-          _section('Läuft gerade'),
-          _row(current, phone: phone),
-        ],
-        if (own.isNotEmpty) ...[
-          _section('Als Nächstes in der Warteschlange'),
-          for (final entry in own) _row(entry, phone: phone),
-        ],
-        if (fromList.isNotEmpty) ...[
-          _section('Als Nächstes aus: ${_origin() ?? 'der Warteschlange'}'),
-          for (final entry in fromList) _row(entry, phone: phone),
-        ],
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+          child: TextField(
+            controller: _query,
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(hintText: 'Song suchen', prefixIcon: Icon(Icons.search), isDense: true),
+          ),
+        ),
+        // One list, so the six songs and the queue scroll together: a drop-up has no room for three
+        // scroll areas, and a row can still be dropped on any other row.
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(0, 8, 0, 12),
+            children: [
+              if (suggestions.isNotEmpty) ...[
+                _section(_query.text.trim().isEmpty ? 'Vorschläge' : 'Suchergebnisse'),
+                for (final entry in suggestions) _suggestion(entry),
+              ],
+              if (widget.queue.isEmpty)
+                _empty()
+              else ...[
+                if (current != null) ...[
+                  _section('Läuft gerade'),
+                  _row(current, phone: phone),
+                ],
+                if (own.isNotEmpty) ...[
+                  _section('Als Nächstes in der Warteschlange'),
+                  for (final entry in own) _row(entry, phone: phone),
+                ],
+                if (fromList.isNotEmpty) ...[
+                  _section('Als Nächstes aus: ${_origin() ?? 'der Warteschlange'}'),
+                  for (final entry in fromList) _row(entry, phone: phone),
+                ],
+              ],
+            ],
+          ),
+        ),
       ],
+    );
+  }
+
+  /// One song the field offers. A tap does what a tap on a queue row does: the song goes into the
+  /// queue and starts, so what the panel shows is what is audible.
+  Widget _suggestion(QueueEntry entry) {
+    final theme = Theme.of(context);
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _busy ? null : () => _open(entry),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        child: Row(
+          children: [
+            Icon(Icons.music_note, size: 18, color: theme.colorScheme.onSurfaceVariant),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                entry.title,
+                style: theme.textTheme.labelLarge,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -575,6 +714,8 @@ class _QueuePanelState extends State<QueuePanel> {
     );
   }
 
+  /// An empty queue says what would fill it. The field above is where a song is found, so this is
+  /// the sentence and not a button that leaves the page.
   Widget _empty() {
     final theme = Theme.of(context);
 
@@ -585,15 +726,10 @@ class _QueuePanelState extends State<QueuePanel> {
         children: [
           Text('Füge Songs zur Warteschlange hinzu', style: theme.textTheme.titleMedium),
           const SizedBox(height: 10),
-          if (!widget.localMode)
-            FilledButton(
-              // The search is on the start page. There is no search endpoint yet, so that is where
-              // a song can be found and put in the queue. Without a server there is nothing to
-              // search: the songs are picked in the library.
-              onPressed: () => context.go('/home'),
-              style: FilledButton.styleFrom(minimumSize: const Size(0, 40)),
-              child: const Text('Songs suchen'),
-            ),
+          Text(
+            'Such oben nach einem Lied, oder öffne eine Playlist.',
+            style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
         ],
       ),
     );
@@ -659,59 +795,52 @@ class _QueuePanelState extends State<QueuePanel> {
   Widget _content(QueueEntry entry, {bool dropOn = false}) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final hovered = _hovered == entry.position;
     final current = entry == widget.queue.current;
     final inList = widget.queue.entries.contains(entry);
 
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = entry.position),
-      onExit: (_) => setState(() => _hovered = null),
-      child: InkWell(
-        onTap: _busy ? null : () => _open(entry),
-        child: Container(
-          decoration: current
-              ? BoxDecoration(
-                  color: scheme.surfaceContainer,
-                  border: Border.all(color: scheme.primary),
-                  borderRadius: BorderRadius.circular(10),
-                )
-              : (dropOn ? BoxDecoration(border: Border.all(color: scheme.primary)) : null),
-          padding: const EdgeInsets.fromLTRB(20, 8, 12, 8),
-          child: Row(
-            children: [
-              // Hovering or tapping a row shows what the row is for: the song starts here and the
-              // queue goes on from here.
-              hovered ? _playIcon() : _cover(),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(entry.title, style: theme.textTheme.labelLarge, maxLines: 1, overflow: TextOverflow.ellipsis),
-                    Text(
-                      // A row of the history has no list it came from, because what was played is
-                      // not a list that is still being played.
-                      current
-                          ? 'Läuft gerade · Position ${entry.position}'
-                          : (inList
-                              ? (entry.manual ? 'deine Warteschlange' : (_origin() ?? 'die Warteschlange'))
-                              : 'Zuletzt gespielt'),
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: current ? scheme.primary : scheme.onSurfaceVariant,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+    return InkWell(
+      onTap: _busy ? null : () => _open(entry),
+      child: Container(
+        decoration: current
+            ? BoxDecoration(
+                color: scheme.surfaceContainer,
+                border: Border.all(color: scheme.primary),
+                borderRadius: BorderRadius.circular(10),
+              )
+            : (dropOn ? BoxDecoration(border: Border.all(color: scheme.primary)) : null),
+        padding: const EdgeInsets.fromLTRB(20, 8, 12, 8),
+        child: Row(
+          children: [
+            _cover(),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(entry.title, style: theme.textTheme.labelLarge, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  Text(
+                    // A row of the history has no list it came from, because what was played is
+                    // not a list that is still being played.
+                    current
+                        ? 'Läuft gerade · Position ${entry.position}'
+                        : (inList
+                            ? (entry.manual ? 'deine Warteschlange' : (_origin() ?? 'die Warteschlange'))
+                            : 'Zuletzt gespielt'),
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: current ? scheme.primary : scheme.onSurfaceVariant,
                     ),
-                  ],
-                ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
               ),
-              // The grip is the handle: hold it and move the row. On a phone that is the long
-              // press, on a desktop a press with the mouse. A song from the history is not part
-              // of the order, so it has no handle.
-              if (inList) LongPressDraggable<int>(data: entry.position, feedback: _feedback(), child: const Icon(Icons.drag_handle, size: 20)),
-              _menu(entry),
-            ],
-          ),
+            ),
+            // The grip is the handle: hold it and move the row. On a phone that is the long
+            // press, on a desktop a press with the mouse. A song from the history is not part
+            // of the order, so it has no handle.
+            if (inList) LongPressDraggable<int>(data: entry.position, feedback: _feedback(), child: const Icon(Icons.drag_handle, size: 20)),
+            _menu(entry),
+          ],
         ),
       ),
     );
@@ -771,18 +900,6 @@ class _QueuePanelState extends State<QueuePanel> {
         borderRadius: BorderRadius.circular(8),
       ),
       child: Icon(Icons.audio_file, size: 18, color: scheme.onSurfaceVariant),
-    );
-  }
-
-  Widget _playIcon() {
-    final scheme = Theme.of(context).colorScheme;
-
-    return Container(
-      width: 44,
-      height: 44,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(color: scheme.primary, borderRadius: BorderRadius.circular(8)),
-      child: Icon(Icons.play_arrow, size: 20, color: scheme.onPrimary),
     );
   }
 }

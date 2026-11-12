@@ -483,6 +483,7 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
       player: widget.player,
       queues: widget.queues,
       playlists: widget.playlists,
+      library: widget.library,
       session: widget.session,
       localMode: _isLocal,
       localLibrary: _local,

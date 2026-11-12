@@ -11,6 +11,8 @@ import 'package:saphire_client/features/player/data/queue_repository.dart';
 import 'package:saphire_client/features/player/domain/player.dart';
 import 'package:saphire_client/features/player/domain/queue.dart';
 import 'package:saphire_client/features/player/presentation/queue_panel.dart';
+import 'package:saphire_client/shared/widgets/app_shell.dart';
+import 'package:saphire_client/shared/widgets/player_bar.dart';
 
 import '../../support/fake_player.dart';
 import '../../support/stub_adapter.dart';
@@ -44,6 +46,7 @@ Future<Wiring> openQueue(
   WidgetTester tester, {
   StubAdapter? queues,
   StubAdapter? playlists,
+  StubAdapter? library,
   SongPlayer? audio,
   SessionStore? session,
   bool phone = false,
@@ -65,6 +68,7 @@ Future<Wiring> openQueue(
     store,
     queueAdapter: queues,
     playlistAdapter: playlists ?? StubAdapter(200, <Object>[]),
+    libraryAdapter: library,
     audio: audio,
   );
   addTearDown(wiring.dispose);
@@ -79,6 +83,7 @@ Future<Wiring> openQueue(
         body: QueuePanel(
           queues: wiring.queues,
           playlists: wiring.playlists,
+          library: wiring.library,
           queue: wiring.queue,
           player: wiring.player,
           session: store,
@@ -369,7 +374,7 @@ void main() {
     await openQueue(tester, queues: adapter);
 
     // The two tabs are what the panel is: the order and what was played.
-    expect(find.text('Zuletzt gespielt'), findsOneWidget);
+    expect(find.byTooltip('Zuletzt gespielt'), findsOneWidget);
     expect(find.text('Technogal.mp3'), findsOneWidget);
     expect(find.text('solo.mp3'), findsOneWidget);
 
@@ -588,7 +593,7 @@ void main() {
       },
     );
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Warteschlange leeren'));
+    await tester.tap(find.byTooltip('Warteschlange leeren'));
     await tester.pumpAndSettle();
 
     expect(adapter.lastOptions?.method, 'DELETE');
@@ -639,7 +644,7 @@ void main() {
     await openQueue(tester, queues: StubAdapter(200, <Object>[]));
 
     expect(find.text('Füge Songs zur Warteschlange hinzu'), findsOneWidget);
-    expect(find.widgetWithText(FilledButton, 'Songs suchen'), findsOneWidget);
+    expect(find.textContaining('Such oben nach einem Lied'), findsOneWidget);
   });
 
   // "Zuletzt gespielt" is what this device played, newest first. Nothing was played before the
@@ -649,11 +654,13 @@ void main() {
     addTearDown(audio.dispose);
     final wiring = await openQueue(tester, queues: StubAdapter(200, queueAnswer), audio: audio);
 
-    await tester.tap(find.text('Zuletzt gespielt'));
+    await tester.tap(find.byTooltip('Zuletzt gespielt'));
     await tester.pumpAndSettle();
+    // The field narrows the songs of the queue, and the history is not that list.
+    expect(find.byType(TextField), findsNothing);
     expect(find.textContaining('Noch nichts gespielt'), findsOneWidget);
 
-    await tester.tap(find.text('Warteschlange'));
+    await tester.tap(find.byTooltip('Warteschlange'));
     await tester.pumpAndSettle();
 
     await tester.tap(row(tester, 'Technogal.mp3'));
@@ -665,7 +672,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(wiring.queue.current?.trackId, 4);
 
-    await tester.tap(find.text('Zuletzt gespielt'));
+    await tester.tap(find.byTooltip('Zuletzt gespielt'));
     await tester.pumpAndSettle();
     expect(find.text('Technogal.mp3'), findsOneWidget);
   });
@@ -688,7 +695,7 @@ void main() {
 
     expect(wiring.queue.history.map((entry) => entry.title), ['a.mp3']);
 
-    await tester.tap(find.text('Zuletzt gespielt'));
+    await tester.tap(find.byTooltip('Zuletzt gespielt'));
     await tester.pumpAndSettle();
     await tester.tap(row(tester, 'a.mp3'));
     await tester.pumpAndSettle();
@@ -728,7 +735,7 @@ void main() {
 
     expect(adapter.requests.length, 2); // the read and the delete, nothing added
 
-    await tester.tap(find.text('Zuletzt gespielt'));
+    await tester.tap(find.byTooltip('Zuletzt gespielt'));
     await tester.pumpAndSettle();
     await tester.tap(row(tester, 'solo.mp3'));
     await tester.pumpAndSettle();
@@ -766,7 +773,7 @@ void main() {
     await tester.tap(find.text('Aus Warteschlange entfernen'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Zuletzt gespielt'));
+    await tester.tap(find.byTooltip('Zuletzt gespielt'));
     await tester.pumpAndSettle();
 
     // A row that is only in the history has no slot, so it has no handle, and the row says what
@@ -956,11 +963,11 @@ void main() {
 
     final wiring = await openQueue(tester, localMode: true, localLibrary: local);
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Warteschlange leeren'));
+    await tester.tap(find.byTooltip('Warteschlange leeren'));
     await tester.pumpAndSettle();
 
-    expect(find.text('c.mp3'), findsNothing);
-    expect(find.text('a.mp3'), findsOneWidget);
+    expect(row(tester, 'c.mp3'), findsNothing);
+    expect(row(tester, 'a.mp3'), findsOneWidget);
     expect(local.queue.map((track) => track.title), ['a.mp3', 'b.mp3']);
     expect(wiring.queue.entries.map((entry) => entry.title), ['a.mp3', 'b.mp3']);
     expect(find.text('Eigene Songs entfernt.'), findsOneWidget);
@@ -1006,5 +1013,144 @@ void main() {
 
     expect(find.textContaining('too many requests'), findsOneWidget);
     expect(wiring.session.isLoggedIn, isTrue);
+  });
+
+  // The field at the top offers what can be played without leaving the page, and a tap does what a
+  // tap on a row does: the song goes into the queue and starts.
+  testWidgets('the search offers library songs and plays one', (tester) async {
+    final audio = FakePlayer();
+    addTearDown(audio.dispose);
+
+    final queues = StubAdapter(204, const {});
+    queues.queue.addAll([
+      (200, queueAnswer),
+      (201, {'position': 4.0, 'track_id': 13.0, 'title': 'alt.mp3'}),
+    ]);
+
+    final wiring = await openQueue(
+      tester,
+      queues: queues,
+      audio: audio,
+      library: StubAdapter(200, const [
+        {'id': 13.0, 'title': 'alt.mp3'},
+        {'id': 12.0, 'title': 'neu.mp3'},
+      ]),
+    );
+
+    expect(find.text('Vorschläge'), findsOneWidget);
+    expect(find.text('alt.mp3'), findsOneWidget);
+    expect(find.text('neu.mp3'), findsOneWidget);
+
+    await tester.tap(find.text('alt.mp3'));
+    await tester.pumpAndSettle();
+
+    expect(queues.lastOptions?.method, 'POST');
+    expect(queues.lastOptions?.uri.path, '/api/queue/songs');
+    expect(audio.opened, ['$apiBaseUrl/api/music/13']);
+    expect(wiring.queue.current?.trackId, 13);
+    // A song the person searched for is their own: "Warteschlange leeren" takes it out again.
+    expect(wiring.queue.current?.manual, isTrue);
+  });
+
+  // What is typed narrows the same list, which is the point of the field in a drop-up.
+  testWidgets('typing narrows the songs the panel offers', (tester) async {
+    await openQueue(
+      tester,
+      queues: StubAdapter(200, queueAnswer),
+      library: StubAdapter(200, const [
+        {'id': 13.0, 'title': 'alt.mp3'},
+        {'id': 12.0, 'title': 'neu.mp3'},
+      ]),
+    );
+
+    await tester.enterText(find.byType(TextField), 'alt');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Suchergebnisse'), findsOneWidget);
+    expect(find.text('alt.mp3'), findsOneWidget);
+    expect(find.text('neu.mp3'), findsNothing);
+  });
+
+  // The list that is playing is what a suggestion should come from, so the field does not offer
+  // songs of another playlist or of the whole library while one is playing.
+  testWidgets('a playing playlist is what the field suggests from', (tester) async {
+    final playlists = StubAdapter(204, const {});
+    playlists.queue.addAll([
+      (200, <Object>[playlistAnswer]),
+      (
+        200,
+        {
+          'id': 1.0,
+          'name': 'Favoriten',
+          'created_at': 1794180269.0,
+          'song_count': 1.0,
+          'songs': [
+            {'position': 1.0, 'track_id': 8.0, 'title': 'Technogal.mp3'},
+          ],
+        },
+      ),
+    ]);
+
+    await openQueue(
+      tester,
+      queues: StubAdapter(200, queueAnswer),
+      playlists: playlists,
+      library: StubAdapter(200, const [
+        {'id': 99.0, 'title': 'nicht.wav'},
+      ]),
+      prep: (wiring) async => wiring.queue.fill(mirror(queueAnswer), fromName: 'Favoriten'),
+    );
+
+    // The song of the playlist is offered and is also a row of the queue.
+    expect(find.text('Technogal.mp3'), findsNWidgets(2));
+    expect(playlists.lastOptions?.uri.path, '/api/playlists/1');
+    expect(find.text('nicht.wav'), findsNothing);
+  });
+
+  // On a phone the queue is a drop-up over the page, not the page: the bar stays reachable below
+  // it, with the controls of the song that is playing, and the button that opened it closes it.
+  testWidgets('a phone shows the queue as a drop-up above the bar', (tester) async {
+    tester.view..physicalSize = const Size(420, 900)..devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final wiring = Wiring(
+      loggedIn(),
+      queueAdapter: StubAdapter(200, queueAnswer),
+      playlistAdapter: StubAdapter(200, <Object>[]),
+    );
+    addTearDown(wiring.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppShell(
+          selected: '/home',
+          player: wiring.player,
+          queues: wiring.queues,
+          playlists: wiring.playlists,
+          library: wiring.library,
+          session: wiring.session,
+          child: const SizedBox.expand(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final button = find.descendant(of: find.byType(PlayerBar), matching: find.byTooltip('Warteschlange'));
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(QueuePanel), findsOneWidget);
+    expect(find.text('Technogal.mp3'), findsOneWidget);
+
+    final panel = tester.getRect(find.byType(QueuePanel));
+    final bar = tester.getRect(find.byType(PlayerBar));
+    expect(panel.bottom, closeTo(bar.top, 1));
+    expect(panel.height, lessThanOrEqualTo(900 * 0.62));
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(find.byType(QueuePanel), findsNothing);
   });
 }

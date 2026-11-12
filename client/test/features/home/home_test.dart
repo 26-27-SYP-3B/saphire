@@ -292,6 +292,35 @@ void main() {
     expect(find.text('lied.wav'), findsNothing);
   });
 
+  // The same field finds a song that is only on this device, so the search works with no server.
+  testWidgets('the search finds a local song', (tester) async {
+    final local = LocalLibrary();
+
+    await openHome(
+      tester,
+      settings: SettingsStore()..save(localMode: true),
+      localLibrary: local,
+      pickLocal: () async => [(name: 'song.mp3', path: null, bytes: Uint8List.fromList([0x49, 0x44, 0x33]))],
+    );
+
+    await tester.tap(find.byTooltip('Lokale Songs hinzufügen'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'song');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Suchergebnisse'), findsOneWidget);
+    expect(find.text('song.mp3'), findsOneWidget);
+
+    // What does not match is not a result, and the sections are not repeated under it.
+    await tester.enterText(find.byType(TextField), 'nichts');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Suchergebnisse'), findsNothing);
+    expect(find.text('song.mp3'), findsNothing);
+    expect(find.text('Lokale Songs'), findsNothing);
+  });
+
   // Opening a result does not play by itself. It fills the shared queue with that song,
   // the way the Playlists page starts a playlist, and the player reads that queue.
   testWidgets('opening a search result fills the shared queue with that song', (tester) async {
