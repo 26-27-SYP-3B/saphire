@@ -30,8 +30,18 @@ void main() {
 
     final refused = library.add(name: 'notes.txt', bytes: id3Mp3());
 
-    expect(refused, 'nur MP3-Dateien werden übernommen');
+    expect(refused, 'nur Audiodateien werden übernommen');
     expect(library.tracks, isEmpty);
+  });
+
+  // A folder of songs is not a folder of MP3s: the other formats are songs too.
+  test('an audio file that is not an MP3 lands in the library', () {
+    final library = LocalLibrary();
+
+    final refused = library.add(name: 'song.flac', path: '/music/song.flac', bytes: Uint8List.fromList([0x66, 0x4C, 0x61, 0x43]));
+
+    expect(refused, null);
+    expect(library.tracks.single.title, 'song.flac');
   });
 
   // A picture renamed to .mp3 would pass on the name alone.
@@ -40,7 +50,17 @@ void main() {
 
     final refused = library.add(name: 'fake.mp3', bytes: Uint8List.fromList([0x4D, 0x5A, 0x90, 0x00]));
 
-    expect(refused, 'die Datei ist keine gültige MP3-Datei');
+    expect(refused, 'die Datei ist keine gültige Audiodatei');
+    expect(library.tracks, isEmpty);
+  });
+
+  // The same is true under another audio name: an image is not a song whatever it is called.
+  test('an audio name over a picture is refused', () {
+    final library = LocalLibrary();
+
+    final refused = library.add(name: 'fake.flac', bytes: Uint8List.fromList([0x89, 0x50, 0x4E, 0x47, 0, 0]));
+
+    expect(refused, 'die Datei ist keine gültige Audiodatei');
     expect(library.tracks, isEmpty);
   });
 
