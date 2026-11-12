@@ -125,15 +125,10 @@ class _PlayerBarState extends State<PlayerBar> {
                     overflow: TextOverflow.ellipsis,
                   ),
                   Text(
-                    // What is known about the queue: an error, or the slot that is current,
-                    // or what would start something.
-                    _note ??
-                        widget.player.failure ??
-                        (local != null
-                            ? 'Lokal · dieses Gerät'
-                            : current == null
-                                ? 'Suche ein Lied und öffne es, oder fülle die Warteschlange.'
-                                : 'Warteschlange · Slot ${current.position}'),
+                    // What is known about the queue: an error, or the slot that is current, or
+                    // what would start something. The player names it, so the bar and the full
+                    // player cannot say different things.
+                    _note ?? widget.player.statusNote,
                     style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,

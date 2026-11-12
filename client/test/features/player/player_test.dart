@@ -322,10 +322,12 @@ void main() {
 
     await player.playCurrent();
 
-    // The first row: nothing before it, so the player does not claim a jump it did not do.
+    // The first row: nothing before it, so the player does not claim a jump it did not do, and the
+    // song is not written to the history a second time.
     expect(await player.previous(), isFalse);
     expect(fake.opened, ['$apiBaseUrl/api/music/8']);
     expect(queue.current?.trackId, 8);
+    expect(queue.history, isEmpty);
 
     expect(await player.next(), isTrue);
     expect(await player.previous(), isTrue);
@@ -354,6 +356,30 @@ void main() {
     // Nothing was asked from the server: the third open is the bytes of the first file.
     expect(fake.opened.last, startsWith('data:audio/mpeg'));
     expect(fake.played, hasLength(3));
+  });
+
+  // A file that was deleted between two presses must not move the list onto it: the song that is
+  // playing stays the one that is playing, and is not written to the history a second time.
+  test('a previous that cannot open keeps the song that is playing', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final player = QueuePlayer(queue: PlaybackQueue(), player: fake, session: SessionStore());
+    addTearDown(player.dispose);
+
+    await player.playLocalQueue([
+      LocalTrack(title: 'a.mp3', bytes: Uint8List.fromList([0xFF, 0xFB])),
+      LocalTrack(title: 'gone.mp3', path: 'C:/saphire/no-such-file.mp3'),
+      LocalTrack(title: 'c.mp3', bytes: Uint8List.fromList([0xFF, 0xFB])),
+    ]);
+    // Moving forward skips the file that is not there and plays the one after it.
+    await player.next();
+    expect(player.localTitle, 'c.mp3');
+
+    final history = player.queue.history.length;
+    expect(await player.previous(), isFalse);
+    expect(player.localTitle, 'c.mp3');
+    expect(player.failure, contains('nicht gefunden'));
+    expect(player.queue.history, hasLength(history));
   });
 
   // A progress bar can be dragged to its end, and a player asked past the end throws, so the jump

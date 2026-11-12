@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:audio_service/audio_service.dart';
 
 import '../domain/player.dart';
@@ -16,26 +14,46 @@ import '../domain/player.dart';
 /// (`initializeAudioService`) and own the queue there.
 class MediaService extends BaseAudioHandler {
   MediaService(this.player) {
-    _subscriptions
-      ..add(player.changes.listen((_) => _report()))
-      ..add(player.positionStream.listen((position) => _report(position)));
+    // The handler lives as long as the app, so nothing here is cancelled: the player is the only
+    // owner of these streams and it ends with the process.
+    player.changes.listen((_) => _report());
+    player.positionStream.listen(_reportPosition);
 
     _report();
   }
 
   final QueuePlayer player;
-  final List<StreamSubscription<void>> _subscriptions = [];
+
+  /// A closed notification has to stay closed: the position stream keeps ticking after a stop, and
+  /// without this the next tick would build the notification again.
+  bool _stopped = false;
 
   @override
-  Future<void> play() => player.resume();
+  Future<void> play() async {
+    _stopped = false;
+    await player.resume();
+    _reportState();
+  }
 
   @override
-  Future<void> pause() => player.pause();
+  Future<void> pause() async {
+    await player.pause();
+    // Reported here, because a pause from the notification has no tap in the app behind it and the
+    // icon has to change now, not on the next position tick.
+    _reportState();
+  }
 
   @override
   Future<void> stop() async {
     await player.stop();
-    _report();
+    _stopped = true;
+
+    // Nothing is loaded any more, which is what makes Android drop the notification.
+    playbackState.add(playbackState.value.copyWith(
+      controls: const [],
+      playing: false,
+      processingState: AudioProcessingState.idle,
+    ));
   }
 
   @override
@@ -54,27 +72,55 @@ class MediaService extends BaseAudioHandler {
   @override
   Future<void> seek(Duration position) => player.seek(position);
 
-  Future<void> close() async {
-    for (final subscription in _subscriptions) {
-      await subscription.cancel();
-    }
-  }
-
-  void _report([Duration? at]) {
+  /// The player moved, so the notification may name a different song. The item is sent only when it
+  /// really changed: a new item on every position tick rebuilds the notification five times a
+  /// second for nothing.
+  void _report() {
     // The bar and the notification name the same song: what the player is at. A file on this
     // device is not in the queue, so the local list is what the plugin gets here.
     final entry = player.queue.current;
     final local = player.localCurrent;
     final title = local?.title ?? entry?.title;
-    if (title == null) return;
+    if (title == null) {
+      // Nothing is playing any more — the queue ended or was emptied — so the notification goes with
+      // it instead of naming a song that is over.
+      mediaItem.add(null);
+      playbackState.add(playbackState.value.copyWith(
+        controls: const [],
+        playing: false,
+        processingState: AudioProcessingState.idle,
+      ));
+      return;
+    }
 
     // A song on this device has no id the plugin could use, and no artist: neither a queue answer
     // nor a picked file names one, so the notification shows the title alone.
-    mediaItem.add(MediaItem(
-      id: local != null ? local.path ?? title : '${entry!.trackId}',
-      title: title,
-      duration: player.duration,
-    ));
+    final shown = mediaItem.value;
+    if (shown == null || shown.title != title || shown.duration != player.duration) {
+      mediaItem.add(MediaItem(
+        id: local != null ? local.path ?? title : '${entry!.trackId}',
+        title: title,
+        duration: player.duration,
+      ));
+    }
+
+    _reportState();
+  }
+
+  /// A tick mostly moves the progress, but the length of a song is only known once the player has
+  /// read the file, so the first tick after that is when the notification can show the right total.
+  void _reportPosition(Duration at) {
+    final item = mediaItem.value;
+    if (item != null && item.duration != player.duration) return _report();
+
+    _reportState(at);
+  }
+
+  void _reportState([Duration? at]) {
+    // A dismissed notification stays away until something plays again — and play can come from the
+    // app, not only from the notification, so the state it is in decides, not the flag alone.
+    if (_stopped && !player.playing) return;
+    _stopped = false;
 
     playbackState.add(
       playbackState.value.copyWith(
@@ -84,7 +130,9 @@ class MediaService extends BaseAudioHandler {
           MediaControl.skipToNext,
         ],
         playing: player.playing,
-        processingState: player.playing ? AudioProcessingState.ready : AudioProcessingState.buffering,
+        // A paused song is ready, not loading: "buffering" would show a spinner on the phone for
+        // as long as the song stays paused.
+        processingState: AudioProcessingState.ready,
         updatePosition: at ?? player.position,
       ),
     );
