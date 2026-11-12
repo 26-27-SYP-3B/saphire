@@ -249,13 +249,20 @@ class _HomeScreenState extends State<HomeScreen> {
     return query.isEmpty || title.toLowerCase().contains(query);
   }
 
-  /// What the search field finds. The server has no search endpoint (api-docs.md, Upcoming),
-  /// so this filters the library the page loaded. Without a query nothing is a result, because
-  /// without a query the page shows its sections instead of a result list.
+  /// What the search field finds among the server's songs. The server has no search endpoint
+  /// (api-docs.md, Upcoming), so this filters the library the page loaded. Without a query
+  /// nothing is a result, because without a query the page shows its sections instead.
   List<Track> _results() {
     final query = _search.text.trim().toLowerCase();
     if (query.isEmpty) return const [];
     return [for (final entry in _library) if (_matches(entry.title)) entry];
+  }
+
+  /// The same search over the songs on this device, so a phone without a server can search too.
+  List<LocalTrack> _localResults() {
+    final query = _search.text.trim().toLowerCase();
+    if (query.isEmpty) return const [];
+    return [for (final track in _local.tracks) if (_matches(track.title)) track];
   }
 
   /// One action on the shared player at a time. The page rebuilds after every one of them:
@@ -310,12 +317,17 @@ class _HomeScreenState extends State<HomeScreen> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final results = _results();
+    final localResults = _localResults();
+    // While something is typed the page is a result list: the same songs under their sections
+    // would say the same thing twice.
+    final searching = _search.text.trim().isNotEmpty;
 
     return AppShell(
       selected: '/home',
       player: widget.player,
       queues: widget.queues,
       playlists: widget.playlists,
+      library: widget.library,
       session: widget.session,
       localMode: _settings.localMode,
       localLibrary: _local,
@@ -333,37 +345,41 @@ class _HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 16),
                     Text(_note!, style: TextStyle(color: scheme.error)),
                   ],
-                  if (results.isNotEmpty) ...[
+                  if (results.isNotEmpty || localResults.isNotEmpty) ...[
                     _section('Suchergebnisse'),
-                    _row([for (final entry in results) _songCard(entry)]),
+                    _row([
+                      for (final entry in results) _songCard(entry),
+                      for (final track in localResults) _localCard(track),
+                    ]),
                   ],
-                  _section(
-                    'Lokale Songs',
-                    action: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          tooltip: 'Lokale Songs hinzufügen',
-                          onPressed: _picking ? null : _addLocal,
-                          icon: Icon(Icons.add, color: scheme.primary),
-                        ),
-                        IconButton(
-                          tooltip: 'Ordner auswählen',
-                          onPressed: _picking ? null : () => _addLocal(folder: true),
-                          icon: Icon(Icons.create_new_folder, color: scheme.primary),
-                        ),
-                      ],
+                  if (!searching) ...[
+                    _section(
+                      'Lokale Songs',
+                      action: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            tooltip: 'Lokale Songs hinzufügen',
+                            onPressed: _picking ? null : _addLocal,
+                            icon: Icon(Icons.add, color: scheme.primary),
+                          ),
+                          IconButton(
+                            tooltip: 'Ordner auswählen',
+                            onPressed: _picking ? null : () => _addLocal(folder: true),
+                            icon: Icon(Icons.create_new_folder, color: scheme.primary),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  Text(
-                    _localHint,
-                    style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-                  ),
-                  const SizedBox(height: 12),
-                  _row([
-                    for (final track in _local.tracks.where((track) => _matches(track.title)))
-                      _localCard(track),
-                  ]),
+                    Text(
+                      _localHint,
+                      style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                    ),
+                    const SizedBox(height: 12),
+                    // A song on this device is found by the same field as one on the server, so
+                    // the search works on a phone without a server too.
+                    _row([for (final track in _local.tracks) _localCard(track)]),
+                  ],
                   // Local mode has no server to upload to, so only the songs on
                   // this device are shown.
                   if (!_settings.localMode) ...[

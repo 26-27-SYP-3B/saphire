@@ -378,6 +378,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       player: widget.player,
       queues: widget.queues,
       playlists: widget.playlists,
+      library: widget.library,
       session: widget.session,
       localMode: _settings.localMode,
       localLibrary: _local,

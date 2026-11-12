@@ -12,6 +12,9 @@ import 'queue.dart';
 /// cannot be used there. See data/just_audio_player.dart for the implementation.
 abstract interface class SongPlayer {
   Future<void> open(String url, {Map<String, String> headers});
+  /// Starts playback and returns once it has started — not when the song ends. just_audio's own
+  /// play() future completes only at the end, and a caller that awaited it would keep its buttons
+  /// off for the whole song.
   Future<void> play();
   Future<void> pause();
   Future<void> stop();
