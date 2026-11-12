@@ -1,0 +1,7 @@
+# Build output and the data the server creates while running are not part of the image.
+target
+.env
+saphire.db
+saphire.db-wal
+saphire.db-shm
+library

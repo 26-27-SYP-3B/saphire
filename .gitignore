@@ -1,1 +1,5 @@
 .DS_Store
+
+# The .env in the project folder is what docker compose reads (see docker-compose.yml), so it
+# holds the server's own configuration and is not committed.
+.env

@@ -1,0 +1,46 @@
+# The backend as it is: SQLite is a file the server opens, not a server it connects to, so
+# there is no database container and nothing to wait for. The database file and the music
+# folder live in named volumes, so `docker compose down`, a restart or a new image does not
+# lose them. The volumes are named under the compose project, so a different project name
+# (another folder, or `-p`) starts a fresh, empty pair.
+#
+# Configuration comes from a .env file in this folder, which compose reads for the values
+# below. The names are the same as in server/.env.template, but the values in that file are
+# relative paths for `just run` on the host: inside the container a relative path is resolved
+# in the working folder, which the service user cannot write to, so the server answers
+# "library: Permission denied" and does not start — and even where it could write, the data
+# would not be on a volume. Through compose these two have to be absolute paths under the
+# mount.
+#
+# The same PORT value is used inside the container and for the host mapping, so a different
+# host port is not possible through this file. A value that is not a number is rejected by
+# compose while it parses the mapping ("invalid containerPort"), before the server's own
+# message could run.
+#
+# The healthcheck is defined in the image (server/Dockerfile), so `docker compose ps` shows
+# it without repeating it here. It reports health; nothing here restarts an unhealthy container.
+#
+# Updating: this service builds its image from source, so `docker compose pull` answers
+# "pull access denied" and asks for `docker compose build` instead — `push` fails the same
+# way, because the name is a local tag rather than a registry reference. Either way the data is
+# in volumes, so an update does not lose the library or the database.
+services:
+  server:
+    build: ./server
+    image: saphire-server:latest
+    restart: unless-stopped
+    # The only published port. The database is a file in a volume, so nothing else is
+    # reachable from outside.
+    ports:
+      - "${PORT:-8080}:${PORT:-8080}"
+    environment:
+      PORT: ${PORT:-8080}
+      SAPHIRE_DB_PATH: ${SAPHIRE_DB_PATH:-/data/saphire.db}
+      SAPHIRE_LIBRARY_PATH: ${SAPHIRE_LIBRARY_PATH:-/data/library}
+    volumes:
+      - saphire-data:/data
+      - saphire-library:/data/library
+
+volumes:
+  saphire-data:
+  saphire-library:
