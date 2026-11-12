@@ -1,11 +1,11 @@
 import 'dart:typed_data';
 
 /// The extensions the app reads as a song when it looks at a device folder. The server takes every
-/// audio file it is given (see `server/src/music.rs`), and the device side should not be stricter
-/// than the server: a folder of M4A or FLAC songs is still a folder of songs.
+/// audio file it is given (see `server/src/music.rs`); this list is the device side's own limit, and
+/// it keeps the library from offering a row the player may not be able to open.
 ///
-/// A list cannot name every format there is. A file with an extension nobody knows is not offered
-/// by a folder import; picking it by hand still works, because the player decides there.
+/// A list cannot name every format there is. A file with an extension nobody knows is not taken by
+/// the device library; it can still be uploaded, because the server decides there.
 const audioExtensions = {
   '.mp3', '.mp2', '.m4a', '.m4b', '.aac', '.wav', '.wave', '.flac', '.ogg', '.oga', '.opus',
   '.aif', '.aiff', '.wma', '.amr', '.au', '.mka', '.weba', '.mid', '.midi', '.caf', '.wv',
