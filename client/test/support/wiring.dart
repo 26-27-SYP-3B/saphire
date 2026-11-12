@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 
 import 'package:saphire_client/core/storage/session_store.dart';
+import 'package:saphire_client/core/storage/settings_store.dart';
 import 'package:saphire_client/features/library/data/library_repository.dart';
 import 'package:saphire_client/features/playlists/data/playlist_repository.dart';
 import 'package:saphire_client/features/player/data/queue_repository.dart';
@@ -20,11 +21,10 @@ class Wiring {
     StubAdapter? queueAdapter,
     StubAdapter? libraryAdapter,
     SongPlayer? audio,
-  }) : playlists = PlaylistRepository(dioWith(playlistAdapter ?? StubAdapter(200, const [])), session),
-       // A page that does not look at the library still needs the repository to exist, so the
-       // defaults answer empty lists instead of going to the network. The queue panel reads both,
-       // because its menu adds a song to a playlist.
+  }) : playlists = PlaylistRepository(dioWith(playlistAdapter), session),
        queues = QueueRepository(dioWith(queueAdapter), session),
+       // A page that does not look at the library still needs the repository to exist, so
+       // the default answers an empty library instead of going to the network.
        library = LibraryRepository(dioWith(libraryAdapter ?? StubAdapter(200, const [])), session) {
     // One queue and one player, the same way main.dart shares them: the page that filled
     // the list and the page that plays it look at the same object. A test that wants to
@@ -50,5 +50,10 @@ class Wiring {
 /// A session that is still valid, so the guard lets a test reach the feature pages.
 SessionStore loggedIn() =>
     SessionStore()..save('a' * 64, DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch ~/ 1000);
+
+/// The settings a returning user has: a server was saved by the first run. Through
+/// save(), so the value the repositories read is set the way the app sets it. A test
+/// that checks the first run builds its own empty SettingsStore.
+SettingsStore withServer() => SettingsStore()..save(server: 'http://127.0.0.1:8080');
 
 Dio dioWith(StubAdapter? adapter) => adapter == null ? Dio() : (Dio()..httpClientAdapter = adapter);

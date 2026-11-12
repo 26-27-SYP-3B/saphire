@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../core/storage/session_store.dart';
 import '../../../core/storage/settings_store.dart';
 import '../../../core/utils/pick_audio.dart';
 import '../../../shared/widgets/app_shell.dart';
@@ -99,6 +100,7 @@ class LibraryScreen extends StatefulWidget {
     required this.queue,
     required this.player,
     required this.uploads,
+    required this.session,
     this.pickAudio = pickAudioFiles,
     this.settings,
     this.localLibrary,
@@ -110,6 +112,9 @@ class LibraryScreen extends StatefulWidget {
   final PlaybackQueue queue;
   final QueuePlayer player;
   final UploadRepository uploads;
+
+  /// What the queue frame needs: the session the queue calls are made with.
+  final SessionStore session;
   final PickAudio pickAudio;
 
   /// Null in a test that does not care about local mode: the stores then stay in memory.
@@ -301,7 +306,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Future<void> _addToQueue(Track track) => _control(() async {
     final entry = await widget.queues.append(track.id);
-    if (mounted) widget.queue.append(entry);
+    // A row the person added themselves, which is what "Warteschlange leeren" takes out again.
+    if (mounted) widget.queue.append(entry.asManual());
   });
 
   Future<void> _addToPlaylist(Track track, int playlistId) => _control(() async {
@@ -371,7 +377,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
       selected: '/library',
       player: widget.player,
       queues: widget.queues,
-      library: widget.library,
+      playlists: widget.playlists,
+      session: widget.session,
       localMode: _settings.localMode,
       localLibrary: _local,
       child: Column(

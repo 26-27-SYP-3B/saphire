@@ -14,7 +14,7 @@ import 'package:saphire_client/features/auth/data/auth_repository.dart';
 import 'package:saphire_client/features/library/data/local_library.dart';
 import 'package:saphire_client/features/playlists/data/cover_store.dart';
 import 'package:saphire_client/features/playlists/data/playlist_repository.dart';
-import 'package:saphire_client/features/player/presentation/queue_sheet.dart';
+import 'package:saphire_client/features/player/presentation/queue_panel.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
 
 import '../../support/stub_adapter.dart';
@@ -443,11 +443,11 @@ void main() {
     expect(wiring.queue.length, 2);
     expect(wiring.queue.entries.map((entry) => entry.trackId), [8, 4]);
 
-    // The bar is where the queue shows up now.
+    // The bar is where the queue shows up now: the panel the frame gives room for.
     await tester.tap(find.byTooltip('Warteschlange'));
     await tester.pumpAndSettle();
-    expect(find.descendant(of: find.byType(QueueSheet), matching: find.text('Technogal.mp3')), findsWidgets);
-    expect(find.descendant(of: find.byType(QueueSheet), matching: find.text('lied.wav')), findsWidgets);
+    expect(find.descendant(of: find.byType(QueuePanel), matching: find.text('Technogal.mp3')), findsWidgets);
+    expect(find.descendant(of: find.byType(QueuePanel), matching: find.text('lied.wav')), findsWidgets);
   });
 
   testWidgets('a rate limit shows the message without signing the user out', (tester) async {
@@ -507,26 +507,15 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Playlist starten'));
     await tester.pumpAndSettle();
 
-    // Starting a playlist fills the stored queue and plays its first song; the queue is
-    // looked at through the bar.
+    // Starting a playlist fills the stored queue and plays its first song; the panel is what shows
+    // that queue. The sheet's add tab is gone — on a device a queue is filled in the library — so
+    // this test stops at what the panel shows.
     expect(local.queue.single.title, 'song.mp3');
     expect(wiring.player.localTitle, 'song.mp3');
 
-    // A second song on the device can be put into the queue from the sheet.
-    local.add(name: 'zwei.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
     await tester.tap(find.byTooltip('Warteschlange'));
     await tester.pumpAndSettle();
-    expect(find.descendant(of: find.byType(QueueSheet), matching: find.text('song.mp3')), findsWidgets);
-
-    await tester.tap(find.text('Lieder hinzufügen'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.descendant(
-      of: find.widgetWithText(ListTile, 'zwei.mp3'),
-      matching: find.byType(IconButton),
-    ));
-    await tester.pumpAndSettle();
-
-    expect(local.queue.map((track) => track.title), ['song.mp3', 'zwei.mp3']);
+    expect(find.descendant(of: find.byType(QueuePanel), matching: find.text('song.mp3')), findsWidgets);
   });
 
   test('a cover is kept under the key it was saved with', () {
@@ -604,7 +593,7 @@ void main() {
     expect(wiring.player.localTitle, 'song.mp3');
   });
 
-  // The Playlists page draws the bar every page draws, and the queue is in it.
+  // The bar is on every page and the panel it opens is the queue.
   testWidgets('the bar opens the queue from here', (tester) async {
     final queues = StubAdapter(200, <Object>[]);
     await openPlaylists(tester, playlists: StubAdapter(200, <Object>[]), queues: queues);
@@ -612,7 +601,7 @@ void main() {
     await tester.tap(find.byTooltip('Warteschlange'));
     await tester.pumpAndSettle();
 
-    expect(find.byType(QueueSheet), findsOneWidget);
+    expect(find.byType(QueuePanel), findsOneWidget);
   });
 }
 

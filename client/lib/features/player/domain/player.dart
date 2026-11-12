@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import '../../../core/config/api_config.dart';
+import '../../../core/storage/file_exists.dart';
 import '../../../core/storage/session_store.dart';
+import '../../library/domain/local_track.dart';
 import 'queue.dart';
 
 /// What a player needs from the audio plugin: open one song, play, pause, stop, and be
@@ -23,6 +25,17 @@ abstract interface class SongPlayer {
   /// Releases the audio object behind the player. The queue is the only thing that holds a
   /// player for the life of the app, so this is where it is closed.
   Future<void> dispose();
+}
+
+/// A song that could not be opened. The message is what the page shows, so a missing
+/// file says that it is missing and not that the player failed.
+class PlaybackException implements Exception {
+  PlaybackException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
 }
 
 /// Plays a queue: the entry that is current, then the next one when a song ends. It
@@ -52,29 +65,214 @@ class QueuePlayer {
   /// the screen would keep showing the song that just finished.
   Stream<void> get changes => _changes.stream;
 
+  /// The local songs that were started as one list, and which of them is current. A
+  /// local song has no slot in the server queue, so the bar and the queue sheet read this
+  /// instead of queue.current.
+  final List<LocalTrack> _local = [];
+  int _localIndex = -1;
+
+  List<LocalTrack> get localQueue => List.unmodifiable(_local);
+
+  LocalTrack? get localCurrent =>
+      (_localIndex >= 0 && _localIndex < _local.length) ? _local[_localIndex] : null;
+
+  String? get localTitle => localCurrent?.title;
+
   /// A queue entry is a reference to a library song, so the bytes come from the
   /// streaming endpoint. The endpoint sends the file in chunks, which is what a player
   /// needs: the first piece arrives before the rest of the file is read.
   String urlFor(int trackId) => '$apiBaseUrl/api/music/$trackId';
 
-  /// Whether the song the queue is at was opened. "Zuletzt gespielt" may only list songs this
-  /// device actually started, so a row whose file could not be read is not a played song.
-  bool _opened = false;
+  /// Plays a file that is on the device: from its path when the pick gave one, from the
+  /// bytes when it came from a browser. This is the whole local mode — no server, no
+  /// queue, just the player and the file.
+  Future<void> playLocal(LocalTrack track) async {
+    _leave(null);
+    _local
+      ..clear()
+      ..add(track);
+    _localIndex = 0;
+    queue.clear();
+    await _startLocal();
+  }
 
-  /// Records the song the player is leaving, if it was really started.
-  void _recordLeft() {
-    final left = queue.current;
-    if (left != null && _opened) queue.recordPlayed(left);
+  /// Plays a list from the device in order, the way a playlist does. The list is copied,
+  /// so later changes to the stored queue do not change what this player is playing.
+  Future<void> playLocalQueue(List<LocalTrack> tracks) async {
+    if (tracks.isEmpty) throw PlaybackException('Die Warteschlange ist leer, es gibt nichts zu spielen.');
+
+    _leave(null);
+    _local
+      ..clear()
+      ..addAll(tracks);
+    _localIndex = 0;
+    queue.clear();
+    await _startLocal();
+  }
+
+  /// Opens the first song of a list that was just set. A song that cannot be opened is
+  /// reported and must not become the one the bar names.
+  Future<void> _startLocal() async {
+    try {
+      await _openLocal();
+    } catch (_) {
+      _localIndex = -1;
+      rethrow;
+    }
+  }
+
+  Future<void> _openLocal() async {
+    final track = localCurrent;
+    if (track == null) throw PlaybackException('Die Warteschlange ist leer, es gibt nichts zu spielen.');
+
+    final path = track.path;
+    final bytes = track.bytes;
+    if (path == null && bytes == null) {
+      throw PlaybackException('Die Datei wurde nicht gefunden: ${track.title}');
+    }
+    // A file the user deleted or moved is only noticed here, because the library keeps
+    // the path and not the file.
+    if (path != null && !fileExists(path)) {
+      throw PlaybackException('Die Datei wurde nicht gefunden: ${track.title}');
+    }
+
+    failure = null;
+    await player.open(
+      path != null ? Uri.file(path).toString() : Uri.dataFromBytes(bytes!, mimeType: 'audio/mpeg').toString(),
+    );
+    _changes.add(null);
+    await player.play();
+  }
+
+  /// Moves on to the next song of the local list that can actually be opened. A file that
+  /// cannot be read is skipped instead of ending playback, and the page is still told why.
+  /// Returns false when no song is left; the audio stops then, so it and the bar agree.
+  Future<bool> _advanceLocal() async {
+    String? skipped;
+    while (_localIndex < _local.length - 1) {
+      _localIndex += 1;
+      try {
+        await _openLocal();
+        // Reported after the open, because opening a song clears the old message.
+        if (skipped != null) failure = skipped;
+        _changes.add(null);
+        return true;
+      } catch (error) {
+        skipped ??= error is PlaybackException ? error.message : '$error';
+      }
+    }
+
+    _localIndex = -1;
+    if (skipped != null) failure = skipped;
+    _changes.add(null);
+    await player.stop();
+    return false;
+  }
+
+  /// Keeps the player's local order in step with the stored queue when a row is removed.
+  /// The removed row may be the one that is audible, so that audio stops with it.
+  ///
+  /// Matched by identity, not by index: the player's copy may have been made before the
+  /// page's list changed, and then a position would point at a different song.
+  Future<void> removeLocal(LocalTrack track) async {
+    var index = _local.indexOf(track);
+    if (index < 0) return;
+
+    // The same song can be queued twice: a removal must drop a copy that is not audible.
+    if (index == _localIndex) {
+      final other = _local.lastIndexOf(track);
+      if (other != index) index = other;
+    }
+
+    if (index == _localIndex) {
+      await player.stop();
+      _local.removeAt(index);
+      _localIndex = -1;
+    } else {
+      _local.removeAt(index);
+      if (_localIndex > index) _localIndex -= 1;
+    }
+    _changes.add(null);
+  }
+
+  /// The local queue was emptied: the audio stops with it, so the page and the player
+  /// say the same thing.
+  Future<void> clearLocalQueue() async {
+    await player.stop();
+    _local.clear();
+    _localIndex = -1;
+    _changes.add(null);
+  }
+
+  /// Replaces the order without interrupting a song that is still in it. Used when a song
+  /// is added to the queue while another one is open: the next song has to be the new list.
+  /// A song that is no longer in the list stops with it, paused or not — otherwise the bar
+  /// would name a song the queue no longer shows.
+  Future<void> syncLocalQueue(List<LocalTrack> tracks) async {
+    final current = localCurrent;
+    _local
+      ..clear()
+      ..addAll(tracks);
+    _localIndex = current == null ? -1 : _local.indexOf(current);
+
+    if (current != null && _localIndex < 0) {
+      await player.stop();
+      _changes.add(null);
+    }
+  }
+
+  /// Plays the row a page clicked and goes on from it, which is what a row in a queue means:
+  /// not hearing one song once, but continuing after it. A row that is a file on this device
+  /// opens the file, a row the server has opens the streaming endpoint. Returns false when the
+  /// row is in neither list this player owns, because then nothing was played and the page must
+  /// not say it was.
+  Future<bool> playAt(QueueEntry row) async {
+    final track = row.local;
+    if (track != null) {
+      final at = _local.indexOf(track);
+      if (at < 0) return false;
+
+      _leave(row);
+      _localIndex = at;
+
+      // The mirror and the list the player plays name the same row, so the page points at the
+      // song that is audible.
+      queue.index = row.position - 1;
+      await _openLocal();
+      return true;
+    }
+
+    if (row.position < 1 || row.position > queue.length) return false;
+
+    _leave(row);
+    queue.index = row.position - 1;
+    await playCurrent();
+    return true;
+  }
+
+  /// What the player leaves behind when it moves to another song. Only a song that was really
+  /// opened belongs to "Zuletzt gespielt", and the song the player stays on was not played
+  /// before, so the row it moves to is not recorded twice.
+  void _leave(QueueEntry? next) {
+    final local = localCurrent;
+    final left = queue.current ?? (local == null ? null : QueueEntry.fromLocal(_localIndex + 1, local));
+    if (left == null) return;
+    if (next != null && identical(next, left)) return;
+
+    queue.recordPlayed(left);
   }
 
   Future<void> playCurrent() async {
+    // A server queue replaces what the device was playing from a list.
+    _local.clear();
+    _localIndex = -1;
+
     // Nothing is current until a player starts one. A queue that was just filled plays
     // from its first song, which is what pressing play means.
     final entry = queue.current ?? queue.advance();
     if (entry == null) return;
 
     failure = null;
-    _opened = false;
 
     // The token is only sent when there is one. "Bearer null" would be answered as an
     // unknown session, and the message the user sees would be about a token they never
@@ -84,32 +282,23 @@ class QueuePlayer {
       urlFor(entry.trackId),
       headers: token == null ? const {} : {'Authorization': 'Bearer $token'},
     );
-    _opened = true;
     await player.play();
   }
 
-  /// Plays the song at a position in the list and goes on from there. Clicking a row is the
-  /// queue continuing at that song, not just hearing one song once.
-  Future<void> playAt(int position) async {
-    if (position < 1 || position > queue.length) return;
-
-    final target = queue.entries[position - 1];
-    // The song being left is what "Zuletzt gespielt" shows. Only a song this device started
-    // belongs there, so a row that is played again is not recorded as its own previous song.
-    final left = queue.current;
-    if (left != null && left != target) _recordLeft();
-
-    queue.index = position - 1;
-    await playCurrent();
-  }
+  /// Starts the song that was opened last again. A local file has no queue entry, so the
+  /// play button cannot mean playCurrent for it.
+  Future<void> resume() => player.play();
 
   /// Moves to the next song and plays it. Returns false when the queue is finished, so
   /// the page can say so instead of waiting for a song that is not there. Pressing next
   /// at the end ends playback: there is nothing left to play.
   Future<bool> next() async {
-    // A song that was played belongs in "Zuletzt gespielt", whether or not something follows
-    // it. Recording happens here and not in the queue: only the player knows a song started.
-    _recordLeft();
+    _leave(null);
+
+    // A local list is its own queue. Nothing is stored for it, but it moves the same way.
+    // Only a list that is at a song owns playback; an index of -1 means the local list
+    // already ended and a server queue may be what plays next.
+    if (_localIndex >= 0) return _advanceLocal();
 
     if (queue.advance() == null) {
       _changes.add(null);
@@ -131,9 +320,17 @@ class QueuePlayer {
   bool get playing => player.playing;
 
   Future<void> _onCompleted() async {
-    // The song that just ended is the one "Zuletzt gespielt" shows, so it is recorded before
-    // the list moves to the next row.
-    _recordLeft();
+    // The song that just ended is what was played, so it belongs to the history before the
+    // player moves on.
+    _leave(null);
+
+    // Same rule as the next button: a local list only owns playback while a song of it is
+    // current. Otherwise the server queue is what moves on. A file that cannot be read is
+    // skipped by _advanceLocal, so one broken file does not end the list.
+    if (_localIndex >= 0) {
+      await _advanceLocal();
+      return;
+    }
 
     if (queue.advance() == null) {
       _changes.add(null);

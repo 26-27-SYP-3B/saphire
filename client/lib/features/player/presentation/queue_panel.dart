@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/storage/session_store.dart';
+import '../../library/data/local_library.dart';
 import '../../playlists/data/playlist_repository.dart';
 import '../../playlists/domain/playlist.dart';
 import '../data/queue_repository.dart';
@@ -17,6 +18,10 @@ import '../domain/queue.dart';
 /// inside the app it is the side panel on the right, on a phone it is the whole page. Nothing
 /// here touches the audio — opening the queue only reads the list, so a song keeps playing and
 /// closing the panel changes nothing.
+///
+/// The rows are the shared queue, and a row is a row whatever filled it: a song the server has,
+/// or a song on this device. So the same rows move the same way in both modes, and only where a
+/// change is written differs — the server, or the store on this device.
 class QueuePanel extends StatefulWidget {
   const QueuePanel({
     super.key,
@@ -25,6 +30,9 @@ class QueuePanel extends StatefulWidget {
     required this.queue,
     required this.player,
     required this.session,
+    this.localMode = false,
+    this.localLibrary,
+    this.phone = false,
     this.onClose,
   });
 
@@ -34,8 +42,20 @@ class QueuePanel extends StatefulWidget {
   final QueuePlayer player;
   final SessionStore session;
 
-  /// What closing means here: the page is popped back on a phone, the panel is closed inside
-  /// the app. Either way the person is back at the view they came from and the audio runs on.
+  /// Without a server the queue is the one stored on this device, and the playlists the menu can
+  /// choose are the ones stored here too.
+  final bool localMode;
+
+  /// Null in a test that does not care about local mode; the songs on the device then stay in
+  /// memory, as the pages that pass one do.
+  final LocalLibrary? localLibrary;
+
+  /// Which shape the parent gave this space. A row is taken out by swiping it left in the narrow
+  /// shape and by the menu in the wide one, and that is the only difference between the two.
+  final bool phone;
+
+  /// What closing means here: the panel is taken out of the frame it was drawn in. Either way the
+  /// person is back at the view they came from and the audio runs on.
   final VoidCallback? onClose;
 
   @override
@@ -51,8 +71,10 @@ class _QueuePanelState extends State<QueuePanel> {
   int? _hovered;
 
   // The playlists the menu can add a song to. A queue row is a reference to a library song, so
-  // adding one is the documented POST /api/playlists/{id}/songs.
+  // adding one is the documented POST /api/playlists/{id}/songs; on a device without a server
+  // they are the playlists stored there.
   List<Playlist> _playlists = [];
+  late final LocalLibrary _local = widget.localLibrary ?? LocalLibrary();
 
   StreamSubscription<void>? _changes;
 
@@ -65,12 +87,10 @@ class _QueuePanelState extends State<QueuePanel> {
     _changes = widget.player.changes.listen((_) {
       if (mounted) setState(() {});
     });
-    // The queue lives on the server, so another device may have changed it. Reading it when the
-    // panel opens is what makes it show the current list.
     _read();
     // The menu adds to a playlist, and the only playlists that can be chosen are the caller's
     // own — a queue answer does not name them.
-    _loadPlaylists();
+    if (!widget.localMode) _loadPlaylists();
   }
 
   @override
@@ -80,7 +100,21 @@ class _QueuePanelState extends State<QueuePanel> {
     super.dispose();
   }
 
+  /// Which list the queue came from. Neither answer names its source, so only what was passed in
+  /// when it was filled is known.
+  String? _origin() => widget.localMode ? _local.queueOrigin : widget.queue.filledFrom;
+
+  /// Reads the queue. On the server this is the list another device may have changed since the
+  /// last look. On this device there is nothing to fetch: the rows are built from the stored
+  /// songs, and the player's list is put in step with them so the row named here is the row that
+  /// plays.
   Future<void> _read() async {
+    if (widget.localMode) {
+      _fillFromLocal();
+      await _syncLocal();
+      return;
+    }
+
     setState(() => _busy = true);
     try {
       final entries = await widget.queues.read();
@@ -135,26 +169,71 @@ class _QueuePanelState extends State<QueuePanel> {
     setState(() => _note = message);
   }
 
-  /// The row a song has in the list. A row is known by its song, not by the object: the mirror
-  /// renumbers rows, and a renumbered row is another object with the same song.
+  /// A row is known by its song only when it is not in the list as itself — that is a row from
+  /// "Zuletzt gespielt", which has no slot anymore. A row the panel drew is in the list as that
+  /// very object, so the same song twice does not make a menu act on the other copy. A row that
+  /// is a file on this device is known by that file, because there is no id for it.
   QueueEntry? _rowInList(QueueEntry entry) {
     for (final row in widget.queue.entries) {
-      if (row.trackId == entry.trackId) return row;
+      if (identical(row, entry)) return row;
+    }
+
+    for (final row in widget.queue.entries) {
+      if (entry.local != null) {
+        if (identical(row.local, entry.local)) return row;
+      } else if (row.trackId == entry.trackId) {
+        return row;
+      }
     }
     return null;
   }
 
-  /// The row a song has in the list. A song from "Zuletzt gespielt" is not in the list
-  /// anymore, so it is added the way the plain queue feature does before anything can be done
-  /// with it.
-  Future<QueueEntry> _rowFor(QueueEntry entry) async {
+  /// The row a song has in the list. A song from "Zuletzt gespielt" is not in the list anymore,
+  /// so it is added back before anything can be done with it.
+  Future<QueueEntry?> _rowFor(QueueEntry entry) async {
     final row = _rowInList(entry);
     if (row != null) return row;
 
+    final track = entry.local;
+    if (track != null) {
+      // A song on this device has no id the server could know, so its row can only be in the
+      // queue stored here — even when the queue shown on the page is the server's.
+      _local.addToQueue(track);
+      final row = QueueEntry.fromLocal(_local.queue.length, track, manual: true);
+      widget.queue.append(row);
+      return row;
+    }
+
     final added = await widget.queues.append(entry.trackId);
-    if (!mounted) return added;
+    if (!mounted) return null;
     widget.queue.append(added);
     return added;
+  }
+
+  /// Puts the mirror back in step with the queue stored on this device. A change that only
+  /// touches the store has to come through here, or the page keeps showing rows the store no
+  /// longer has.
+  void _fillFromLocal() {
+    widget.queue.fill(
+      [
+        for (var i = 0; i < _local.queue.length; i++)
+          QueueEntry.fromLocal(i + 1, _local.queue[i], manual: _local.handAdded.contains(_local.queue[i])),
+      ],
+      fromName: _local.queueOrigin,
+    );
+  }
+
+  /// Puts the player's list in step with the stored queue, so the row shown here is the row that
+  /// plays. Only a device queue needs this: the server keeps the order and the player reads it.
+  Future<void> _syncLocal() async {
+    await widget.player.syncLocalQueue(_local.queue);
+    if (!mounted) return;
+
+    // The mirror and the player must name the same row. After a change on the device the index
+    // comes from where the player is, because the audio and the page cannot disagree about what
+    // is playing.
+    final playing = widget.player.localCurrent;
+    widget.queue.index = playing == null ? -1 : widget.queue.entries.indexWhere((row) => identical(row.local, playing));
   }
 
   /// Plays a row. The queue goes on from that song, which is what clicking a row in a queue
@@ -165,13 +244,16 @@ class _QueuePanelState extends State<QueuePanel> {
     setState(() => _busy = true);
     try {
       final row = await _rowFor(entry);
+      if (!mounted || row == null) return;
+
+      if (row.local != null) await _syncLocal();
       if (!mounted) return;
 
-      await widget.player.playAt(row.position);
+      final played = await widget.player.playAt(row);
       if (!mounted) return;
 
       setState(() {
-        _note = null;
+        _note = played ? null : 'Das Lied ist nicht mehr in der Warteschlange.';
         _busy = false;
       });
     } on QueueException catch (error) {
@@ -196,14 +278,28 @@ class _QueuePanelState extends State<QueuePanel> {
     // takes its slot, so the audio has to move with it; otherwise the removed song is still
     // audible and the next one is skipped when the current one ends.
     // A row that is only in the history has no slot, so it is added back before it can be
-    // taken out. The mirror changes before the server is told, because a row dismissed by a swipe
-    // must be gone from the widget tree at once; a failed delete then only shows as the note.
+    // taken out. The mirror changes before anything is written, because a row dismissed by a
+    // swipe must be gone from the widget tree at once; a failed write then only shows as the note.
     final row = _rowInList(entry) ?? await _rowFor(entry);
-    if (!mounted) return;
+    if (!mounted || row == null) return;
 
-    final wasPlaying = widget.queue.entries.indexOf(row) == widget.queue.index;
+    final wasPlaying = identical(row, widget.queue.current);
     widget.queue.removeAt(row.position);
-    setState(() => _busy = true);
+
+    if (widget.localMode) {
+      _local.removeFromQueue(row.position - 1);
+
+      // The row that is audible stops with it, as the player already does for a device queue, and
+      // the page says the same as the audio.
+      await _syncLocal();
+      if (!mounted) return;
+
+      setState(() {
+        _note = 'Position ${row.position} entfernt.';
+        _busy = false;
+      });
+      return;
+    }
 
     try {
       await widget.queues.remove(row.position);
@@ -245,6 +341,26 @@ class _QueuePanelState extends State<QueuePanel> {
     }
 
     setState(() => _busy = true);
+
+    if (widget.localMode) {
+      // Back to front, as on the server: a removal takes the rows after it up one slot, so the
+      // numbers of the rows that still have to go would change.
+      for (final entry in own.reversed) {
+        _local.removeFromQueue(entry.position - 1);
+      }
+
+      // Only the store was written, so the rows have to be built again from it.
+      _fillFromLocal();
+      await _syncLocal();
+      if (!mounted) return;
+
+      setState(() {
+        _note = 'Eigene Songs entfernt.';
+        _busy = false;
+      });
+      return;
+    }
+
     try {
       // From the back to the front: the server renumbers what follows a removal, so removing a
       // front row first would move the numbers under the rows that still have to go.
@@ -265,12 +381,31 @@ class _QueuePanelState extends State<QueuePanel> {
     }
   }
 
-  Future<void> _addToPlaylist(QueueEntry entry, int playlistId) async {
+  Future<void> _addToPlaylist(QueueEntry entry, int choice) async {
     if (_busy) return;
 
     setState(() => _busy = true);
+
+    if (widget.localMode) {
+      final track = entry.local;
+      if (track == null || choice < 0 || choice >= _local.playlists.length) return;
+      final playlist = _local.playlists[choice];
+
+      _local.addToPlaylist(playlist, track);
+      if (!mounted) return;
+
+      // A playlist on this device does not number its songs, so there is no position to say.
+      setState(() {
+        _note = 'Song zur Playlist „${playlist.name}“ hinzugefügt.';
+        _busy = false;
+      });
+      return;
+    }
+
+    if (choice < 0 || choice >= _playlists.length) return;
+
     try {
-      final song = await widget.playlists.addSong(playlistId, entry.trackId);
+      final song = await widget.playlists.addSong(_playlists[choice].id, entry.trackId);
       if (!mounted) return;
 
       // The action keeps its name: what the menu said is what happened, with the position the
@@ -291,38 +426,61 @@ class _QueuePanelState extends State<QueuePanel> {
   Future<void> _playNext(QueueEntry entry) async {
     if (_busy) return;
 
+    setState(() => _busy = true);
+
     final row = await _rowFor(entry);
-    if (!mounted) return;
+    if (!mounted || row == null) return;
 
     final current = widget.queue.index;
 
     if (current < 0) {
-      await widget.player.playAt(row.position);
+      if (row.local != null) await _syncLocal();
+      if (!mounted) return;
+      await widget.player.playAt(row);
       if (!mounted) return;
       setState(() => _busy = false);
       return;
     }
 
-    // The row that is playing cannot be put behind itself, and a slot the mirror does not have
-    // is not a move. Saying it will be played next would be a claim the panel did not do.
-    if (current == widget.queue.entries.indexOf(row) || !widget.queue.move(widget.queue.entries.indexOf(row), current + 1)) {
+    // The row that is playing cannot be put behind itself, and a slot the panel does not have is
+    // not a move. Saying it will be played next would be a claim the panel did not do.
+    final at = widget.queue.entries.indexOf(row);
+    if (at == current || !await _moveRow(at + 1, current + 2)) {
+      if (!mounted) return;
       setState(() => _busy = false);
       return;
     }
 
+    if (!mounted) return;
     setState(() {
       _note = 'Das Lied wird als nächstes gespielt.';
       _busy = false;
     });
   }
 
-  /// Moves a row to another slot. shortcut: the queue has no reorder endpoint (api-docs.md,
-  /// Upcoming), so this order only exists on this device and a new read would answer with the
-  /// server order. Upgrade: the PUT that the playlist reorder documents.
-  void _move(int fromPosition, int toPosition) {
+  /// Moves one row to another slot. On the server only the mirror can be changed, because the
+  /// queue has no reorder endpoint (api-docs.md, Upcoming), so this order exists on this device
+  /// only and a new read would answer with the server order. Upgrade: the PUT that the playlist
+  /// reorder documents. On a device the stored order is what changes, so it stays after a restart.
+  Future<bool> _moveRow(int from, int to) async {
+    if (from == to) return false;
+    if (!widget.queue.move(from, to)) return false;
+
+    if (widget.localMode) {
+      _local.move(from, to);
+      await _syncLocal();
+      if (!mounted) return true;
+    }
+
+    return true;
+  }
+
+  Future<void> _move(int fromPosition, int toPosition) async {
     if (_busy) return;
     if (fromPosition == toPosition) return; // a row dropped on itself is not a move
-    if (!widget.queue.move(fromPosition - 1, toPosition - 1)) return;
+
+    if (!await _moveRow(fromPosition, toPosition)) return;
+    if (!mounted) return;
 
     setState(() => _note = 'Das Lied ist jetzt an Position $toPosition.');
   }
@@ -341,39 +499,33 @@ class _QueuePanelState extends State<QueuePanel> {
 
     return DefaultTabController(
       length: 2,
-      child: LayoutBuilder(builder: (context, constraints) {
-        // Below this width the panel is the phone view, where a row is taken out by swiping it
-        // left rather than by dragging it.
-        final phone = constraints.maxWidth < 520;
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Expanded(
-                  child: TabBar(tabs: [Tab(text: 'Warteschlange'), Tab(text: 'Zuletzt gespielt')]),
-                ),
-                IconButton(tooltip: 'Warteschlange schließen', icon: const Icon(Icons.close), onPressed: widget.onClose),
-              ],
-            ),
-            if (_note != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
-                child: Text(_note!, style: theme.textTheme.bodyMedium?.copyWith(color: scheme.error)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: TabBar(tabs: [Tab(text: 'Warteschlange'), Tab(text: 'Zuletzt gespielt')]),
               ),
-            Expanded(child: TabBarView(children: [_queueTab(phone), _historyTab()])),
+              IconButton(tooltip: 'Warteschlange schließen', icon: const Icon(Icons.close), onPressed: widget.onClose),
+            ],
+          ),
+          if (_note != null)
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-              child: FilledButton.tonal(
-                onPressed: _busy ? null : _clearOwn,
-                style: FilledButton.styleFrom(minimumSize: const Size(0, 40)),
-                child: const Text('Warteschlange leeren'),
-              ),
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
+              child: Text(_note!, style: theme.textTheme.bodyMedium?.copyWith(color: scheme.error)),
             ),
-          ],
-        );
-      }),
+          Expanded(child: TabBarView(children: [_queueTab(widget.phone), _historyTab()])),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+            child: FilledButton.tonal(
+              onPressed: _busy ? null : _clearOwn,
+              style: FilledButton.styleFrom(minimumSize: const Size(0, 40)),
+              child: const Text('Warteschlange leeren'),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -398,7 +550,7 @@ class _QueuePanelState extends State<QueuePanel> {
           for (final entry in own) _row(entry, phone: phone),
         ],
         if (fromList.isNotEmpty) ...[
-          _section('Als Nächstes aus: ${widget.queue.filledFrom ?? 'der Warteschlange'}'),
+          _section('Als Nächstes aus: ${_origin() ?? 'der Warteschlange'}'),
           for (final entry in fromList) _row(entry, phone: phone),
         ],
       ],
@@ -433,13 +585,15 @@ class _QueuePanelState extends State<QueuePanel> {
         children: [
           Text('Füge Songs zur Warteschlange hinzu', style: theme.textTheme.titleMedium),
           const SizedBox(height: 10),
-          FilledButton(
-            // The search is on the start page. There is no search endpoint yet, so that is where
-            // a song can be found and put in the queue.
-            onPressed: () => context.go('/home'),
-            style: FilledButton.styleFrom(minimumSize: const Size(0, 40)),
-            child: const Text('Songs suchen'),
-          ),
+          if (!widget.localMode)
+            FilledButton(
+              // The search is on the start page. There is no search endpoint yet, so that is where
+              // a song can be found and put in the queue. Without a server there is nothing to
+              // search: the songs are picked in the library.
+              onPressed: () => context.go('/home'),
+              style: FilledButton.styleFrom(minimumSize: const Size(0, 40)),
+              child: const Text('Songs suchen'),
+            ),
         ],
       ),
     );
@@ -507,6 +661,7 @@ class _QueuePanelState extends State<QueuePanel> {
     final scheme = theme.colorScheme;
     final hovered = _hovered == entry.position;
     final current = entry == widget.queue.current;
+    final inList = widget.queue.entries.contains(entry);
 
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = entry.position),
@@ -534,9 +689,13 @@ class _QueuePanelState extends State<QueuePanel> {
                   children: [
                     Text(entry.title, style: theme.textTheme.labelLarge, maxLines: 1, overflow: TextOverflow.ellipsis),
                     Text(
+                      // A row of the history has no list it came from, because what was played is
+                      // not a list that is still being played.
                       current
                           ? 'Läuft gerade · Position ${entry.position}'
-                          : (entry.manual ? 'deine Warteschlange' : (widget.queue.filledFrom ?? 'die Warteschlange')),
+                          : (inList
+                              ? (entry.manual ? 'deine Warteschlange' : (_origin() ?? 'die Warteschlange'))
+                              : 'Zuletzt gespielt'),
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: current ? scheme.primary : scheme.onSurfaceVariant,
                       ),
@@ -549,12 +708,7 @@ class _QueuePanelState extends State<QueuePanel> {
               // The grip is the handle: hold it and move the row. On a phone that is the long
               // press, on a desktop a press with the mouse. A song from the history is not part
               // of the order, so it has no handle.
-              if (widget.queue.entries.contains(entry))
-                LongPressDraggable<int>(
-                  data: entry.position,
-                  feedback: const Icon(Icons.drag_handle, color: Colors.white),
-                  child: const Icon(Icons.drag_handle, size: 20),
-                ),
+              if (inList) LongPressDraggable<int>(data: entry.position, feedback: _feedback(), child: const Icon(Icons.drag_handle, size: 20)),
               _menu(entry),
             ],
           ),
@@ -563,7 +717,14 @@ class _QueuePanelState extends State<QueuePanel> {
     );
   }
 
+  Widget _feedback() => const Icon(Icons.drag_handle, color: Colors.white);
+
   Widget _menu(QueueEntry entry) {
+    // The value is the place in the list of the caller's playlists — the same shape in both
+    // modes, because a playlist on a device has no id.
+    final names = widget.localMode ? _local.playlists.map((playlist) => playlist.name) : _playlists.map((playlist) => playlist.name);
+    final choices = [for (var i = 0; i < names.length; i++) ('playlist:$i', names.elementAt(i))];
+
     return PopupMenuButton<String>(
       tooltip: 'Lied',
       onSelected: (value) => _choose(entry, value),
@@ -573,10 +734,10 @@ class _QueuePanelState extends State<QueuePanel> {
         // Adding to a playlist needs one that belongs to the caller, so the names are the choice
         // here and the line above says what picking one of them does.
         const PopupMenuItem(enabled: false, child: Text('Zur Playlist hinzufügen')),
-        if (_playlists.isEmpty)
+        if (choices.isEmpty)
           const PopupMenuItem(enabled: false, child: Text('Keine Playlist'))
         else
-          for (final playlist in _playlists) PopupMenuItem(value: 'playlist:${playlist.id}', child: Text(playlist.name)),
+          for (final choice in choices) PopupMenuItem(value: choice.$1, child: Text(choice.$2)),
       ],
     );
   }

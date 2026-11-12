@@ -2,11 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../features/library/data/library_repository.dart';
 import '../../features/library/data/local_library.dart';
-import '../../features/player/data/queue_repository.dart';
 import '../../features/player/domain/player.dart';
-import '../../features/player/presentation/queue_sheet.dart';
 
 /// The bar every signed-in page shows at the bottom: what is current in the queue, and
 /// the buttons that move it. It is the same widget on every page, so it listens to the
@@ -17,19 +14,17 @@ class PlayerBar extends StatefulWidget {
   const PlayerBar({
     super.key,
     required this.player,
-    required this.queues,
-    required this.library,
     this.localMode = false,
     this.localLibrary,
+    this.onQueueOpen,
   });
 
   final QueuePlayer player;
 
-  /// The queue behind the list button: the sheet it opens reads and appends through this.
-  final QueueRepository queues;
-
-  /// What the sheet's add tab lists.
-  final LibraryRepository library;
+  /// What the list button does. The queue belongs to the frame the page is drawn in, so the bar
+  /// does not open it by itself: the frame decides whether that is the column on the right or the
+  /// whole page.
+  final VoidCallback? onQueueOpen;
 
   /// Without a server the queue is the stored one and the songs come from the device.
   final bool localMode;
@@ -139,14 +134,9 @@ class _PlayerBarState extends State<PlayerBar> {
           ),
           IconButton(
             tooltip: 'Warteschlange',
-            onPressed: () => showQueueSheet(
-              context,
-              queues: widget.queues,
-              library: widget.library,
-              player: widget.player,
-              localMode: widget.localMode,
-              localLibrary: widget.localLibrary,
-            ),
+            // The queue is the shape the frame has room for, so the frame opens it and the bar
+            // only says that the person wants it.
+            onPressed: widget.onQueueOpen,
             icon: const Icon(Icons.queue_music),
           ),
           IconButton(
