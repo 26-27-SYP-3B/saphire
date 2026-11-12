@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../../../core/utils/audio_format.dart';
 import '../domain/local_playlist.dart';
 import '../domain/local_track.dart';
 
@@ -58,14 +59,18 @@ class LocalLibrary {
   /// Takes one picked file. Returns null when it was taken, the message when it was
   /// refused, so the page can show the answer on that file and not add it.
   String? add({required String name, String? path, Uint8List? bytes}) {
-    if (!name.toLowerCase().endsWith('.mp3')) {
-      return 'nur MP3-Dateien werden übernommen';
+    if (!isAudioFile(name)) {
+      return 'nur Audiodateien werden übernommen';
     }
-    // A renamed picture would pass on the name alone, so the first bytes have to agree.
-    // A pick that came without bytes is on a device, where the player reports a file it
-    // cannot open anyway.
-    if (bytes != null && !isMp3(bytes)) {
-      return 'die Datei ist keine gültige MP3-Datei';
+    // A renamed picture would pass on the name alone, so the first bytes have to agree: an MP3
+    // by its frame header, every other format by not being recognizable as something else. A
+    // pick that came without bytes is on a device, where the player reports a file it cannot
+    // open anyway.
+    if (bytes != null) {
+      final mp3 = name.toLowerCase().endsWith('.mp3');
+      if (mp3 ? !isMp3(bytes) : looksLikeNotAudio(bytes)) {
+        return 'die Datei ist keine gültige Audiodatei';
+      }
     }
     // A folder import adds a whole list at once, and picking the same folder twice would
     // double every song. The path is what tells two files with the same name apart.

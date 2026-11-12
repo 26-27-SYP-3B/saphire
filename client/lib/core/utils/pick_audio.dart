@@ -10,7 +10,7 @@ typedef PickAudio = Future<List<PickedAudio>?> Function();
 
 /// The picker every screen that adds a song uses. A widget test passes its own,
 /// because the plugin cannot answer there. Any file can be picked, because which
-/// formats are allowed is the server's decision (see server/music.go); a file it
+/// formats are allowed is the server's decision (see server/src/music.rs); a file it
 /// refuses comes back as its message and is shown for that file.
 Future<List<PickedAudio>?> pickAudioFiles() async {
   final picked = await FilePicker.pickFiles(type: FileType.any);
