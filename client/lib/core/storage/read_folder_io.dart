@@ -13,22 +13,19 @@ import '../utils/pick_audio.dart';
 /// read at all is an error, because an empty list would say it has no songs, which is a different
 /// thing.
 Future<List<PickedLocal>> readFolder(String path) async {
-  // Asked first: a phone gives the app no access to most folders, and a refused listing would
-  // otherwise come out as "no songs in here".
-  if (!await Directory(path).exists()) {
-    throw FileSystemException('the folder cannot be read', path);
-  }
+  // Read once before anything is swallowed: a folder the app may not read throws here, while an
+  // empty list would say the folder has no songs — a different answer to a different problem.
+  await Directory(path).list(followLinks: false).isEmpty;
 
   final files = <File>[];
-  try {
-    await for (final item in Directory(path).list(recursive: true, followLinks: false)) {
-      if (item is File && isAudioFile(item.path)) files.add(item);
-      // shortcut: a huge folder is cut off at 500 songs. Upgrade: page the list or read it
-      // while the page fills, if anyone ever points this at a whole music drive.
-      if (files.length >= 500) break;
-    }
-  } on FileSystemException {
-    // A sub-folder the app may not read must not cost the songs that are readable.
+  // A sub-folder the app may not read must not cost the songs that are readable, and the listing
+  // reports one as an error event: without this the walk would stop at it.
+  final listing = Directory(path).list(recursive: true, followLinks: false).handleError((Object _) {});
+  await for (final item in listing) {
+    if (item is File && isAudioFile(item.path)) files.add(item);
+    // shortcut: a huge folder is cut off at 500 songs. Upgrade: page the list or read it
+    // while the page fills, if anyone ever points this at a whole music drive.
+    if (files.length >= 500) break;
   }
   files.sort((a, b) => a.path.compareTo(b.path));
 

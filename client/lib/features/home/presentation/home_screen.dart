@@ -211,9 +211,14 @@ class _HomeScreenState extends State<HomeScreen> {
       if (mounted) setState(() => _note = '${error.message}');
       return;
     } catch (_) {
-      // A folder that cannot be read is not a refused file, so no row can name it. The app has
-      // no storage access on most phones, and saying so beats "no songs in here".
-      if (mounted) setState(() => _note = 'Dieser Ordner konnte nicht gelesen werden. Wähle die Songs stattdessen einzeln aus.');
+      // A refused folder is not a refused song, so no row can name it. On a phone the app has no
+      // storage access for most folders, and saying so beats "no songs in here"; picking one file
+      // at a time is what works there.
+      if (mounted) {
+        setState(() => _note = folder
+            ? 'Dieser Ordner konnte nicht gelesen werden. Wähle die Songs stattdessen einzeln aus.'
+            : 'Die Dateien konnten nicht gelesen werden. Versuch es erneut.');
+      }
       return;
     } finally {
       if (mounted) setState(() => _picking = false);

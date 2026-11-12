@@ -245,10 +245,20 @@ pub fn detect_audio_type(extension: &str, data: &[u8]) -> Result<String, String>
     if let Some((_, media_type)) = AUDIO_EXTENSIONS.iter().find(|(ext, _)| *ext == extension) {
         return Ok((*media_type).to_string());
     }
-    if extension.is_empty() {
-        return Err("the uploaded file has no extension that says what it is".to_string());
+    // The extension becomes the content type of a stored row, so only one that can be a media
+    // subtype is taken: a name like `Lied.äöü` or `track.` cannot be, and a header built from it
+    // would fail on every later stream of that song.
+    match audio_subtype(extension) {
+        Some(subtype) => Ok(format!("audio/{subtype}")),
+        None => Err("the uploaded file has no extension that says what it is".to_string()),
     }
-    Ok(format!("audio/{}", extension.trim_start_matches('.')))
+}
+
+/// The subtype of a client extension, when it can be one: ASCII letters and digits, at most ten.
+fn audio_subtype(extension: &str) -> Option<&str> {
+    let subtype = extension.trim_start_matches('.');
+    let usable = !subtype.is_empty() && subtype.len() <= 10 && subtype.bytes().all(|byte| byte.is_ascii_alphanumeric());
+    usable.then_some(subtype)
 }
 
 /// The sniffer reports WAV as `audio/wave` and Ogg as `application/ogg`. Both are audio, and
@@ -270,7 +280,7 @@ fn is_audio(media_type: &str) -> bool {
 /// containers it recognizes, and the formats a file renamed `.mp3` turns out to be. Unknown
 /// bytes answer as plain binary, which is what lets an extension decide.
 fn sniff(data: &[u8]) -> String {
-    const SIGNATURES: [(&[u8], &str); 11] = [
+    const SIGNATURES: [(&[u8], &str); 14] = [
         (b"RIFF", "audio/wave"),
         (b"ID3", "audio/mpeg"),
         (b"ID2", "audio/mpeg"),
@@ -282,6 +292,9 @@ fn sniff(data: &[u8]) -> String {
         (b"PK\x03\x04", "application/zip"),
         (b"\x1f\x8b", "application/gzip"),
         (b"\x7fELF", "application/x-elf"),
+        (b"MZ", "application/x-msdownload"),
+        (b"Rar!", "application/vnd.rar"),
+        (b"7z\xbc\xaf", "application/x-7z-compressed"),
     ];
 
     for (signature, media_type) in SIGNATURES {
@@ -357,7 +370,9 @@ pub async fn handle_upload(State(state): State<AppState>, req: Request) -> Respo
         return respond::error(StatusCode::BAD_REQUEST, "the uploaded file is empty");
     }
 
-    let extension = extension_of(&file_name);
+    // The base name only: a name like `Album.2024/track` would otherwise make the extension
+    // `.2024/track`, and the stored name would carry a folder separator.
+    let extension = extension_of(&base_name(&file_name));
     let media_type = match detect_audio_type(&extension, &data) {
         Ok(media_type) => media_type,
         Err(message) => return respond::error(StatusCode::BAD_REQUEST, &message),

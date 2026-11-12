@@ -280,7 +280,13 @@ async fn upload_rejects_bad_uploads() {
             b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR".to_vec(),
             StatusCode::BAD_REQUEST,
         ),
-        ("extension not allowed", "file", "song.zip", b"PK\x03\x04\x14\x00\x00\x00".to_vec(), StatusCode::BAD_REQUEST),
+        (
+            "an archive named like audio",
+            "file",
+            "song.zip",
+            b"PK\x03\x04\x14\x00\x00\x00".to_vec(),
+            StatusCode::BAD_REQUEST,
+        ),
         (
             "an archive renamed .mp3",
             "file",
@@ -288,7 +294,22 @@ async fn upload_rejects_bad_uploads() {
             b"PK\x03\x04\x14\x00\x00\x00".to_vec(),
             StatusCode::BAD_REQUEST,
         ),
+        (
+            "an executable renamed .wav",
+            "file",
+            "song.wav",
+            b"MZ\x90\x00\x03\x00\x00\x00".to_vec(),
+            StatusCode::BAD_REQUEST,
+        ),
         ("a name without an extension", "file", "song", common::not_audio(), StatusCode::BAD_REQUEST),
+        ("a name that ends in a dot", "file", "track.", common::not_audio(), StatusCode::BAD_REQUEST),
+        (
+            "an extension that cannot be a content type",
+            "file",
+            "lied.äöü",
+            common::not_audio(),
+            StatusCode::BAD_REQUEST,
+        ),
         ("empty file", "file", "empty.wav", Vec::new(), StatusCode::BAD_REQUEST),
         ("field is not a file", "file", "", common::not_audio(), StatusCode::BAD_REQUEST),
         ("wrong field name", "upload", "song.flac", common::not_audio(), StatusCode::BAD_REQUEST),
@@ -306,6 +327,11 @@ async fn upload_rejects_bad_uploads() {
         let reply = common::upload(&test, &token, field, file, &content).await;
         assert_eq!(reply.status, want, "{name} -> {} ({})", reply.status, reply.body);
     }
+
+    // The refusal names what the bytes are, so an archive is refused for its content and not for
+    // its extension: any other audio name over the same bytes is refused too.
+    let reply = common::upload(&test, &token, "file", "song.mp3", b"PK\x03\x04\x14\x00\x00\x00").await;
+    assert!(reply.body.contains("not audio"), "an archive was refused for another reason: {}", reply.body);
 
     // A request that is not multipart at all is refused before anything is read. `common::call`
     // passes header values verbatim, so the Bearer prefix has to be written out here.
@@ -330,6 +356,14 @@ async fn upload_rejects_bad_uploads() {
 
     let info = std::fs::metadata(test.library.join(&stored)).expect("the file is not inside the library folder");
     assert!(info.is_file(), "the file is not inside the library folder: {stored}");
+
+    // A dot in the folder part of a name is not an extension: the file is saved under a plain
+    // name instead of the write failing on a folder that is not there.
+    let reply = common::upload(&test, &token, "file", "Album.2024/track", &common::tiny_wav()).await;
+    assert_eq!(reply.status, StatusCode::CREATED, "a dotted folder in the name -> {} ({})", reply.status, reply.body);
+
+    let stored = common::json(&reply.body)["stored_name"].as_str().unwrap_or_default().to_string();
+    assert!(!stored.contains('/'), "stored name is not a plain library file name: {stored}");
 }
 
 /// What the Go version refused: its sniffer reported `application/ogg`, which is not an

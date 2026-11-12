@@ -28,7 +28,7 @@ void main() {
 
   // A phone gives the app no access to most folders. That is not "this folder has no songs", so
   // it must not be answered with an empty list.
-  test('a folder that cannot be read is an error, not an empty folder', () async {
+  test('a folder that does not exist is an error, not an empty folder', () async {
     final missing = '${Directory.systemTemp.path}${Platform.pathSeparator}kein-solcher-ordner';
 
     expect(() => readFolder(missing), throwsA(isA<FileSystemException>()));
