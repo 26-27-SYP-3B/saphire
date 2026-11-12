@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../../core/storage/session_store.dart';
 import '../../features/playlists/data/playlist_repository.dart';
-import '../../features/player/presentation/queue_panel.dart';
 import '../../features/library/data/local_library.dart';
 import '../../features/player/data/queue_repository.dart';
 import '../../features/player/domain/player.dart';
+import '../../features/player/presentation/player_view.dart';
+import '../../features/player/presentation/queue_panel.dart';
 import 'nav_bar.dart';
 import 'player_bar.dart';
 import 'saphire_logo.dart';
@@ -16,13 +17,18 @@ import 'saphire_logo.dart';
 ///
 /// `child` gets the height left over after the navigation row and the bar, so a page with a long
 /// list scrolls inside it instead of pushing the bar off the screen. Below `wideAt` the sidebar
-/// has no room and the navigation becomes the row at the top; `sidebarExtra` is only drawn in the
-/// wide layout, because a narrow page has no column to put it in.
+/// has no room and the navigation becomes the row at the bottom, because that is the row a thumb
+/// reaches on a phone; `sidebarExtra` is only drawn in the wide layout, because a narrow page has
+/// no column to put it in.
 ///
 /// The queue is the column on the right in the wide layout and the whole content area in the
 /// narrow one, because a narrow page has no room for a second column. Opening it does not leave
 /// the page: the same frame stays, only the middle is the queue, and closing it gives the page
 /// back. Nothing here plays or stops anything, so a song keeps playing while the queue is open.
+///
+/// The same is true for the full player: it is the middle of the frame, and on a phone that
+/// middle is the whole page, so opening it is the full-screen player the bar's song is seen in.
+/// Closing it gives the page back and the song keeps running.
 class AppShell extends StatefulWidget {
   const AppShell({
     super.key,
@@ -68,6 +74,7 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   bool _queueOpen = false;
+  bool _playerOpen = false;
 
   @override
   Widget build(BuildContext context) {
@@ -79,6 +86,17 @@ class _AppShellState extends State<AppShell> {
         final wide = constraints.maxWidth >= AppShell.wideAt;
 
         Widget content = widget.child;
+        if (_playerOpen) {
+          content = PlayerView(
+            player: widget.player,
+            onQueueOpen: () => setState(() {
+              _playerOpen = false;
+              _queueOpen = true;
+            }),
+            onClose: () => setState(() => _playerOpen = false),
+          );
+        }
+
         if (_queueOpen) {
           final panel = QueuePanel(
             queues: widget.queues,
@@ -94,26 +112,26 @@ class _AppShellState extends State<AppShell> {
 
           content = wide
             ? Row(
-                children: [Expanded(child: widget.child), SizedBox(width: AppShell.queueWidth, child: panel)],
+                children: [Expanded(child: content), SizedBox(width: AppShell.queueWidth, child: panel)],
               )
             : panel;
         }
+
+        // On a phone the full player is the whole page, so the bar and the navigation are not
+        // drawn under it: a view that shows one song and its controls does not need a copy of the
+        // same controls below it.
+        final fullscreen = !wide && _playerOpen;
 
         return Scaffold(
           backgroundColor: scheme.surface,
           body: SafeArea(
             child: Column(
               children: [
-                if (!wide)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
-                    child: NavBar(selected: widget.selected, vertical: false),
-                  ),
-                Expanded(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      if (wide)
+                if (wide)
+                  Expanded(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
                         SizedBox(
                           width: AppShell.sidebarWidth,
                           child: SingleChildScrollView(
@@ -133,16 +151,21 @@ class _AppShellState extends State<AppShell> {
                             ),
                           ),
                         ),
-                      Expanded(child: content),
-                    ],
+                        Expanded(child: content),
+                      ],
+                    ),
+                  )
+                else
+                  Expanded(child: content),
+                if (!fullscreen)
+                  PlayerBar(
+                    player: widget.player,
+                    localMode: widget.localMode,
+                    localLibrary: widget.localLibrary,
+                    onQueueOpen: () => setState(() => _queueOpen = true),
+                    onPlayerOpen: () => setState(() => _playerOpen = true),
                   ),
-                ),
-                PlayerBar(
-                  player: widget.player,
-                  localMode: widget.localMode,
-                  localLibrary: widget.localLibrary,
-                  onQueueOpen: () => setState(() => _queueOpen = true),
-                ),
+                if (!wide && !fullscreen) NavBar(selected: widget.selected, vertical: false),
               ],
             ),
           ),

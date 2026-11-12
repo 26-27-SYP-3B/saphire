@@ -5,14 +5,18 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:saphire_client/app/router.dart';
 import 'package:saphire_client/core/config/api_config.dart';
 import 'package:saphire_client/core/storage/settings_store.dart';
 import 'package:saphire_client/core/utils/pick_audio.dart';
 import 'package:saphire_client/features/auth/data/auth_repository.dart';
 import 'package:saphire_client/features/home/presentation/home_screen.dart';
 import 'package:saphire_client/features/library/data/local_library.dart';
+import 'package:saphire_client/features/library/presentation/library_screen.dart';
 import 'package:saphire_client/features/player/domain/player.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
+import 'package:saphire_client/shared/widgets/nav_bar.dart';
+import 'package:saphire_client/shared/widgets/player_bar.dart';
 
 import '../../support/fake_player.dart';
 import '../../support/stub_adapter.dart';
@@ -480,6 +484,64 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('In diesem Ordner sind keine MP3-Dateien.'), findsOneWidget);
+  });
+
+  // Below AppShell.wideAt the sidebar has no room, so the navigation becomes the row at the bottom
+  // of the page — the row a thumb reaches without the other hand. Only the items that lead
+  // somewhere are on it, and each is as tall as a touch is aimed at.
+  testWidgets('on a phone the navigation row is at the bottom and still navigates', (tester) async {
+    tester.view..physicalSize = const Size(420, 900)..devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final wiring = Wiring(
+      loggedIn(),
+      libraryAdapter: StubAdapter(200, libraryAnswer),
+      queueAdapter: StubAdapter(200, <Object>[]),
+    );
+    addTearDown(wiring.dispose);
+
+    // Home asks who the session belongs to and drops it when the answer is not there, so that call
+    // has to answer; without it the guard would leave the test on the login.
+    final auth = AuthRepository(Dio()..httpClientAdapter = StubAdapter(200, userAnswer), wiring.session);
+    final router = buildRouter(
+      auth: auth,
+      uploads: UploadRepository(Dio(), wiring.session),
+      library: wiring.library,
+      playlists: wiring.playlists,
+      queues: wiring.queues,
+      queue: wiring.queue,
+      player: wiring.player,
+      session: wiring.session,
+      settings: withServer(),
+      dio: Dio(),
+    );
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+
+    // The row is the only navigation in this shape, and it is the last thing on the screen, below
+    // the bar.
+    final row = find.byType(NavBar);
+    expect(row, findsOneWidget);
+    expect(tester.getRect(row).bottom, closeTo(900, 1));
+    expect(tester.getRect(row).top, greaterThanOrEqualTo(tester.getRect(find.byType(PlayerBar)).bottom));
+
+    // A label with no screen behind it is not on a row a person is trying to reach with one thumb.
+    expect(find.text('Suche'), findsNothing);
+    expect(find.text('Alben'), findsNothing);
+    expect(find.text('Künstler*innen'), findsNothing);
+
+    expect(
+      tester.getRect(find.ancestor(of: find.text('Bibliothek'), matching: find.byType(InkWell))).height,
+      greaterThanOrEqualTo(48),
+    );
+
+    await tester.tap(find.text('Bibliothek'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(LibraryScreen), findsOneWidget);
+    expect(find.text('Technogal.mp3'), findsOneWidget);
   });
 }
 

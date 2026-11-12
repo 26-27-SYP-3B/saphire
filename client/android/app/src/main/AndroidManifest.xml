@@ -1,4 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- audio_service needs these for playback with the screen off and for the media notification.
+         Without the notification permission the notification is not shown on Android 13 and newer,
+         and the user would have no controls outside the app. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="saphire_client"
         android:name="${applicationName}"

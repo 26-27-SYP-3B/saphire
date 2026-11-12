@@ -1,4 +1,6 @@
+import 'package:audio_service/audio_service.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'app/app.dart';
@@ -10,6 +12,7 @@ import 'features/library/data/local_library.dart';
 import 'features/playlists/data/cover_store.dart';
 import 'features/playlists/data/playlist_repository.dart';
 import 'features/player/data/just_audio_player.dart';
+import 'features/player/data/media_service.dart';
 import 'features/player/data/queue_repository.dart';
 import 'features/player/domain/player.dart';
 import 'features/player/domain/queue.dart';
@@ -34,6 +37,22 @@ Future<void> main() async {
   final queue = PlaybackQueue();
   final player = JustAudioPlayer();
 
+  final queuePlayer = QueuePlayer(queue: queue, player: player, session: session);
+
+  // A phone builds the media notification, the lock-screen controls and the Bluetooth buttons from
+  // what a handler reports; that is the plugin's work, this app only supplies the handler over the
+  // same queue the bar uses. On a desktop or in a browser the plugin has no platform behind it, so
+  // this is started only where a media session exists — otherwise the app would not start.
+  if (defaultTargetPlatform == TargetPlatform.android) {
+    await AudioService.init(
+      builder: () => MediaService(queuePlayer),
+      config: const AudioServiceConfig(
+        androidNotificationChannelId: 'com.saphire.media',
+        androidNotificationChannelName: 'saphire',
+      ),
+    );
+  }
+
   runApp(
     SaphireApp(
       repository: AuthRepository(dio, session),
@@ -42,7 +61,7 @@ Future<void> main() async {
       playlists: PlaylistRepository(dio, session),
       queues: QueueRepository(dio, session),
       queue: queue,
-      player: QueuePlayer(queue: queue, player: player, session: session),
+      player: queuePlayer,
       session: session,
       settings: settings,
       localLibrary: localLibrary,

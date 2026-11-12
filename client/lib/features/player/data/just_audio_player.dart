@@ -33,5 +33,20 @@ class JustAudioPlayer implements SongPlayer {
   bool get playing => _player.playing;
 
   @override
+  Stream<Duration> get positionStream => _player.positionStream;
+
+  @override
+  Duration get position => _player.position;
+
+  @override
+  Duration get duration => _player.duration ?? Duration.zero;
+
+  @override
+  Future<void> seek(Duration at) => _player.seek(at);
+
+  @override
+  Future<void> setVolume(double volume) => _player.setVolume(volume);
+
+  @override
   Future<void> dispose() => _player.dispose();
 }

@@ -17,6 +17,7 @@ class PlayerBar extends StatefulWidget {
     this.localMode = false,
     this.localLibrary,
     this.onQueueOpen,
+    this.onPlayerOpen,
   });
 
   final QueuePlayer player;
@@ -25,6 +26,10 @@ class PlayerBar extends StatefulWidget {
   /// does not open it by itself: the frame decides whether that is the column on the right or the
   /// whole page.
   final VoidCallback? onQueueOpen;
+
+  /// What tapping the bar does. The full player is the same player seen close up, so the bar shows
+  /// it and the frame decides where it is drawn.
+  final VoidCallback? onPlayerOpen;
 
   /// Without a server the queue is the stored one and the songs come from the device.
   final bool localMode;
@@ -97,67 +102,72 @@ class _PlayerBarState extends State<PlayerBar> {
     // opened last rather than the queue alone.
     final title = local?.title ?? current?.title;
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-      decoration: BoxDecoration(border: Border(top: BorderSide(color: scheme.outline))),
-      child: Row(
-        children: [
-          Icon(playing ? Icons.play_arrow : Icons.audio_file,
-              size: 22, color: playing ? scheme.primary : scheme.onSurfaceVariant),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title ?? 'Nichts wird abgespielt',
-                  style: theme.textTheme.labelLarge,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                Text(
-                  // What is known about the queue: an error, or the slot that is current,
-                  // or what would start something.
-                  _note ??
-                      widget.player.failure ??
-                      (local != null
-                          ? 'Lokal · dieses Gerät'
-                          : current == null
-                              ? 'Suche ein Lied und öffne es, oder fülle die Warteschlange.'
-                              : 'Warteschlange · Slot ${current.position}'),
-                  style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
+    // Tapping the bar is what opens the full player. The bar is 60 px tall, which is the size a
+    // thumb hits without missing.
+    return InkWell(
+      onTap: widget.onPlayerOpen,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        decoration: BoxDecoration(border: Border(top: BorderSide(color: scheme.outline))),
+        child: Row(
+          children: [
+            Icon(playing ? Icons.play_arrow : Icons.audio_file,
+                size: 22, color: playing ? scheme.primary : scheme.onSurfaceVariant),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title ?? 'Nichts wird abgespielt',
+                    style: theme.textTheme.labelLarge,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    // What is known about the queue: an error, or the slot that is current,
+                    // or what would start something.
+                    _note ??
+                        widget.player.failure ??
+                        (local != null
+                            ? 'Lokal · dieses Gerät'
+                            : current == null
+                                ? 'Suche ein Lied und öffne es, oder fülle die Warteschlange.'
+                                : 'Warteschlange · Slot ${current.position}'),
+                    style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
             ),
-          ),
-          IconButton(
-            tooltip: 'Warteschlange',
-            // The queue is the shape the frame has room for, so the frame opens it and the bar
-            // only says that the person wants it.
-            onPressed: widget.onQueueOpen,
-            icon: const Icon(Icons.queue_music),
-          ),
-          IconButton(
-            tooltip: playing ? 'Pause' : 'Abspielen',
-            // A local song resumes where it was; _play knows that and what to start when
-            // nothing is open yet.
-            onPressed: _busy
-                ? null
-                : () => _control(() => playing
-                    ? widget.player.pause()
-                    : widget.player.localCurrent != null
-                        ? widget.player.resume()
-                        : _play()),
-            icon: Icon(playing ? Icons.pause : Icons.play_arrow),
-          ),
-          IconButton(
-            tooltip: 'Nächstes Lied',
-            onPressed: _busy ? null : () => _control(() => widget.player.next()),
-            icon: const Icon(Icons.skip_next),
-          ),
-        ],
+            IconButton(
+              tooltip: 'Warteschlange',
+              // The queue is the shape the frame has room for, so the frame opens it and the bar
+              // only says that the person wants it.
+              onPressed: widget.onQueueOpen,
+              icon: const Icon(Icons.queue_music),
+            ),
+            IconButton(
+              tooltip: playing ? 'Pause' : 'Abspielen',
+              // A local song resumes where it was; _play knows that and what to start when
+              // nothing is open yet.
+              onPressed: _busy
+                  ? null
+                  : () => _control(() => playing
+                      ? widget.player.pause()
+                      : widget.player.localCurrent != null
+                          ? widget.player.resume()
+                          : _play()),
+              icon: Icon(playing ? Icons.pause : Icons.play_arrow),
+            ),
+            IconButton(
+              tooltip: 'Nächstes Lied',
+              onPressed: _busy ? null : () => _control(() => widget.player.next()),
+              icon: const Icon(Icons.skip_next),
+            ),
+          ],
+        ),
       ),
     );
   }

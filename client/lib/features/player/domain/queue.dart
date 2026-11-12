@@ -202,4 +202,13 @@ class PlaybackQueue {
     index += 1;
     return index < _entries.length ? _entries[index] : null;
   }
+
+  /// Moves to the slot before the current one and returns what is there, or null when the current
+  /// one is the first. There is nothing before it, and a page must not pretend there is.
+  QueueEntry? back() {
+    if (_entries.isEmpty || index <= 0) return null;
+
+    index -= 1;
+    return _entries[index];
+  }
 }
