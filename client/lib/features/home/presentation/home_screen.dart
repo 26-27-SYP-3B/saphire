@@ -4,9 +4,11 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../shared/widgets/saphire_logo.dart';
+import '../../../shared/widgets/saphire_sidebar.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/user.dart';
+import '../../player/domain/player.dart';
+import '../../player/presentation/player_bar.dart';
 import '../../upload/data/upload_repository.dart';
 import '../../upload/domain/track.dart';
 
@@ -55,29 +57,25 @@ const _placeholders = [
   (title: 'Good Times', meta: 'Playlist · 78 Songs', icon: Icons.west),
 ];
 
-const _navItems = [
-  (label: 'Home', icon: Icons.home, selected: true),
-  (label: 'Suche', icon: Icons.search, selected: false),
-  (label: 'Bibliothek', icon: Icons.library_books, selected: false),
-];
-
 /// What the server accepts (server/music.go): the client only says it up front,
 /// the upload itself is still checked on the server.
 const _uploadHint = 'Erlaubt: MP3, WAV, M4A, OGG, OPUS, FLAC, AAC · höchstens 500 MiB pro Datei';
 
 /// The home screen: the app on the left, the greeting and the rows on the right.
-/// Only the upload reaches the server. The other areas have no endpoints yet, so
+/// The upload and the player reach the server; the other areas have no endpoints yet, so
 /// they are labels and pictures, not buttons.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
     required this.repository,
     required this.uploads,
+    required this.player,
     this.pickAudio = pickAudioFiles,
   });
 
   final AuthRepository repository;
   final UploadRepository uploads;
+  final Player player;
   final PickAudio pickAudio;
 
   @override
@@ -187,7 +185,12 @@ class _HomeScreenState extends State<HomeScreen> {
         body: SafeArea(
           child: Row(
             children: [
-              if (wide) _sidebar(constraints.maxHeight),
+              if (wide)
+                SaphireSidebar(
+                  selected: '/home',
+                  height: constraints.maxHeight,
+                  extraSections: _sidebarSections(context),
+                ),
               Expanded(
                 child: Column(
                   children: [
@@ -233,7 +236,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                     ),
-                    _playerBar(),
+                    PlayerBar(player: widget.player),
                   ],
                 ),
               ),
@@ -244,62 +247,48 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  Widget _sidebar(double height) {
+  /// The parts of the sidebar that belong to this page. The navigation itself is shared
+  /// (shared/widgets/saphire_sidebar.dart); these are the lists the home screen shows.
+  List<Widget> _sidebarSections(BuildContext context) {
     final theme = Theme.of(context);
 
-    return SizedBox(
-      width: 248,
-      height: height,
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // The lines in the logo asset are thin, so at this size they come out
-            // soft — that is the small mark the mock shows.
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-              child: SaphireLogo(size: 44),
-            ),
-            for (final item in _navItems) _navItem(item.label, item.icon, selected: item.selected),
-            _heading('Deine Inhalte'),
-            for (final item in [
-              (label: 'Eigene Dateien', icon: Icons.add),
-              (label: 'Playlists', icon: Icons.playlist_play),
-              (label: 'Alben', icon: Icons.album),
-              (label: 'Künstler*innen', icon: Icons.people),
-            ])
-              _navItem(item.label, item.icon),
-            _heading('Playlists'),
-            // The sidebar is the list of what is there, the search field above
-            // only filters the page.
-            for (final item in _placeholders)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 6, 20, 6),
-                child: Row(
+    return [
+      _heading('Deine Inhalte'),
+      for (final item in [
+        (label: 'Eigene Dateien', icon: Icons.add),
+        (label: 'Playlists', icon: Icons.playlist_play),
+        (label: 'Alben', icon: Icons.album),
+        (label: 'Künstler*innen', icon: Icons.people),
+      ])
+        _navItem(item.label, item.icon),
+      _heading('Playlists'),
+      // The sidebar is the list of what is there, the search field above
+      // only filters the page.
+      for (final item in _placeholders)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 6, 20, 6),
+          child: Row(
+            children: [
+              _thumb(item.icon),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _thumb(item.icon),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(item.title, style: theme.textTheme.labelLarge),
-                          Text(
-                            item.meta,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
+                    Text(item.title, style: theme.textTheme.labelLarge),
+                    Text(
+                      item.meta,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ],
                 ),
               ),
-          ],
+            ],
+          ),
         ),
-      ),
-    );
+    ];
   }
 
   Widget _heading(String title) {
@@ -615,37 +604,6 @@ class _HomeScreenState extends State<HomeScreen> {
         borderRadius: BorderRadius.circular(8),
       ),
       child: Icon(icon, size: 18, color: scheme.onSurfaceVariant),
-    );
-  }
-
-  Widget _playerBar() {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-
-    // The player has no audio yet, so the controls show nothing and stay off.
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-      decoration: BoxDecoration(border: Border(top: BorderSide(color: scheme.outline))),
-      child: Row(
-        children: [
-          Icon(Icons.audio_file, size: 22, color: scheme.onSurfaceVariant),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Nichts wird abgespielt', style: theme.textTheme.labelLarge),
-                Text(
-                  'Lade ein Lied hoch, um etwas zu hören.',
-                  style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-                ),
-              ],
-            ),
-          ),
-          for (final icon in [Icons.shuffle, Icons.skip_previous, Icons.play_arrow, Icons.skip_next, Icons.repeat])
-            Icon(icon, color: scheme.onSurfaceVariant),
-        ],
-      ),
     );
   }
 

@@ -9,8 +9,11 @@ import 'package:saphire_client/features/auth/data/auth_repository.dart';
 import 'package:saphire_client/features/auth/domain/user.dart';
 import 'package:saphire_client/features/auth/presentation/auth_screen.dart';
 import 'package:saphire_client/features/home/presentation/home_screen.dart';
+import 'package:saphire_client/features/library/data/library_repository.dart';
+import 'package:saphire_client/features/player/domain/player.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
 
+import '../../support/fake_engine.dart';
 import '../../support/stub_adapter.dart';
 
 /// Repository that never calls the server, so the form can be tested on its own.
@@ -42,10 +45,18 @@ class FakeRepository extends AuthRepository {
 }
 
 Future<void> openLogin(WidgetTester tester, AuthRepository repository) async {
-  // Nothing uploads in these tests, the start page only needs the repository to
-  // exist.
+  // Nothing uploads or plays in these tests, the start page only needs the repositories
+  // to exist.
+  final player = Player(FakeEngine(), repository.session);
+  addTearDown(player.dispose);
+
   await tester.pumpWidget(
-    SaphireApp(repository: repository, uploads: UploadRepository(Dio(), repository.session)),
+    SaphireApp(
+      repository: repository,
+      uploads: UploadRepository(Dio(), repository.session),
+      library: LibraryRepository(Dio(), repository.session),
+      player: player,
+    ),
   );
 }
 
@@ -184,7 +195,14 @@ void main() {
   // navigation stays on the login.
   testWidgets('the home screen is guarded while no session exists', (tester) async {
     final repository = FakeRepository(null);
-    final router = buildRouter(repository, UploadRepository(Dio(), repository.session));
+    final player = Player(FakeEngine(), repository.session);
+    addTearDown(player.dispose);
+    final router = buildRouter(
+      repository,
+      UploadRepository(Dio(), repository.session),
+      LibraryRepository(Dio(), repository.session),
+      player,
+    );
     await tester.pumpWidget(MaterialApp.router(routerConfig: router));
     await tester.pumpAndSettle();
 

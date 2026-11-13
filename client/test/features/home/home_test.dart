@@ -8,8 +8,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:saphire_client/core/storage/session_store.dart';
 import 'package:saphire_client/features/auth/data/auth_repository.dart';
 import 'package:saphire_client/features/home/presentation/home_screen.dart';
+import 'package:saphire_client/features/player/domain/player.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
 
+import '../../support/fake_engine.dart';
 import '../../support/stub_adapter.dart';
 
 const uploadAnswer = {
@@ -47,12 +49,17 @@ Future<SessionStore> openHome(
 
   final session =
       SessionStore()..save('a' * 64, DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch ~/ 1000);
+  // Nothing plays in these tests; the page only needs a player that does not reach the
+  // audio plugin, which has no platform here.
+  final player = Player(FakeEngine(), session);
+  addTearDown(player.dispose);
 
   await tester.pumpWidget(
     MaterialApp(
       home: HomeScreen(
         repository: AuthRepository(Dio()..httpClientAdapter = StubAdapter(userStatus, userBody), session),
         uploads: UploadRepository(Dio()..httpClientAdapter = uploads ?? StubAdapter(uploadStatus, uploadBody), session),
+        player: player,
         pickAudio: pickAudio ?? pickedFiles,
       ),
     ),
