@@ -261,21 +261,28 @@ $("list-songs").addEventListener("click", () => {
 
 // The streaming endpoint is only worth testing when the pieces arrive one by one, so
 // this logs what came in and when instead of the bytes themselves.
-async function streamSong(id) {
+async function streamSong(id, range) {
   // The id is encoded so the path in the log is the path that was sent.
   const path = "/api/music/" + encodeURIComponent(id);
   const started = performance.now();
 
+  const requestHeaders = {};
+  if (state.token) requestHeaders.Authorization = "Bearer " + state.token;
+  // Only sent when typed, so an empty field does not change which answer comes back.
+  if (range) requestHeaders.Range = range;
+
   let response;
   try {
-    response = await fetch(path, { headers: state.token ? { Authorization: "Bearer " + state.token } : {} });
+    response = await fetch(path, { headers: requestHeaders });
   } catch (error) {
     addEntry({ status: 0, method: "GET", path, ms: Math.round(performance.now() - started), text: "the server is not reachable at " + location.origin });
     return;
   }
 
   const headers = response.headers;
-  if (response.status !== 200) {
+  // A 206 is a streaming answer too: the parts of a range arrive one by one, so it has
+  // to be read the same way as the whole file.
+  if (response.status !== 200 && response.status !== 206) {
     addEntry({
       status: response.status,
       method: "GET",
@@ -283,7 +290,7 @@ async function streamSong(id) {
       ms: Math.round(performance.now() - started),
       text: await response.text(),
       retryAfter: headers.get("Retry-After"),
-      curl: `-X GET ${location.origin}${path}${authFlag()}`,
+      curl: `-X GET ${location.origin}${path}${authFlag()}${rangeFlag(range)}`,
     });
     return;
   }
@@ -303,9 +310,19 @@ async function streamSong(id) {
   }
 
   const declared = Number(headers.get("Content-Length") || 0);
-  const summary = [`${chunks} chunk(s), ${total} bytes of ${declared}`, ...lines];
+  const contentRange = headers.get("Content-Range");
+
+  const summary = [];
+  // What was answered for what was asked is the interesting part of a range, so it
+  // comes before the pieces.
+  if (contentRange) summary.push(`${statusLabel(response.status)} for ${contentRange}`);
+  summary.push(`${chunks} chunk(s), ${total} bytes of ${declared}`, ...lines);
   if (chunks > maxChunkLines) summary.push(`… ${chunks - maxChunkLines} more chunks`);
-  if (chunks === 1 && total === declared) summary.push("the whole file arrived in one read, so nothing was streamed");
+  // Only for a whole-file answer: a range smaller than one chunk is one read by design,
+  // not a server that sent everything at once.
+  if (!contentRange && chunks === 1 && total === declared) {
+    summary.push("the whole file arrived in one read, so nothing was streamed");
+  }
 
   addEntry({
     status: response.status,
@@ -313,8 +330,14 @@ async function streamSong(id) {
     path,
     ms: Math.round(performance.now() - started),
     text: summary.join("\n"),
-    curl: `-X GET ${location.origin}${path}${authFlag()}`,
+    curl: `-X GET ${location.origin}${path}${authFlag()}${rangeFlag(range)}`,
   });
+}
+
+// Only the header that was actually sent, so the printed curl is the request the page
+// made — a Range that was not sent would change the answer from 206 to 200.
+function rangeFlag(range) {
+  return range ? ` -H "Range: ${range}"` : "";
 }
 
 $("stream-song").addEventListener("click", () => {
@@ -323,7 +346,7 @@ $("stream-song").addEventListener("click", () => {
     addEntry({ status: null, method: "GET", path: "/api/music/{id}", ms: 0, text: "no song id was typed, so nothing was sent" });
     return;
   }
-  streamSong(id);
+  streamSong(id, $("stream-range").value.trim());
 });
 
 // The playlist and queue cards send what is typed. A value that is shaped like an
