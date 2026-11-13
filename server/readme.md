@@ -47,8 +47,10 @@ Returns `201 Created` with the track record, `401` for anonymous requests,
 
 `GET /api/music` — the library as `id` and `title` for any logged-in user, ordered by
 id. `GET /api/music/{id}` — one song, streamed in 32 KiB chunks with a flush after
-each, so a player gets the start of a file before the rest is read. Both need the
-same `Authorization: Bearer` rule as `GET /api/session`.
+each, so a player gets the start of a file before the rest is read. One byte range is
+answered with `206` and `Content-Range`, which is what a player needs for seeking; a
+range with more than one part, or a unit other than `bytes`, is ignored and the whole
+file comes back. Both need the same `Authorization: Bearer` rule as `GET /api/session`.
 
 ## Development frontend
 
@@ -56,7 +58,9 @@ Run the server from `server/` and open <http://localhost:8080/> (it forwards to
 `/static/`) — `main.go` serves a plain HTML page (`static/`) for calling these
 endpoints from a browser: register, login, session check, upload, list, stream. It
 prints the status code, the elapsed time, `Retry-After`, and the same request as a
-`curl` command; for the stream it shows which chunks arrived and when. Nothing on the
+`curl` command; for the stream it shows which chunks arrived and when, and which range
+the page asked for — the `Range` field is sent only when typed, so an empty field cannot
+turn a 200 into a 206. Nothing on the
 page checks the fields first (the file picker is filtered to the accepted extensions),
 so what shows is what the server answered. The page is served under its own prefix so
 an API route keeps the answers documented in `api-docs.md`, and the path is relative to

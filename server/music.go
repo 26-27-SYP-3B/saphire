@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
@@ -362,10 +363,79 @@ func listHandler(db *sql.DB, limiter *rateLimiter) http.HandlerFunc {
 	}
 }
 
+// byteRange is one byte range as RFC 9110 writes it: both ends are inside the file.
+type byteRange struct {
+	start int64
+	end   int64
+}
+
+// length is what the answer has to send for this range.
+func (r byteRange) length() int64 {
+	return r.end - r.start + 1
+}
+
+// parseByteRange reads a Range header for a file of size bytes.
+//
+// Only a single bytes= range is served, because that is the one a player sends when it
+// seeks. More than one range cannot be answered for one file without a different body
+// shape (multipart/byteranges), and a unit other than bytes is nothing this server can
+// express, so both are ignored and the whole file is sent — a client that cannot read
+// our answer still gets the song.
+//
+// What is well written but cannot be satisfied is an error: RFC 9110 clamps the end of a
+// range to the file and refuses only a start at or past the end, or an end before the
+// start. This is decided before the first byte, so it is the only part of this endpoint
+// that can still answer with the JSON error shape.
+func parseByteRange(header string, size int64) (*byteRange, error) {
+	value, ok := strings.CutPrefix(header, "bytes=")
+	if !ok || strings.Contains(value, ",") {
+		return nil, nil
+	}
+
+	startText, endText, ok := strings.Cut(value, "-")
+	if !ok {
+		return nil, nil
+	}
+
+	// bytes=-N is the last N bytes; a suffix longer than the file is the file.
+	if startText == "" {
+		suffix, err := strconv.ParseInt(endText, 10, 64)
+		if err != nil || suffix <= 0 {
+			return nil, nil
+		}
+		if suffix > size {
+			suffix = size
+		}
+		return &byteRange{start: size - suffix, end: size - 1}, nil
+	}
+
+	start, err := strconv.ParseInt(startText, 10, 64)
+	if err != nil {
+		return nil, nil
+	}
+
+	end := size - 1
+	if endText != "" {
+		end, err = strconv.ParseInt(endText, 10, 64)
+		if err != nil {
+			return nil, nil
+		}
+		if end > size-1 {
+			end = size - 1
+		}
+	}
+
+	if start >= size || start > end {
+		return nil, errors.New("the byte range is outside this file")
+	}
+	return &byteRange{start: start, end: end}, nil
+}
+
 // streamHandler answers GET /api/music/{id} for a logged-in user: the file for one
 // song, written out in chunks of streamChunkBytes with a flush after each chunk. The
 // file is never read into memory as a whole, so a 500 MiB song does not become a
 // 500 MiB allocation, and a player gets the first bytes before the rest is read.
+// One byte range is answered with 206, which is what a player sends when it seeks.
 func streamHandler(db *sql.DB, library string, limiter *rateLimiter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ip := clientIP(r)
@@ -425,26 +495,53 @@ func streamHandler(db *sql.DB, library string, limiter *rateLimiter) http.Handle
 
 		// Everything that can still be answered with the JSON error shape must be
 		// decided here: after WriteHeader the status is fixed, and a later failure can
-		// only end the stream.
+		// only end the stream. The range is part of this decision too, because a
+		// player sends one before it asks for the bytes.
 		info, err := file.Stat()
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "could not read the file")
 			return
 		}
 
-		// Content-Length is the size of the file that is actually sent, so a player
-		// can show progress. It does not change how the body is written: the chunks
-		// still go out one by one.
+		rng, err := parseByteRange(r.Header.Get("Range"), info.Size())
+		if err != nil {
+			// A 416 names the size the range was checked against, so the player can
+			// stop seeking past the end of the file.
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", info.Size()))
+			writeError(w, http.StatusRequestedRangeNotSatisfiable, err.Error())
+			return
+		}
+
+		// Content-Length is the size of what is actually sent, so a player can show
+		// progress. It does not change how the body is written: the chunks still go
+		// out one by one, also for a part of the file.
 		w.Header().Set("Content-Type", track.ContentType)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
-		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Accept-Ranges", "bytes")
+		if rng == nil {
+			w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+			w.WriteHeader(http.StatusOK)
+		} else {
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", rng.start, rng.end, info.Size()))
+			w.Header().Set("Content-Length", strconv.FormatInt(rng.length(), 10))
+			w.WriteHeader(http.StatusPartialContent)
+		}
 
 		buffer := make([]byte, streamChunkBytes)
 		flusher, canFlush := w.(http.Flusher)
 
-		for {
-			n, err := file.Read(buffer)
+		remaining := info.Size()
+		if rng != nil {
+			// The start was checked against the size, so this seek cannot fail; an
+			// error here is a read failure and can only end the body.
+			if _, err := file.Seek(rng.start, io.SeekStart); err != nil {
+				return
+			}
+			remaining = rng.length()
+		}
+
+		for remaining > 0 {
+			n, err := file.Read(buffer[:min(remaining, streamChunkBytes)])
 			if n > 0 {
 				if _, err := w.Write(buffer[:n]); err != nil {
 					return // the client went away mid-stream
@@ -452,6 +549,7 @@ func streamHandler(db *sql.DB, library string, limiter *rateLimiter) http.Handle
 				if canFlush {
 					flusher.Flush()
 				}
+				remaining -= int64(n)
 			}
 			if err != nil {
 				// EOF is the normal end. A read error after the status line cannot be

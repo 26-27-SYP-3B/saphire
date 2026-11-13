@@ -276,7 +276,8 @@ Sends the file of one song. Only a logged-in user may read it, with the same two
 messages as `GET /api/session`. The file is **streamed in chunks**: the server reads
 32 KiB at a time (`streamChunkBytes`) and flushes after each chunk, so a player gets
 the start of a song before the rest of the file is read, and a large song is never
-held in memory as a whole.
+held in memory as a whole. A single byte range is answered with `206`, which is what a
+player needs for seeking.
 
 ```
 GET /api/music/{id}
@@ -288,33 +289,52 @@ Authorization: Bearer <token>
 | Header | Value |
 |---|---|
 | `Content-Type` | the type stored for that song (`audio/mpeg`, `audio/wav`, …) |
-| `Content-Length` | the size of the file on disk, so a player can show progress |
+| `Content-Length` | the size of what is sent: the file, or the length of the range when one was answered |
+| `Accept-Ranges` | `bytes`, on every answer of this endpoint |
+| `Content-Range` | `bytes start-end/size`, on a `206` only |
 | `X-Content-Type-Options` | `nosniff`, like every other answer from this server |
 
 `Content-Length` is known because the file is in the library, so the transfer is not
-chunk-encoded — but the bytes still leave piece by piece. `Range` is not implemented:
-a `Range` request is ignored and answers `200` with the whole file, so a player that
-seeks still needs it (see **Upcoming**).
+chunk-encoded — but the bytes still leave piece by piece.
+
+**Range**
+
+A single `bytes=start-end` range is answered with `206 Partial Content`, which is what a
+player sends when it seeks. The pieces are the same 32 KiB chunks with a flush after
+each, so a player that jumps to the middle of a long song does not wait for the rest of
+the file.
+
+- `bytes=start-` runs to the end of the file, `bytes=-N` is the last N bytes.
+- An end past the file is clamped to the file (RFC 9110). Only a start at or past the
+  end, or an end before the start, is refused with `416`; that answer names the size the
+  range was checked against with `Content-Range: bytes */size`, so a player knows where
+  the file ends.
+- More than one range in one header, or a unit other than `bytes`, is ignored and the
+  whole file comes back with `200`: one answer cannot name several ranges without a
+  different body shape (`multipart/byteranges`), which this endpoint does not produce, and
+  an ignored request still gets the song.
 
 **Responses**
 
 | Status | When | Example body |
 |---|---|---|
 | `200 OK` | The file, in 32 KiB chunks with a flush after each | the file bytes |
+| `206 Partial Content` | One byte range, in the same 32 KiB chunks | the bytes of that range |
 | `400 Bad Request` | `id` is not a plain positive number (`-1`, `0`, `0004`, `+4`, `abc`) | `{"error": "the song id must be a positive number"}` |
 | `400 Bad Request` | Digits, but too large to be an id | `{"error": "the song id is too large"}` |
 | `401 Unauthorized` | Missing `Authorization: Bearer` header | `{"error": "authorization header with a Bearer token is missing"}` |
 | `401 Unauthorized` | Unknown or expired token | `{"error": "session is not valid or expired"}` |
 | `404 Not Found` | No row with that id | `{"error": "song is not in the library"}` |
 | `404 Not Found` | The row exists but its file is gone (a broken library) | `{"error": "the file for this song is not in the library folder"}` |
+| `416 Range Not Satisfiable` | A well written range that is outside the file (`bytes=100000-100010` for a smaller file, or `bytes=200-100`) | `{"error": "the byte range is outside this file"}` |
 | `429 Too Many Requests` | Rate limit reached (10 requests per IP, refilling 1 token every 10 s — its own bucket). Includes a `Retry-After` header. | `{"error": "too many requests from this address, try again later"}` |
 | `500 Internal Server Error` | Database failure, or the file could not be opened | `{"error": "could not load the song"}` or `{"error": "could not read the file"}` |
 | `500 Internal Server Error` | Database failure while checking the token, with the same answers as `GET /api/session` | `{"error": "could not load session"}` or `{"error": "could not load user"}` |
 
 **Notes**
 
-- Every error above is answered **before the first byte**. Once `200` and the audio
-  content type are sent, the status is fixed: a read failure that happens mid-stream
+- Every error above is answered **before the first byte**. Once `200` or `206` and the
+  audio content type are sent, the status is fixed: a read failure that happens mid-stream
   cannot become a JSON error, it only ends the body. A client must treat a body that
   stops early as a failed read, not as a complete song. In practice that looks like
   fewer bytes than `Content-Length` and a connection that is not reused — with
@@ -328,9 +348,6 @@ seeks still needs it (see **Upcoming**).
 
 Beyond the endpoints above, nothing exists yet. Planned, in rough order:
 
-- `Range` on `GET /api/music/{id}` — serve one byte range with `206 Partial Content`,
-  which is what a player needs for seeking. A client that only reads the whole stream
-  works with the endpoint as it is now.
 - Pagination for `GET /api/music`, once the library is large enough that one answer is
   too much.
 - `POST /api/logout` — delete the session row for the presented token and
@@ -373,7 +390,10 @@ from this server), and a missing file is the plain text `404 page not found` of
 
 The page sends exactly what is typed and shows what the server answered: the status
 code, the elapsed time, `Retry-After` when a rate limit answers 429, and the same
-request written as `curl`. It keeps the session token in `sessionStorage` for the
+request written as `curl`. For `GET /api/music/{id}` it logs the pieces as they arrive
+instead of the bytes, because that is the point of the endpoint, and a `Range` typed
+into the page is sent as it is — the log then shows which range the server answered. It
+keeps the session token in `sessionStorage` for the
 current tab and shows it from there — the raw token is still only ever returned by
 `POST /api/login`, and the database still stores only its hash. On load the page calls
 `GET /api/session` with the stored token, so the 401 path is visible

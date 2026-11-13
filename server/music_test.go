@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -544,6 +545,162 @@ func TestStreamRejectsBadRequests(t *testing.T) {
 	rec = get(t, handler, "/api/music/"+strconv.FormatInt(track.ID, 10), token)
 	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "is not in the library folder") {
 		t.Errorf("row with a missing file -> %d (%s), wanted 404 naming the missing file", rec.Code, rec.Body)
+	}
+}
+
+// rangeGet sends one GET with a Range header, through a mux so that r.PathValue has
+// the value main.go would give it.
+func rangeGet(t *testing.T, handler http.Handler, path, token, rangeHeader string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if rangeHeader != "" {
+		req.Header.Set("Range", rangeHeader)
+	}
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+// rangeTestLibrary uploads one song and hands back the handler, a token and the row, so
+// a range test asks for bytes of the file the upload really stored.
+func rangeTestLibrary(t *testing.T) (http.Handler, string, Track) {
+	t.Helper()
+
+	db := openTestDB(t)
+	library := t.TempDir()
+	upload := uploadHandler(db, library, newRateLimiter(100, time.Second))
+	handler := musicMux(db, library, newRateLimiter(100, time.Second))
+	token := testToken(t, db, "lukas")
+
+	rec := uploadFile(t, upload, token, "file", "song.wav", bigWAV())
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload -> %d (%s)", rec.Code, rec.Body)
+	}
+	var track Track
+	if err := json.Unmarshal(rec.Body.Bytes(), &track); err != nil {
+		t.Fatalf("decode answer: %v", err)
+	}
+	return handler, token, track
+}
+
+// TestStreamServesOneRange is the half of streaming a player needs for seeking: one
+// byte range, answered with 206 and exactly the bytes of that part of the file.
+func TestStreamServesOneRange(t *testing.T) {
+	handler, token, track := rangeTestLibrary(t)
+	path := "/api/music/" + strconv.FormatInt(track.ID, 10)
+	size := int64(len(bigWAV()))
+
+	cases := []struct {
+		name       string
+		header     string
+		start, end int64
+	}{
+		{"the first hundred bytes", "bytes=0-99", 0, 99},
+		{"the middle of the file", "bytes=100-199", 100, 199},
+		{"from an offset to the end of the file", "bytes=200-", 200, size - 1},
+		{"the last 40 bytes", "bytes=-40", size - 40, size - 1},
+		// RFC 9110 clamps an end past the file to the file; only a start at or past
+		// the end is refused, so this must not become a 416.
+		{"an end past the file is clamped to it", "bytes=100-1000000", 100, size - 1},
+	}
+
+	for _, c := range cases {
+		rec := rangeGet(t, handler, path, token, c.header)
+		if rec.Code != http.StatusPartialContent {
+			t.Errorf("%s -> %d, wanted 206 (%s)", c.name, rec.Code, rec.Body)
+			continue
+		}
+		if want := fmt.Sprintf("bytes %d-%d/%d", c.start, c.end, size); rec.Header().Get("Content-Range") != want {
+			t.Errorf("%s -> Content-Range %q, wanted %q", c.name, rec.Header().Get("Content-Range"), want)
+		}
+		if want := strconv.FormatInt(c.end-c.start+1, 10); rec.Header().Get("Content-Length") != want {
+			t.Errorf("%s -> Content-Length %q, wanted the length of the range %q", c.name, rec.Header().Get("Content-Length"), want)
+		}
+		if got := rec.Body.Bytes(); !bytes.Equal(got, bigWAV()[c.start:c.end+1]) {
+			t.Errorf("%s sent %d bytes, wanted the bytes %d to %d of the file", c.name, len(got), c.start, c.end)
+		}
+	}
+}
+
+// TestStreamServesARangeInChunks: seeking has to stay piece by piece, otherwise a player
+// that jumps to the middle of a long song waits for the rest of the file.
+func TestStreamServesARangeInChunks(t *testing.T) {
+	handler, token, track := rangeTestLibrary(t)
+
+	stream := &chunkRecorder{ResponseRecorder: httptest.NewRecorder()}
+	req := httptest.NewRequest(http.MethodGet, "/api/music/"+strconv.FormatInt(track.ID, 10), nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Range", "bytes=100-")
+	handler.ServeHTTP(stream, req)
+
+	if stream.Code != http.StatusPartialContent {
+		t.Fatalf("range stream -> %d, wanted 206 (%s)", stream.Code, stream.Body)
+	}
+	if stream.Body.Len() != len(bigWAV())-100 {
+		t.Errorf("streamed %d bytes, wanted the rest of the file (%d)", stream.Body.Len(), len(bigWAV())-100)
+	}
+	if len(stream.chunks) < 2 {
+		t.Fatalf("the range was sent in %d piece(s), not in chunks", len(stream.chunks))
+	}
+	previous := 0
+	for i, size := range stream.chunks {
+		if size-previous > streamChunkBytes {
+			t.Errorf("flush %d sent %d bytes, more than the %d byte chunk size", i+1, size-previous, streamChunkBytes)
+		}
+		previous = size
+	}
+	if stream.chunks[0] >= stream.Body.Len() {
+		t.Errorf("the whole range was flushed at once, so nothing was streamed")
+	}
+}
+
+// TestStreamRangeIsIgnoredOrRefused: a unit this server cannot express, a header that is
+// not a range, and more than one range are ignored, because one answer cannot name them
+// all — the client still gets the whole file. A range that is well written but outside
+// the file is refused, and that is still a decision before the first byte, so the JSON
+// error shape holds.
+func TestStreamRangeIsIgnoredOrRefused(t *testing.T) {
+	handler, token, track := rangeTestLibrary(t)
+	path := "/api/music/" + strconv.FormatInt(track.ID, 10)
+	size := int64(len(bigWAV()))
+
+	for _, header := range []string{"items=0-9", "bytes=abc", "bytes=abc-def", "bytes=-", "bytes=-0", "bytes=0-9,20-29"} {
+		rec := rangeGet(t, handler, path, token, header)
+		if rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), bigWAV()) {
+			t.Errorf("%q -> %d (%s), wanted the whole file because this range cannot be answered", header, rec.Code, rec.Body)
+		}
+	}
+
+	for _, header := range []string{"bytes=100000-100010", "bytes=200-100"} {
+		rec := rangeGet(t, handler, path, token, header)
+		if rec.Code != http.StatusRequestedRangeNotSatisfiable || !strings.Contains(rec.Body.String(), "outside this file") {
+			t.Errorf("%q -> %d (%s), wanted 416 with the range error", header, rec.Code, rec.Body)
+			continue
+		}
+		if want := fmt.Sprintf("bytes */%d", size); rec.Header().Get("Content-Range") != want {
+			t.Errorf("%q -> Content-Range %q, wanted %q", header, rec.Header().Get("Content-Range"), want)
+		}
+	}
+
+	// A player must be able to tell that seeking is possible at all, also on an answer
+	// that was not asked for a range.
+	rec := rangeGet(t, handler, path, token, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("no range -> %d, wanted 200 (%s)", rec.Code, rec.Body)
+	}
+	if rec.Header().Get("Accept-Ranges") != "bytes" {
+		t.Errorf("a stream answer must still say ranges are accepted: %v", rec.Header())
+	}
+
+	// A range does not skip authentication: an anonymous player must not make the server
+	// read part of a song it will not send.
+	rec = rangeGet(t, handler, path, "", "bytes=0-99")
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("anonymous range -> %d, wanted 401 (%s)", rec.Code, rec.Body)
 	}
 }
 

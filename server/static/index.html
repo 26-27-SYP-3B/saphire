@@ -73,15 +73,17 @@
 
     <section>
       <h2><span class="method">GET</span> /api/music/{id}</h2>
-      <p class="rules">a positive song id (digits only) · the file in 32 KiB chunks with a flush after each · 10 requests per IP, one token every 10 s · errors only before the first byte</p>
+      <p class="rules">a positive song id (digits only) · the file in 32 KiB chunks with a flush after each · one byte range answered with 206 · 10 requests per IP, one token every 10 s · errors only before the first byte</p>
       <label for="stream-id">song id</label>
       <input id="stream-id" inputmode="numeric" placeholder="4">
+      <label for="stream-range">Range (optional)</label>
+      <input id="stream-range" spellcheck="false" autocomplete="off" placeholder="bytes=0-99">
       <button type="button" id="stream-song">Stream it</button>
     </section>
 
     <section class="planned">
       <h2>Not implemented yet</h2>
-      <p class="rules">POST /api/logout answers 404. <code>Range</code> on GET /api/music/{id} is not implemented, so a Range request gets the whole file with 200 — a player that seeks needs it.</p>
+      <p class="rules">POST /api/logout answers 404. A Range with more than one part, or a unit other than bytes, is ignored and the whole file comes back with 200.</p>
     </section>
 
   </div>
