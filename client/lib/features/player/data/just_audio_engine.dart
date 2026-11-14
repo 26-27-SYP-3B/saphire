@@ -37,13 +37,23 @@ class JustAudioEngine implements AudioEngine {
   }
 
   @override
-  Future<void> play() => _player.play();
+  Future<void> play() => _run(() => _player.play());
 
   @override
-  Future<void> pause() => _player.pause();
+  Future<void> pause() => _run(() => _player.pause());
 
   @override
-  Future<void> seek(Duration to) => _player.seek(to);
+  Future<void> seek(Duration to) => _run(() => _player.seek(to));
+
+  /// A failure here is named like one from open(), because the player bar is built to show
+  /// one kind of error and would otherwise miss these.
+  Future<void> _run(Future<void> Function() call) async {
+    try {
+      await call();
+    } on PlayerException catch (error) {
+      throw AudioException(error.message ?? 'der Stream konnte nicht gelesen werden');
+    }
+  }
 
   @override
   Future<void> dispose() => _player.dispose();
