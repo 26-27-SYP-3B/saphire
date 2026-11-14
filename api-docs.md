@@ -284,14 +284,14 @@ GET /api/music/{id}
 Authorization: Bearer <token>
 ```
 
-**Headers on a successful answer**
+**Headers**
 
 | Header | Value |
 |---|---|
-| `Content-Type` | the type stored for that song (`audio/mpeg`, `audio/wav`, …) |
+| `Content-Type` | the type stored for that song on a `200` or `206` (`audio/mpeg`, `audio/wav`, …); `application/json` on an error |
 | `Content-Length` | the size of what is sent: the file, or the length of the range when one was answered |
 | `Accept-Ranges` | `bytes`, on every answer of this endpoint |
-| `Content-Range` | `bytes start-end/size`, on a `206` only |
+| `Content-Range` | `bytes start-end/size` on a `206`; `bytes */size` on a `416`, which names the size the range was checked against |
 | `X-Content-Type-Options` | `nosniff`, like every other answer from this server |
 
 `Content-Length` is known because the file is in the library, so the transfer is not
@@ -313,6 +313,10 @@ the file.
   whole file comes back with `200`: one answer cannot name several ranges without a
   different body shape (`multipart/byteranges`), which this endpoint does not produce, and
   an ignored request still gets the song.
+- A header that is not a well formed range is ignored the same way — no `-`, a part that
+  is not digits, or an empty suffix (`bytes=abc`, `bytes=-`, `bytes=-0`). Only something
+  that reads as a range can be refused, so a mistake a player typed gets the file rather
+  than an error.
 
 **Responses**
 

@@ -684,6 +684,11 @@ func TestStreamRangeIsIgnoredOrRefused(t *testing.T) {
 		if want := fmt.Sprintf("bytes */%d", size); rec.Header().Get("Content-Range") != want {
 			t.Errorf("%q -> Content-Range %q, wanted %q", header, rec.Header().Get("Content-Range"), want)
 		}
+		// The 416 is the answer a player reads to learn whether seeking is possible, so it
+		// must carry Accept-Ranges like every other answer of this endpoint.
+		if rec.Header().Get("Accept-Ranges") != "bytes" {
+			t.Errorf("%q -> the 416 does not say that ranges are accepted: %v", header, rec.Header())
+		}
 	}
 
 	// A player must be able to tell that seeking is possible at all, also on an answer

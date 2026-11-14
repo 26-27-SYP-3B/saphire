@@ -387,8 +387,13 @@ func (r byteRange) length() int64 {
 // start. This is decided before the first byte, so it is the only part of this endpoint
 // that can still answer with the JSON error shape.
 func parseByteRange(header string, size int64) (*byteRange, error) {
-	value, ok := strings.CutPrefix(header, "bytes=")
-	if !ok || strings.Contains(value, ",") {
+	// The unit is compared case-insensitively, as RFC 9110 defines it.
+	unit, value, ok := strings.Cut(header, "=")
+	if !ok || !strings.EqualFold(unit, "bytes") {
+		return nil, nil
+	}
+	value = strings.TrimSpace(value)
+	if strings.Contains(value, ",") {
 		return nil, nil
 	}
 
@@ -396,6 +401,8 @@ func parseByteRange(header string, size int64) (*byteRange, error) {
 	if !ok {
 		return nil, nil
 	}
+
+	var start, end int64
 
 	// bytes=-N is the last N bytes; a suffix longer than the file is the file.
 	if startText == "" {
@@ -406,25 +413,27 @@ func parseByteRange(header string, size int64) (*byteRange, error) {
 		if suffix > size {
 			suffix = size
 		}
-		return &byteRange{start: size - suffix, end: size - 1}, nil
-	}
-
-	start, err := strconv.ParseInt(startText, 10, 64)
-	if err != nil {
-		return nil, nil
-	}
-
-	end := size - 1
-	if endText != "" {
-		end, err = strconv.ParseInt(endText, 10, 64)
+		start, end = size-suffix, size-1
+	} else {
+		var err error
+		start, err = strconv.ParseInt(startText, 10, 64)
 		if err != nil {
 			return nil, nil
 		}
-		if end > size-1 {
-			end = size - 1
+		end = size - 1
+		if endText != "" {
+			end, err = strconv.ParseInt(endText, 10, 64)
+			if err != nil {
+				return nil, nil
+			}
+			if end > size-1 {
+				end = size - 1
+			}
 		}
 	}
 
+	// Both forms are checked here, so a file with no bytes is refused like any other range
+	// outside it instead of answering with a length of -1.
 	if start >= size || start > end {
 		return nil, errors.New("the byte range is outside this file")
 	}
@@ -438,6 +447,11 @@ func parseByteRange(header string, size int64) (*byteRange, error) {
 // One byte range is answered with 206, which is what a player sends when it seeks.
 func streamHandler(db *sql.DB, library string, limiter *rateLimiter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Said before anything is decided, so every answer of this endpoint carries it —
+		// including the 416, which is the answer a player reads to learn whether seeking
+		// is possible at all.
+		w.Header().Set("Accept-Ranges", "bytes")
+
 		ip := clientIP(r)
 		if ok, retry := limiter.allow(ip); !ok {
 			w.Header().Set("Retry-After", strconv.Itoa(retry))
@@ -517,7 +531,6 @@ func streamHandler(db *sql.DB, library string, limiter *rateLimiter) http.Handle
 		// out one by one, also for a part of the file.
 		w.Header().Set("Content-Type", track.ContentType)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Accept-Ranges", "bytes")
 		if rng == nil {
 			w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
 			w.WriteHeader(http.StatusOK)
