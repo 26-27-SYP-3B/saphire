@@ -27,6 +27,10 @@ class PlayerBar extends StatelessWidget {
         builder: (context, snapshot) {
           final state = snapshot.data ?? player.current;
           final song = state.song;
+          final length = state.duration;
+          // The text shows the same position the slider can show, so the two cannot
+          // disagree when the engine reports a position past the length it gave.
+          final shown = length == null || state.position <= length ? state.position : length;
 
           return Row(
             children: [
@@ -53,7 +57,7 @@ class PlayerBar extends StatelessWidget {
                       Text(state.error!, style: TextStyle(color: scheme.error))
                     else ...[
                       Text(
-                        '${_time(state.position)} · ${state.duration == null ? 'Länge unbekannt' : _time(state.duration!)}',
+                        '${_time(shown)} · ${length == null ? 'Länge unbekannt' : _time(length)}',
                         style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
                       ),
                       const SizedBox(height: 2),
