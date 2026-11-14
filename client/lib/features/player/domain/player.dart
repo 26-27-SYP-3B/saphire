@@ -96,18 +96,28 @@ class Player {
 
   Future<void> toggle() async {
     if (_song == null) return;
-    if (_playing) {
-      await _engine.pause();
-    } else {
-      await _engine.play();
+    try {
+      if (_playing) {
+        await _engine.pause();
+      } else {
+        await _engine.play();
+      }
+    } on AudioException catch (error) {
+      _error = error.message;
+      _publish();
     }
   }
 
-  /// A seek is a new request for a byte range, so the player does not wait for the rest
-  /// of the file.
+  /// The engine is handed a position; what it does with it — a request for that byte range
+  /// or a jump inside what it already read — is the engine's own choice, not the player's.
   Future<void> seekTo(Duration to) async {
     if (_song == null) return;
-    await _engine.seek(to);
+    try {
+      await _engine.seek(to);
+    } on AudioException catch (error) {
+      _error = error.message;
+      _publish();
+    }
   }
 
   void _publish() {

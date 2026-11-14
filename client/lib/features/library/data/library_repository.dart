@@ -31,8 +31,23 @@ class LibraryRepository {
         '$apiBaseUrl/api/music',
         options: Options(headers: {'Authorization': 'Bearer ${session.token}'}),
       );
-      final rows = response.data as List<dynamic>;
-      return [for (final row in rows) LibraryEntry.fromJson(row as Map<String, dynamic>)];
+
+      // The documented shape is a list of objects. An answer that is not one is not this
+      // API, and it has to be named here: a failed cast would escape the page, which then
+      // waits on a list that never arrives.
+      final answer = response.data;
+      if (answer is! List) {
+        throw LibraryException('die Antwort ist keine Liste von Liedern');
+      }
+
+      final entries = <LibraryEntry>[];
+      for (final row in answer) {
+        if (row is! Map<String, dynamic>) {
+          throw LibraryException('ein Eintrag ist kein Objekt mit id und Titel');
+        }
+        entries.add(LibraryEntry.fromJson(row));
+      }
+      return entries;
     } on DioException catch (error) {
       throw LibraryException(serverErrorMessage(error));
     }

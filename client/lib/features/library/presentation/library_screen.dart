@@ -110,7 +110,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                     final current = snapshot.data ?? widget.player.current;
                                     return Column(
                                       children: [
-                                        for (final entry in _entries) _row(context, entry, entry.id == current.song?.id),
+                                        // The marker shows what is playing, not what was opened last:
+                                        // a song that is paused is not playing.
+                                        for (final entry in _entries)
+                                          _row(context, entry, current.playing && entry.id == current.song?.id),
                                       ],
                                     );
                                   },
