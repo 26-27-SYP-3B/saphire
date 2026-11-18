@@ -577,7 +577,7 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
         final selected = _selected?.playlist.id == playlist.id;
 
         return ListTile(
-          leading: _Cover(cover: _covers['server:${playlist.id}'], size: 40),
+          leading: _Cover(cover: _covers[_serverKey(playlist.id)], size: 40),
           title: Text(playlist.name),
           subtitle: Text('${playlist.songCount} Songs'),
           selected: selected,
