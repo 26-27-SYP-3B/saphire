@@ -113,8 +113,15 @@ pub fn client_ip(req: &Request) -> String {
 fn is_local_proxy(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
-        // fc00::/7 is the IPv6 unique-local range, the counterpart of a private IPv4 net.
-        IpAddr::V6(ip) => ip.is_loopback() || (ip.segments()[0] & 0xfe00) == 0xfc00,
+        IpAddr::V6(ip) => {
+            let first = ip.segments()[0];
+            ip.is_loopback()
+                // fc00::/7 is the IPv6 unique-local range, fe80::/10 the link-local one.
+                || (first & 0xfe00) == 0xfc00
+                || (first & 0xffc0) == 0xfe80
+                // A dual-stack peer may be reported as ::ffff:127.0.0.1.
+                || ip.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback() || v4.is_private() || v4.is_link_local())
+        }
     }
 }
 

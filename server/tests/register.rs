@@ -158,6 +158,8 @@ fn x_forwarded_for_is_only_read_from_a_local_peer() {
     assert_eq!(key("127.0.0.1:5000", "10.0.0.7"), "10.0.0.7");
     assert_eq!(key("10.1.2.3:5000", "10.0.0.7, 10.0.0.8"), "10.0.0.7");
     assert_eq!(key("[fd00::1]:5000", "10.0.0.7"), "10.0.0.7");
+    assert_eq!(key("[fe80::1]:5000", "10.0.0.7"), "10.0.0.7");
+    assert_eq!(key("[::ffff:127.0.0.1]:5000", "10.0.0.7"), "10.0.0.7");
 
     // A client on the internet cannot choose its bucket.
     assert_eq!(key("8.8.8.8:5000", "10.0.0.7"), "8.8.8.8");
