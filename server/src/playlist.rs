@@ -328,7 +328,7 @@ async fn handle_create(State(state): State<AppState>, req: Request) -> Response 
         None => {
             return respond::error(
                 StatusCode::BAD_REQUEST,
-                &format!("a playlist name is at most {} characters", MAX_NAME_LEN),
+                &format!("a playlist name is at most {MAX_NAME_LEN} characters"),
             )
         }
     };
