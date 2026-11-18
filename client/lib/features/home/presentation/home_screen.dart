@@ -155,7 +155,16 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final library = await widget.library.list();
       if (!mounted) return;
-      setState(() => _library = library);
+      setState(() {
+        // A song uploaded while this read was in flight is in `_library` but not in the
+        // answer, because the answer was started before it existed. Keep it.
+        final known = {for (final track in library) track.id};
+        _library = [
+          ...library,
+          for (final track in _library)
+            if (!known.contains(track.id)) track,
+        ];
+      });
     } on LibraryException catch (error) {
       if (mounted) setState(() => _note = error.message);
     }
@@ -189,7 +198,15 @@ class _HomeScreenState extends State<HomeScreen> {
             if (mounted && total > 0) setState(() => row.percent = (sent * 100 / total).round());
           },
         );
-        if (mounted) setState(() => row.track = track);
+        if (mounted) {
+          setState(() {
+            row.track = track;
+            // The search filters the list that was read when the page opened; a song uploaded
+            // now has to be in it too, or the page hides what it just showed. A list read
+            // while the upload was in flight may already hold it.
+            if (!_library.any((entry) => entry.id == track.id)) _library.add(track);
+          });
+        }
       } on UploadException catch (error) {
         if (mounted) setState(() => row.error = error.message);
       }

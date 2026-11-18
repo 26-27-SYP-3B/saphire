@@ -133,6 +133,36 @@ void main() {
     expect(find.textContaining('lukas · 1.5 MB'), findsOneWidget);
   });
 
+  // The search filters the library that was read when the page opened. A song uploaded in
+  // this session is part of the library now, so searching for it has to find it.
+  testWidgets('the search finds a song uploaded in this session', (tester) async {
+    await openHome(tester, uploadBody: {...uploadAnswer, 'id': 12.0});
+
+    await upload(tester);
+    await tester.enterText(find.byType(TextField).first, 'song');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Suchergebnisse'), findsOneWidget);
+    expect(find.text('song.mp3'), findsWidgets);
+  });
+
+  // The library is read when the page opens. A fast upload can finish before that answer
+  // arrives; the answer then does not contain the song and must not wipe it.
+  testWidgets('a library read that was already running keeps an uploaded song', (tester) async {
+    final gate = Completer<void>();
+    final library = StubAdapter(200, libraryAnswer)..wait = gate.future;
+
+    await openHome(tester, library: library, uploadBody: {...uploadAnswer, 'id': 12.0});
+    await upload(tester);
+
+    gate.complete();
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'song');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Suchergebnisse'), findsOneWidget);
+  });
+
   // The name on the row is the title the server stored (base name only), not the
   // path the picker handed over.
   testWidgets('the row shows the name the server stored', (tester) async {
