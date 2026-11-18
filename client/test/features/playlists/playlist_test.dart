@@ -562,7 +562,7 @@ void main() {
 
     expect(covers['server:http://127.0.0.1:8080:1'], _png);
     // The row in the list and the detail show the image instead of the mark.
-    expect(find.byType(Image), findsWidgets);
+    expect(find.byType(Image), findsNWidgets(2));
   });
 
   // A phone has less width than the two panes need. The page stacks them instead of
