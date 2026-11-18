@@ -77,26 +77,44 @@ fn prune(buckets: &mut HashMap<String, Bucket>, now: Instant, capacity: usize, r
     }
 }
 
-/// The address a bucket belongs to. `X-Forwarded-For` is trusted when running behind a
-/// reverse proxy; otherwise the peer address, with the port split off.
+/// The address a bucket belongs to. `X-Forwarded-For` is only read when the direct peer is a
+/// reverse proxy on this machine or the local network: a client on the internet can set any
+/// header value, so trusting it there would let one client mint an unlimited number of buckets.
+/// Otherwise the peer address is the key, with the port split off.
 pub fn client_ip(req: &Request) -> String {
-    if let Some(forwarded) = req.headers().get("x-forwarded-for") {
-        let first = forwarded
-            .to_str()
-            .unwrap_or_default()
-            .split(',')
-            .next()
-            .unwrap_or_default()
-            .trim();
-        if !first.is_empty() {
-            return peer_key(first);
+    let peer = req.extensions().get::<ConnectInfo<SocketAddr>>().map(|info| info.0);
+
+    if let Some(peer) = peer {
+        if is_local_proxy(peer.ip()) {
+            if let Some(forwarded) = req.headers().get("x-forwarded-for") {
+                let first = forwarded
+                    .to_str()
+                    .unwrap_or_default()
+                    .split(',')
+                    .next()
+                    .unwrap_or_default()
+                    .trim();
+                if !first.is_empty() {
+                    return peer_key(first);
+                }
+            }
         }
     }
 
-    match req.extensions().get::<ConnectInfo<SocketAddr>>() {
-        Some(info) => peer_key(&info.0.to_string()),
+    match peer {
+        Some(peer) => peer_key(&peer.to_string()),
         // An unknown peer shares one bucket.
         None => String::new(),
+    }
+}
+
+/// Whether the peer is close enough to be a reverse proxy the operator controls. A public
+/// client is never one, so its `X-Forwarded-For` cannot choose its bucket.
+fn is_local_proxy(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
+        // fc00::/7 is the IPv6 unique-local range, the counterpart of a private IPv4 net.
+        IpAddr::V6(ip) => ip.is_loopback() || (ip.segments()[0] & 0xfe00) == 0xfc00,
     }
 }
 

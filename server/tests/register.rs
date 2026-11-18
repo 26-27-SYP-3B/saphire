@@ -135,6 +135,35 @@ fn a_peer_key_is_the_address_without_the_port() {
     }
 }
 
+// A public client could otherwise send a fresh X-Forwarded-For on every request and never meet
+// a limit. Only a proxy on this machine or the local network may name the caller.
+#[test]
+fn x_forwarded_for_is_only_read_from_a_local_peer() {
+    use axum::body::Body;
+    use axum::extract::{ConnectInfo, Request};
+    use std::net::SocketAddr;
+
+    let key = |peer: &str, forwarded: &str| {
+        let mut request = Request::builder()
+            .uri("/")
+            .header("x-forwarded-for", forwarded)
+            .body(Body::empty())
+            .expect("build the request");
+        request
+            .extensions_mut()
+            .insert(ConnectInfo(peer.parse::<SocketAddr>().expect("the peer is a socket address")));
+        ratelimit::client_ip(&request)
+    };
+
+    assert_eq!(key("127.0.0.1:5000", "10.0.0.7"), "10.0.0.7");
+    assert_eq!(key("10.1.2.3:5000", "10.0.0.7, 10.0.0.8"), "10.0.0.7");
+    assert_eq!(key("[fd00::1]:5000", "10.0.0.7"), "10.0.0.7");
+
+    // A client on the internet cannot choose its bucket.
+    assert_eq!(key("8.8.8.8:5000", "10.0.0.7"), "8.8.8.8");
+    assert_eq!(key("[2001:db8::1]:5000", "10.0.0.7"), "2001:db8::1");
+}
+
 #[tokio::test]
 async fn register_is_rate_limited_per_address() {
     // A wide refill window on purpose: every registration hashes a password, which takes
