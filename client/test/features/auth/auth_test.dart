@@ -126,13 +126,14 @@ void main() {
   test('a login stores the session, the store is empty before', () async {
     final store = SessionStore();
     final dio = Dio()
-      ..httpClientAdapter = StubAdapter(200, {'token': 'a' * 64, 'expires_at': 2000000000});
+      ..httpClientAdapter = StubAdapter(200, {'token': 'a' * 64, 'stream_token': 'b' * 64, 'expires_at': 2000000000});
 
     expect(store.isLoggedIn, false);
     await AuthRepository(dio, store).login(username: 'lukas', password: 'geheim123');
 
     expect(store.isLoggedIn, true);
     expect(store.token, 'a' * 64);
+    expect(store.streamToken, 'b' * 64);
   });
 
   test('the session check carries the stored token as a Bearer header', () async {

@@ -7,7 +7,7 @@ use axum::body::Body;
 use axum::extract::{ConnectInfo, Request};
 use axum::http::{HeaderMap, StatusCode};
 use http_body_util::BodyExt;
-use saphire_server::{app, clock, db, music, ratelimit, user};
+use saphire_server::{app, clock, db, music, ratelimit, session, user};
 use tower::ServiceExt;
 
 /// A real WAV header with enough padding to span several stream chunks.
@@ -744,6 +744,78 @@ async fn stream_sends_the_file_in_pieces() {
 
     let small_stream = read_stream(&test, &format!("/api/music/{small_id}"), &token).await;
     assert_eq!(small_stream.pieces.len(), 1, "a small file was sent in {} piece(s), wanted one", small_stream.pieces.len());
+}
+
+/// The browser player cannot set an Authorization header on its audio element. A login also
+/// returns a stream token, and only the stream endpoint accepts it from the query.
+#[tokio::test]
+async fn a_stream_token_plays_a_song_without_a_session_header() {
+    let test = common::setup().await;
+
+    let reply = common::post(&test, "/api/register", r#"{"username": "lukas", "password": "valid-password"}"#, "").await;
+    assert_eq!(reply.status, StatusCode::CREATED, "register -> {} ({})", reply.status, reply.body);
+    let reply = common::post(&test, "/api/login", r#"{"username": "lukas", "password": "valid-password"}"#, "").await;
+    assert_eq!(reply.status, StatusCode::OK, "login -> {} ({})", reply.status, reply.body);
+
+    let login = common::json(&reply.body);
+    let session_token = login["token"].as_str().expect("the answer has a token").to_string();
+    let stream_token = login["stream_token"].as_str().expect("the answer has a stream token").to_string();
+    assert!(
+        stream_token.len() == 64 && stream_token.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')),
+        "stream token is not 64 hex characters: {stream_token}",
+    );
+    assert_ne!(stream_token, session_token, "the stream token must not be the session token");
+
+    let reply = common::upload(&test, &session_token, "file", "song.wav", &common::tiny_wav()).await;
+    assert_eq!(reply.status, StatusCode::CREATED, "upload -> {} ({})", reply.status, reply.body);
+    let track = common::json(&reply.body);
+    let id = track["id"].as_i64().expect("the answer has an id");
+
+    // No Authorization header at all: the query token is the whole credential.
+    let stream = read_stream(&test, &format!("/api/music/{id}?token={stream_token}"), "").await;
+    assert_eq!(stream.status, StatusCode::OK, "stream with a query token -> {}", stream.status);
+    assert_eq!(stream.body, common::tiny_wav(), "the query token did not deliver the file");
+    assert_eq!(header_value(&stream.headers, "content-type"), "audio/wav");
+
+    // A session token is not a stream token, even though both are 64 hex characters.
+    let stream = read_stream(&test, &format!("/api/music/{id}?token={session_token}"), "").await;
+    assert_eq!(stream.status, StatusCode::UNAUTHORIZED, "a session token in the query was accepted");
+
+    // A token that is not a stream token is refused like an expired session.
+    let reply = read_stream(&test, &format!("/api/music/{id}?token={}", "0".repeat(64)), "").await;
+    assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "unknown query token -> {}", reply.status);
+    assert!(
+        String::from_utf8_lossy(&reply.body).contains("session is not valid or expired"),
+        "unknown query token did not answer with the session message",
+    );
+
+    // A stale URL token must not take a valid session header down with it.
+    let stream = read_stream(&test, &format!("/api/music/{id}?token={}", "0".repeat(64)), &session_token).await;
+    assert_eq!(stream.status, StatusCode::OK, "a valid header with a stale query token was refused");
+
+    // The stream token grants audio only: the session endpoint still wants its own header.
+    let reply = common::get(&test, &format!("/api/session?token={stream_token}"), "").await;
+    assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "stream token on /api/session -> {} ({})", reply.status, reply.body);
+    assert!(reply.body.contains("authorization header"), "the stream token must not replace the session header: {}", reply.body);
+
+    // An expired stream token is refused and dropped, like an expired session.
+    let user_id = common::run(&test, |conn| user::get_by_username(conn, "lukas")).await.id;
+    let now = clock::unix_now();
+    let expired_token = "e".repeat(64);
+    let token_hash = session::hash_token(&expired_token);
+    common::run(&test, move |conn| {
+        conn.execute(
+            "INSERT INTO stream_session (token_hash, user_id, expires_at) VALUES (?1, ?2, ?3)",
+            (&token_hash, user_id, now - 1),
+        )
+        .map_err(db::failure)?;
+        Ok(())
+    })
+    .await;
+
+    let reply = read_stream(&test, &format!("/api/music/{id}?token={expired_token}"), "").await;
+    assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "expired query token -> {}", reply.status);
+    assert_eq!(common::count(&test, "stream_session").await, 1, "expired stream token was not dropped");
 }
 
 /// The answers before the first byte, which are the only ones that can still use the JSON error

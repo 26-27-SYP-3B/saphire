@@ -63,7 +63,11 @@ class AuthRepository {
 
     final data = response.data as Map<String, dynamic>;
     // JSON numbers arrive as double on the web, so read them as num.
-    session.save(data['token'] as String, (data['expires_at'] as num).toInt());
+    session.save(
+      data['token'] as String,
+      (data['expires_at'] as num).toInt(),
+      data['stream_token'] as String?,
+    );
   }
 
   /// GET /api/session with the stored token: how the app checks that the

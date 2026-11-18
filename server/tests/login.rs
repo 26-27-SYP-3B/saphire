@@ -36,6 +36,7 @@ async fn login_answers_by_the_documented_rules() {
 
     let login = common::json(&reply.body);
     let token = login["token"].as_str().expect("the answer has a token").to_string();
+    let stream_token = login["stream_token"].as_str().expect("the answer has a stream token").to_string();
     let expires_at = login["expires_at"].as_i64().expect("the answer has an expires_at");
 
     // 32 random bytes as hex, nothing predictable about it.
@@ -43,6 +44,11 @@ async fn login_answers_by_the_documented_rules() {
         token.len() == 64 && token.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')),
         "token is not 64 hex characters: {token}",
     );
+    assert!(
+        stream_token.len() == 64 && stream_token.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')),
+        "stream token is not 64 hex characters: {stream_token}",
+    );
+    assert_ne!(stream_token, token, "the stream token must be a separate secret");
 
     let now = clock::unix_now();
     assert!(
@@ -59,6 +65,20 @@ async fn login_answers_by_the_documented_rules() {
     })
     .await;
     assert_eq!(stored, session::hash_token(&token), "session stores {stored}, wanted the hash of the token");
+
+    // The second secret is stored the same way and only its hash is kept.
+    let stored_stream = common::run(&test, |conn| {
+        let stored: String = conn
+            .query_row("SELECT token_hash FROM stream_session", (), |row| row.get(0))
+            .map_err(db::failure)?;
+        Ok(stored)
+    })
+    .await;
+    assert_eq!(
+        stored_stream,
+        session::hash_token(&stream_token),
+        "stream_session stores {stored_stream}, wanted the hash of the stream token",
+    );
 
     // The token authenticates at GET /api/session.
     let reply = common::get(&test, "/api/session", &token).await;

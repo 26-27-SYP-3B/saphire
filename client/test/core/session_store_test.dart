@@ -12,7 +12,7 @@ void main() {
   test('a session survives a restart', () async {
     useEmptyStorage();
 
-    SessionStore(FlutterSecureStorage()).save('a' * 64, inOneHour());
+    SessionStore(FlutterSecureStorage()).save('a' * 64, inOneHour(), 'b' * 64);
     // save() does not wait for the write, so give the write its turn.
     await Future<void>.delayed(Duration.zero);
 
@@ -20,6 +20,7 @@ void main() {
 
     expect(restored.isLoggedIn, true);
     expect(restored.token, 'a' * 64);
+    expect(restored.streamToken, 'b' * 64);
   });
 
   test('an expired session does not come back logged in', () async {

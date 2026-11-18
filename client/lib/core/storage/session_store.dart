@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 /// One entry: the token and its expiry. Two entries would be two writes, and the
@@ -18,7 +19,12 @@ class SessionStore {
   final FlutterSecureStorage? _storage;
 
   String? _token;
+  String? _streamToken;
   int _expiresAt = 0;
+
+  /// The token the browser player puts in a stream URL. It is a separate secret, so a URL
+  /// cannot be used to read playlists, the queue or the account.
+  String? get streamToken => isLoggedIn ? _streamToken : null;
 
   /// The store with the token the last run saved. A broken keychain must not keep
   /// the app from starting: the user just logs in again.
@@ -30,7 +36,17 @@ class SessionStore {
       if (saved != null) {
         final data = jsonDecode(saved) as Map<String, dynamic>;
         store._token = data['token'] as String?;
+        store._streamToken = data['stream_token'] as String?;
         store._expiresAt = (data['expires_at'] as num?)?.toInt() ?? 0;
+
+        // A session written by a build before the stream token exists cannot play in a
+        // browser: the audio element sends no header. Ask for one login instead of failing
+        // every song. Native clients keep working with the session header.
+        if (kIsWeb && store._token != null && store._streamToken == null) {
+          store._token = null;
+          store._expiresAt = 0;
+          await storage.delete(key: _key);
+        }
       }
     } catch (_) {
       return SessionStore(storage);
@@ -51,18 +67,20 @@ class SessionStore {
 
   String? get token => isLoggedIn ? _token : null;
 
-  void save(String token, int expiresAt) {
+  void save(String token, int expiresAt, [String? streamToken]) {
     _token = token;
+    _streamToken = streamToken;
     _expiresAt = expiresAt;
     // Storage only has to survive a restart, so the answer is not awaited and a
     // failed write leaves the session working in memory.
-    _storage?.write(key: _key, value: jsonEncode({'token': token, 'expires_at': expiresAt})).ignore();
+    _storage?.write(key: _key, value: jsonEncode({'token': token, 'stream_token': streamToken, 'expires_at': expiresAt})).ignore();
   }
 
   /// Awaited where the delete has to finish before the next write (the setup and the
   /// settings screens). A failed delete leaves the in-memory session gone anyway.
   Future<void> clear() async {
     _token = null;
+    _streamToken = null;
     _expiresAt = 0;
     try {
       await _storage?.delete(key: _key);

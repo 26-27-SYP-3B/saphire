@@ -95,7 +95,15 @@ class QueuePlayer {
   /// A queue entry is a reference to a library song, so the bytes come from the
   /// streaming endpoint. The endpoint sends the file in chunks, which is what a player
   /// needs: the first piece arrives before the rest of the file is read.
-  String urlFor(int trackId) => '$apiBaseUrl/api/music/$trackId';
+  ///
+  /// A browser player cannot set an Authorization header on its audio element, so the
+  /// stream token goes in the URL there. It is a separate secret and only the stream
+  /// endpoint accepts it.
+  String urlFor(int trackId) {
+    final url = '$apiBaseUrl/api/music/$trackId';
+    final streamToken = session.streamToken;
+    return streamToken == null ? url : '$url?token=${Uri.encodeComponent(streamToken)}';
+  }
 
   /// Plays a file that is on the device: from its path when the pick gave one, from the
   /// bytes when it came from a browser. This is the whole local mode — no server, no
