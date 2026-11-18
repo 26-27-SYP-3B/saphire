@@ -263,8 +263,19 @@ fn is_audio(media_type: &str) -> bool {
 /// containers it recognizes, and the formats a file renamed `.mp3` turns out to be. Unknown
 /// bytes answer as plain binary, which is what lets an extension decide.
 fn sniff(data: &[u8]) -> String {
-    const SIGNATURES: [(&[u8], &str); 8] = [
-        (b"RIFF", "audio/wave"),
+    // RIFF is a container, not a format: WAVE is audio, but WebP and AVI are not, and a
+    // picture renamed .mp3 must not pass as one.
+    if data.len() >= 12 && &data[..4] == b"RIFF" {
+        return match &data[8..12] {
+            b"WAVE" => "audio/wave",
+            b"WEBP" => "image/webp",
+            b"AVI " => "video/x-msvideo",
+            _ => "application/x-riff",
+        }
+        .to_string();
+    }
+
+    const SIGNATURES: [(&[u8], &str); 7] = [
         (b"ID3", "audio/mpeg"),
         (b"ID2", "audio/mpeg"),
         (b"Ogg", "audio/ogg"),

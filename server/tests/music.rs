@@ -280,6 +280,21 @@ async fn upload_rejects_bad_uploads() {
             b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR".to_vec(),
             StatusCode::BAD_REQUEST,
         ),
+        (
+            // RIFF starts both WAV and WebP; the subtype decides which one it is.
+            "a WebP named like audio",
+            "file",
+            "cover.mp3",
+            b"RIFF\x1a\x00\x00\x00WEBPVP8 ".to_vec(),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "a RIFF video named like audio",
+            "file",
+            "clip.wav",
+            b"RIFF\x10\x00\x00\x00AVI LIST".to_vec(),
+            StatusCode::BAD_REQUEST,
+        ),
         ("extension not allowed", "file", "song.zip", common::not_audio(), StatusCode::BAD_REQUEST),
         ("empty file", "file", "empty.wav", Vec::new(), StatusCode::BAD_REQUEST),
         ("field is not a file", "file", "", common::not_audio(), StatusCode::BAD_REQUEST),
