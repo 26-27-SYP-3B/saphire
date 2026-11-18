@@ -98,6 +98,9 @@ pub fn find_stream(conn: &rusqlite::Connection, token: &str) -> Result<(), Failu
 
 /// The stream endpoint's caller: a Bearer session or a stream token from the query. Both are
 /// answered with the same wording, so a client cannot tell which one was wrong.
+// The error side is a whole Response, which clippy counts as large; boxing it would only add
+// noise to a path that answers as it is.
+#[allow(clippy::result_large_err)]
 pub async fn stream_caller(state: &AppState, token: &str) -> Result<(), Response> {
     let token = token.to_string();
     db::call(&state.db, move |conn| find_stream(conn, &token))
