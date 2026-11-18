@@ -30,6 +30,23 @@ void main() {
     expect(fake.lastHeaders['Authorization'], 'Bearer ${'a' * 64}');
   });
 
+  // A browser player cannot set the Authorization header on its audio element, so the
+  // stream URL carries the separate stream token instead.
+  test('a stream token goes into the URL, not only the header', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final queue = PlaybackQueue();
+    queue.fill([QueueEntry(position: 1, trackId: 8, title: 'Technogal.mp3')]);
+    final session = SessionStore()
+      ..save('a' * 64, DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch ~/ 1000, 'b' * 64);
+    final player = QueuePlayer(queue: queue, player: fake, session: session);
+    addTearDown(player.dispose);
+
+    await player.playCurrent();
+
+    expect(fake.opened, ['$apiBaseUrl/api/music/8?token=${'b' * 64}']);
+  });
+
   // This is the reason a queue is worth having: a song that ends moves to the next one.
   test('when a song ends the queue plays the next entry', () async {
     final fake = FakePlayer();

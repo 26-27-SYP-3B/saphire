@@ -125,7 +125,7 @@ Content-Type: application/json
 
 | Status | When | Example body |
 |---|---|---|
-| `200 OK` | Password verified, session created | `{"token": "9eb5…946c", "expires_at": 1794039606}` |
+| `200 OK` | Password verified, session created | `{"token": "9eb5…946c", "stream_token": "4a1c…beef", "expires_at": 1794039606}` |
 | `400 Bad Request` | Malformed JSON or fields that fail the input rules | same messages as `/api/register` |
 | `401 Unauthorized` | Username unknown **or** password wrong — always the same answer, so callers cannot enumerate users | `{"error": "username or password is wrong"}` |
 | `429 Too Many Requests` | Login rate limit reached. Includes a `Retry-After` header (seconds until the next token, at most the 12 s refill window). | `{"error": "too many logins from this address, try again later"}` |
@@ -136,6 +136,10 @@ Content-Type: application/json
 - The token is 32 random bytes from `crypto/rand` as 64 hex characters. It is
   only shown once, in this response; the database stores just its SHA-256 hash,
   so a leaked database does not hand out usable sessions.
+- `stream_token` is a second, separate 32-byte secret for the browser player. An
+  HTML5 audio element cannot send an `Authorization` header, so `GET /api/music/{id}`
+  also accepts this token as `?token=…`. It is stored only as its hash, has the same
+  24 h TTL, and no other endpoint accepts it.
 - Sessions expire 24 hours after login (`sessionTTL`). Expired rows are dropped
   on the next lookup.
 - Unknown users are answered with the same 401 after a comparison against a
@@ -168,6 +172,17 @@ CREATE TABLE IF NOT EXISTS session (
     token_hash TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES user(id),
     created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+)
+```
+
+The stream token lives in its own table, so a URL that carries it cannot become a
+session:
+
+```sql
+CREATE TABLE IF NOT EXISTS stream_session (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES user(id),
     expires_at INTEGER NOT NULL
 )
 ```
@@ -290,15 +305,26 @@ No pagination yet: every row is returned in one answer.
 ### `GET /api/music/{id}`
 
 Sends the file of one song. Only a logged-in user may read it, with the same two 401
-messages as `GET /api/session`. The file is **streamed in pieces**: the server reads
-32 KiB at a time (`CHUNK_BYTES` in `server/src/music.rs`) and writes each piece as it
-reads it, so a player gets the start of a song before the rest of the file is read, and
-a large song is never held in memory as a whole.
+messages as `GET /api/session`, or with the stream token from the login answer. The file
+is **streamed in pieces**: the server reads 32 KiB at a time (`CHUNK_BYTES` in
+`server/src/music.rs`) and writes each piece as it reads it, so a player gets the start
+of a song before the rest of the file is read, and a large song is never held in memory
+as a whole.
 
 ```
 GET /api/music/{id}
 Authorization: Bearer <token>
 ```
+
+A browser's audio element cannot send that header, so the same endpoint also accepts the
+separate `stream_token` from `POST /api/login` in the query:
+
+```
+GET /api/music/{id}?token=<stream_token>
+```
+
+That token grants audio only; `GET /api/session`, the playlists and the queue still need
+the normal Bearer token.
 
 **Headers on a successful answer**
 
@@ -333,6 +359,7 @@ text, because that answer is about the transport rather than the API.
 | `400 Bad Request` | Digits, but too large to be an id | `{"error": "the song id is too large"}` |
 | `401 Unauthorized` | Missing `Authorization: Bearer` header | `{"error": "authorization header with a Bearer token is missing"}` |
 | `401 Unauthorized` | Unknown or expired token | `{"error": "session is not valid or expired"}` |
+| `401 Unauthorized` | The query's stream token is unknown or expired | `{"error": "session is not valid or expired"}` |
 | `404 Not Found` | No row with that id | `{"error": "song is not in the library"}` |
 | `404 Not Found` | The row exists but its file is gone (a broken library) | `{"error": "the file for this song is not in the library folder"}` |
 | `416 Requested Range Not Satisfiable` | A `Range` that cannot be read as bytes (`bytes=abc`), a list of ranges, or one outside the file | plain text `invalid range`, with `Content-Range: bytes */<size>` — the only answer here that is not the JSON shape |

@@ -55,6 +55,12 @@ pub async fn handle(State(state): State<AppState>, req: Request) -> Response {
         Ok(token) => token,
         Err(err) => return respond::answer(&err, "could not create session"),
     };
+    // A second secret for the browser player: it may appear in a stream URL, so it must not be
+    // the session token. Only GET /api/music/{id} accepts it.
+    let stream_token = match session::new_token() {
+        Ok(token) => token,
+        Err(err) => return respond::answer(&err, "could not create session"),
+    };
 
     let now = clock::unix_now();
     let row = session::Session {
@@ -63,10 +69,22 @@ pub async fn handle(State(state): State<AppState>, req: Request) -> Response {
         created_at: now,
         expires_at: now + session::SESSION_TTL_SECONDS,
     };
+    let stream_row = session::StreamSession {
+        token_hash: session::hash_token(&stream_token),
+        user_id: found.id,
+        expires_at: now + session::SESSION_TTL_SECONDS,
+    };
 
-    // Only the hash is stored; this answer is the one time the client sees the token.
+    // Only the hashes are stored; this answer is the one time the client sees the tokens.
     let saved = db::call(&state.db, move |conn| {
-        session::insert(conn, &row)?;
+        let tx = conn.transaction().map_err(db::failure)?;
+        // A login that never plays a song would otherwise leave a stream row forever once it
+        // expired; dropping the expired ones here keeps the table to the active tokens.
+        tx.execute("DELETE FROM stream_session WHERE expires_at <= ?1", (now,))
+            .map_err(db::failure)?;
+        session::insert(&tx, &row)?;
+        session::insert_stream(&tx, &stream_row)?;
+        tx.commit().map_err(db::failure)?;
         Ok(row)
     })
     .await;
@@ -74,7 +92,11 @@ pub async fn handle(State(state): State<AppState>, req: Request) -> Response {
     match saved {
         Ok(saved) => respond::json(
             StatusCode::OK,
-            &serde_json::json!({ "token": token, "expires_at": saved.expires_at }),
+            &serde_json::json!({
+                "token": token,
+                "stream_token": stream_token,
+                "expires_at": saved.expires_at
+            }),
         ),
         Err(err) => respond::answer(&err, "could not save session"),
     }

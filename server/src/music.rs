@@ -453,8 +453,21 @@ pub async fn handle_stream(State(state): State<AppState>, id: Path<String>, req:
     }
 
     // Auth before the file is opened, as in the upload endpoint: an anonymous caller must not
-    // make the server read a whole song it will not send.
-    if let Err(response) = session::caller(&state, session::bearer(&req)).await {
+    // make the server read a whole song it will not send. A browser player cannot set a header
+    // on its <audio> element, so it sends its stream token in the URL instead; that token is
+    // accepted here and nowhere else. A stale URL token must not throw away a valid
+    // Authorization header in the same request, so the header is the fallback.
+    let authorized = match query_token(&req) {
+        Some(token) => match session::stream_caller(&state, &token).await {
+            Ok(()) => Ok(()),
+            Err(query_error) => match session::caller(&state, session::bearer(&req)).await {
+                Ok(_) => Ok(()),
+                Err(_) => Err(query_error),
+            },
+        },
+        None => session::caller(&state, session::bearer(&req)).await.map(|_| ()),
+    };
+    if let Err(response) = authorized {
         return response;
     }
 
@@ -611,6 +624,17 @@ pub fn chunk_stream(file: tokio::fs::File, remaining: u64) -> impl Stream<Item =
             Err(_) => None,
         }
     })
+}
+
+/// The `token` part of the query, when there is one. Only the stream endpoint reads it; the
+/// stream token is hex, so no percent-decoding is needed.
+fn query_token(req: &Request) -> Option<String> {
+    req.uri()
+        .query()?
+        .split('&')
+        .find_map(|part| part.strip_prefix("token="))
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
 }
 
 pub fn list_routes(state: AppState) -> Router {

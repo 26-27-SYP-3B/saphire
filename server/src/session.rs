@@ -37,6 +37,74 @@ pub fn ensure_table(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// The token a browser player may use in a URL. It is a separate secret from the session
+/// token, so a URL that leaks into a log or a referrer cannot read playlists, the queue or
+/// the account. The stream endpoint is the only one that accepts it.
+pub fn ensure_stream_table(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS stream_session (
+            token_hash TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES user(id),
+            expires_at INTEGER NOT NULL
+        )",
+        (),
+    )?;
+    Ok(())
+}
+
+/// A row of `stream_session`: the hash of a stream token and when it stops working.
+#[derive(Debug, PartialEq)]
+pub struct StreamSession {
+    pub token_hash: String,
+    pub user_id: i64,
+    pub expires_at: i64,
+}
+
+pub fn insert_stream(conn: &rusqlite::Connection, row: &StreamSession) -> Result<(), Failure> {
+    conn.execute(
+        "INSERT INTO stream_session (token_hash, user_id, expires_at) VALUES (?1, ?2, ?3)",
+        (&row.token_hash, row.user_id, row.expires_at),
+    )
+    .map_err(db::failure)?;
+    Ok(())
+}
+
+/// Accepts a stream token and drops it when it has expired. The token grants audio only; the
+/// caller does not learn which user it belonged to.
+pub fn find_stream(conn: &rusqlite::Connection, token: &str) -> Result<(), Failure> {
+    let row = conn
+        .query_row(
+            "SELECT token_hash, expires_at FROM stream_session WHERE token_hash = ?1",
+            (hash_token(token),),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .map_err(db::failure);
+
+    let (token_hash, expires_at) = match row {
+        Ok(row) => row,
+        Err(Failure::NoRows) => return Err(Failure::SessionNotFound),
+        Err(Failure::Db(_)) => return Err(Failure::SessionDb),
+        Err(err) => return Err(err),
+    };
+
+    if clock::unix_now() > expires_at {
+        conn.execute("DELETE FROM stream_session WHERE token_hash = ?1", (&token_hash,))
+            .map_err(db::failure)?;
+        return Err(Failure::SessionNotFound);
+    }
+
+    Ok(())
+}
+
+/// The stream endpoint's caller: a Bearer session or a stream token from the query. Both are
+/// answered with the same wording, so a client cannot tell which one was wrong.
+pub async fn stream_caller(state: &AppState, token: &str) -> Result<(), Response> {
+    let token = token.to_string();
+    db::call(&state.db, move |conn| find_stream(conn, &token))
+        .await
+        .map_err(|err| respond::answer(&err, "could not load session"))
+}
+
 /// Turns a raw token into its SHA-256 hex form, which is the primary key.
 pub fn hash_token(token: &str) -> String {
     let mut hasher = Sha256::new();

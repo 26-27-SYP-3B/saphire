@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_rusqlite::{rusqlite, Connection};
 
-use crate::{music, playlist, queue, respond::Failure};
+use crate::{music, playlist, queue, respond::Failure, session};
 
 pub type Db = Arc<Mutex<Connection>>;
 
@@ -68,6 +68,7 @@ pub async fn open_db_with(path: &str) -> Result<Db, Failure> {
         // fresh start.
         ensure_user_table(conn).map_err(failure)?;
         ensure_session_table(conn).map_err(failure)?;
+        session::ensure_stream_table(conn).map_err(failure)?;
         // The library tables live in their own domain files. The same for playlists and the
         // queue.
         music::ensure_table(conn).map_err(failure)?;
