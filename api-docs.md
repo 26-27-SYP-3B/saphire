@@ -84,10 +84,11 @@ curl -X POST localhost:8080/api/register \
 - The password hash is never serialized to JSON (`json:"-"` on the model).
 - Username existence checks are deliberately timed to not leak whether a
   username exists: the hash is computed before the insert is attempted.
-- The rate limiter trusts `X-Forwarded-For` when running behind a reverse proxy.
-  The peer address is split off the port with `net.SplitHostPort`, so IPv6 peers
-  (bracketed `RemoteAddr`, including `::1`) get their own bucket rather than a
-  shared one; stale buckets are pruned so the map stays bounded.
+- The rate limiter reads `X-Forwarded-For` only when the direct peer is a
+  loopback or private address (a reverse proxy on the same host or LAN); a client
+  on the internet cannot choose its bucket with the header. IPv6 peers
+  (including `::1`) get their own bucket rather than a shared one; stale buckets
+  are pruned so the map stays bounded.
 - Database schema:
 
   ```sql
