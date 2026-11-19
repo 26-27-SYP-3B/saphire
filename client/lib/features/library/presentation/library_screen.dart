@@ -121,6 +121,7 @@ class LibraryScreen extends StatefulWidget {
     this.pickAudio = pickAudioFiles,
     this.settings,
     this.localLibrary,
+    this.initialTrackId,
   });
 
   final LibraryRepository library;
@@ -137,6 +138,11 @@ class LibraryScreen extends StatefulWidget {
   /// Null in a test that does not care about local mode: the stores then stay in memory.
   final SettingsStore? settings;
   final LocalLibrary? localLibrary;
+
+  /// A song a link named. The list opens and plays that song once it has been read, so a shared
+  /// `/library?track=<id>` address is the same as tapping the row. Null when the page was opened
+  /// without a link.
+  final int? initialTrackId;
 
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();
@@ -177,6 +183,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
   // refused has to be chosen again, so its message must not offer a retry. The flag belongs
   // to the message, so it is set wherever the message is set.
   bool _noteIsReadError = false;
+
+  // The link is answered once: a later read of the list must not start the song again.
+  bool _openedLink = false;
 
   StreamSubscription<void>? _changes;
 
@@ -220,6 +229,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         _note = null;
         _noteIsReadError = false;
       });
+      await _openLinkedSong(tracks);
     } on LibraryException catch (error) {
       if (mounted) {
         setState(() {
@@ -230,6 +240,27 @@ class _LibraryScreenState extends State<LibraryScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  /// Plays the song a link named. A link that names a song the library does not have says so
+  /// instead of opening a different one, and plays nothing.
+  Future<void> _openLinkedSong(List<Track> tracks) async {
+    final linkId = widget.initialTrackId;
+    if (linkId == null || _openedLink) return;
+    _openedLink = true;
+
+    Track? linked;
+    for (final track in tracks) {
+      if (track.id == linkId) {
+        linked = track;
+        break;
+      }
+    }
+    if (linked == null) {
+      if (mounted) setState(() => _note = 'Das verlinkte Lied ist nicht in der Bibliothek.');
+      return;
+    }
+    await _play(linked);
   }
 
   /// The names the menu can offer. A page that has not read them shows only the queue, and
