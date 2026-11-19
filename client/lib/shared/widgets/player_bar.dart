@@ -125,9 +125,9 @@ class _PlayerBarState extends State<PlayerBar> {
                     overflow: TextOverflow.ellipsis,
                   ),
                   Text(
-                    // What is known about the queue: an error, or the slot that is current, or
-                    // what would start something. The player names it, so the bar and the full
-                    // player cannot say different things.
+                    // What is known about the queue: the artist the answer named, or an error,
+                    // or the slot that is current, or what would start something. The player
+                    // names it, so the bar and the full player cannot say different things.
                     _note ?? widget.player.statusNote,
                     style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
                     maxLines: 1,

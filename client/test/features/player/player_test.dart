@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -567,6 +568,96 @@ void main() {
     expect(fake.playing, isTrue);
   });
 
+  // The queue can hold the same song twice, so an index is not a song: shuffle must not pick the
+  // copy of the song that just ended.
+  test('shuffle skips the copy of the song that just ended', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final queue = PlaybackQueue();
+    queue.fill([
+      QueueEntry(position: 1, trackId: 8, title: 'a'),
+      QueueEntry(position: 2, trackId: 8, title: 'a again'),
+      QueueEntry(position: 3, trackId: 6, title: 'c'),
+    ]);
+    final player = QueuePlayer(queue: queue, player: fake, session: loggedIn());
+    addTearDown(player.dispose);
+
+    await player.playCurrent();
+    player.shuffle = true;
+    fake.complete();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(queue.current?.trackId, 6);
+    expect(fake.opened.last, '$apiBaseUrl/api/music/6');
+  });
+
+  // The local list uses the same shuffle: another file from this device, and a file that cannot
+  // be opened is skipped instead of ending the list.
+  test('local shuffle skips a file that cannot be read', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final player = QueuePlayer(
+      queue: PlaybackQueue(),
+      player: fake,
+      session: SessionStore(),
+      // Always take the first remaining candidate, so the broken file is tried before the good one.
+      random: _FirstRandom(),
+    );
+    addTearDown(player.dispose);
+
+    final first = LocalTrack(title: 'a.mp3', bytes: Uint8List.fromList([0xFF, 0xFB]));
+    final broken = LocalTrack(title: 'gone.mp3');
+    final third = LocalTrack(title: 'c.mp3', bytes: Uint8List.fromList([0xFF, 0xFB]));
+    await player.playLocalQueue([first, broken, third]);
+    player.shuffle = true;
+
+    fake.complete();
+    await Future<void>.delayed(Duration.zero);
+
+    // Only the readable song is possible; which order the two candidates were tried in is random.
+    expect(player.localTitle, 'c.mp3');
+    expect(player.failure, contains('nicht gefunden'));
+  });
+
+  // A shuffle of a one-song list has nothing else to pick, so it plays the song again without
+  // asking the filesystem whether it is still there.
+  test('shuffle of one local song plays it again', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final player = QueuePlayer(queue: PlaybackQueue(), player: fake, session: SessionStore());
+    addTearDown(player.dispose);
+
+    await player.playLocalQueue([LocalTrack(title: 'a.mp3', bytes: Uint8List.fromList([0xFF, 0xFB]))]);
+    player.shuffle = true;
+
+    fake.complete();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(player.localTitle, 'a.mp3');
+    expect(fake.played, hasLength(2));
+    expect(fake.sought.last, Duration.zero);
+  });
+
+  // After the last song ended there is nothing current, so "back" must not claim a restart of a
+  // song that is no longer in the queue.
+  test('previous does nothing when the queue has ended', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final queue = PlaybackQueue();
+    queue.fill([QueueEntry(position: 1, trackId: 8, title: 'a')]);
+    final player = QueuePlayer(queue: queue, player: fake, session: loggedIn());
+    addTearDown(player.dispose);
+
+    await player.playCurrent();
+    fake.complete();
+    await Future<void>.delayed(Duration.zero);
+    expect(queue.current, isNull);
+
+    fake.at(const Duration(seconds: 10));
+    expect(await player.previous(), isFalse);
+    expect(fake.sought, isEmpty);
+  });
+
   // Shuffle picks another entry of the same queue, not the one that just ended.
   test('shuffle plays a random other song from the queue', () async {
     final fake = FakePlayer();
@@ -590,4 +681,18 @@ void main() {
     expect(fake.opened.last, anyOf('$apiBaseUrl/api/music/4', '$apiBaseUrl/api/music/6'));
     expect(fake.playing, isTrue);
   });
+
+}
+
+/// A Random that always picks the first candidate: the tests need to say which file is tried
+/// first, and real randomness would make "the broken file was skipped" a coin flip.
+class _FirstRandom implements Random {
+  @override
+  int nextInt(int max) => 0;
+
+  @override
+  bool nextBool() => false;
+
+  @override
+  double nextDouble() => 0;
 }

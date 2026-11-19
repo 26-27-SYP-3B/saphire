@@ -214,6 +214,8 @@ void main() {
       prep: (wiring) async {
         wiring.queue.fill(queueAnswer.map((entry) => QueueEntry.fromJson(entry.cast<String, dynamic>())).toList());
         await wiring.player.playCurrent();
+        // A volume that is not the default, so a mute that always restores 1.0 cannot pass.
+        await wiring.player.setVolume(0.4);
         audio.length(const Duration(seconds: 30));
       },
     );
@@ -234,7 +236,15 @@ void main() {
     // Unmuting returns to the volume the listener had, not to full volume.
     await tester.tap(find.byTooltip('Ton an'));
     await tester.pumpAndSettle();
-    expect(audio.volumes.last, 1.0);
+    expect(audio.volumes.last, 0.4);
+
+    // The volume lives in the player, so a reopened page shows the same value instead of the
+    // slider's default.
+    await tester.pumpWidget(
+      MaterialApp(home: Scaffold(body: PlayerView(player: wiring.player))),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.widget<Slider>(find.byType(Slider).last).value, 0.4);
   });
 
   // The progress bar is the other way to seek: a press on it moves the label to the target while

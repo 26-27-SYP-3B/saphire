@@ -58,7 +58,8 @@ class PlaybackException implements Exception {
 /// playlist and a queue filled from one song play exactly the same way — that is what
 /// makes the queue universal.
 class QueuePlayer {
-  QueuePlayer({required this.queue, required this.player, required this.session}) {
+  QueuePlayer({required this.queue, required this.player, required this.session, Random? random})
+    : _random = random ?? Random() {
     _subscriptions.add(player.completed.listen((_) => _onCompleted()));
   }
 
@@ -68,7 +69,7 @@ class QueuePlayer {
 
   final List<StreamSubscription<void>> _subscriptions = [];
   final StreamController<void> _changes = StreamController<void>.broadcast();
-  final Random _random = Random();
+  final Random _random;
 
   /// The two ways a song that ended does not simply move on. They live in the player, not in
   /// the page, because the end of a song happens without a tap and only the player hears it.
@@ -78,6 +79,15 @@ class QueuePlayer {
   /// A press on "back" within this time restarts the song instead of leaving it: that is what a
   /// listener means by the button after it just started.
   static const restartAfter = Duration(seconds: 3);
+
+  /// The volume the player last set, and what it was before muting. It lives here, not in the
+  /// page, because the audio object outlives the page: a closed and reopened player must show the
+  /// volume that is really set, not the slider's default.
+  double _volume = 1.0;
+  double _volumeBeforeMute = 1.0;
+
+  double get volume => _volume;
+  double get volumeBeforeMute => _volumeBeforeMute;
 
   /// What an attempt by itself reported. A song that ends on its own has no tap behind it,
   /// so an error there would be a future nobody looks at, and the page would show a new
@@ -372,9 +382,14 @@ class QueuePlayer {
     await seek(player.position + by);
   }
 
-  /// How loud the song plays, 0 to 1. A page that shows a slider keeps the value it set; the
-  /// player is the thing that actually turns the volume down.
-  Future<void> setVolume(double volume) => player.setVolume(volume.clamp(0.0, 1.0));
+  /// How loud the song plays, 0 to 1. The value is kept here so a page that opens later can show
+  /// the real volume; the audio player is the thing that actually turns it down.
+  Future<void> setVolume(double volume) async {
+    final clamped = volume.clamp(0.0, 1.0);
+    if (clamped > 0) _volumeBeforeMute = clamped;
+    _volume = clamped;
+    await player.setVolume(clamped);
+  }
 
   Stream<Duration> get positionStream => player.positionStream;
   Duration get position => player.position;
@@ -386,10 +401,14 @@ class QueuePlayer {
     // A song that has been playing for a few seconds is restarted by "back"; only at its start
     // does the button mean the song before it. That is the order a listener expects, and it works
     // at the first row too, where there is no song before it.
-    if (player.position > restartAfter) {
+    if ((localCurrent != null || queue.current != null) && player.position > restartAfter) {
       await seek(Duration.zero);
       return true;
     }
+
+    // Nothing is current: either nothing started yet, or the last song already ended. There is
+    // no song to leave, so the button must not make one current.
+    if (localCurrent == null && queue.current == null) return false;
 
     // The check comes first: a press that does nothing must not write the song to the history a
     // second time.
@@ -461,12 +480,9 @@ class QueuePlayer {
   }
 
   Future<void> _onCompleted() async {
-    // The song that just ended is what was played, so it belongs to the history before the
-    // player moves on.
-    _leave(null);
-
     // Repeat-one is the whole answer to the end of the song: the same source is already open,
-    // so it is restarted rather than opened again.
+    // so it is restarted rather than opened again. It is checked before the history write, so an
+    // hour of a repeated song does not push every other song out of "Zuletzt gespielt".
     if (repeatOne) {
       try {
         await player.seek(Duration.zero);
@@ -478,27 +494,55 @@ class QueuePlayer {
       return;
     }
 
+    // The song that just ended is what was played, so it belongs to the history before the
+    // player moves on.
+    _leave(null);
+
     // Same rule as the next button: a local list only owns playback while a song of it is
     // current. Otherwise the server queue is what moves on. A file that cannot be read is
     // skipped by _advanceLocal, so one broken file does not end the list.
     if (_localIndex >= 0) {
       if (shuffle) {
-        // A random song from the same list, never the one that just ended. A list of one song
-        // has nothing else to pick, so it plays that song again.
-        if (_local.length > 1) {
-          final current = _localIndex;
-          var pick = current;
-          while (pick == current) {
-            pick = _random.nextInt(_local.length);
+        // A list of one song has nothing else to pick, so it plays that song again without
+        // asking the filesystem: the file was already open a moment ago.
+        if (_local.length == 1) {
+          try {
+            await player.seek(Duration.zero);
+            await player.play();
+          } catch (error) {
+            failure = 'Das Lied konnte nicht gespielt werden: $error';
           }
-          _localIndex = pick;
-        }
-        try {
-          await _openLocal();
-        } catch (error) {
-          failure = error is PlaybackException ? error.message : '$error';
           _changes.add(null);
+          return;
         }
+
+        // A random song from the same list, never the one that just ended. A file that cannot be
+        // read is skipped like it is on the ordered path: one broken file must not end the list.
+        final current = _localIndex;
+        final candidates = [
+          for (var index = 0; index < _local.length; index++)
+            if (index != current && !identical(_local[index], _local[current])) index,
+        ];
+        String? skipped;
+        while (candidates.isNotEmpty) {
+          final index = candidates.removeAt(_random.nextInt(candidates.length));
+          _localIndex = index;
+          try {
+            await _openLocal();
+            if (skipped != null) failure = skipped;
+            _changes.add(null);
+            return;
+          } catch (error) {
+            skipped ??= error is PlaybackException ? error.message : '$error';
+          }
+        }
+
+        // Nothing else in the list could be opened; keeping the old index would let a broken file
+        // look like the current one.
+        _localIndex = -1;
+        failure = skipped;
+        _changes.add(null);
+        await player.stop();
         return;
       }
       await _advanceLocal();
@@ -517,12 +561,25 @@ class QueuePlayer {
         return;
       }
       if (!queue.isEmpty) {
+        // Another row with another song: the queue allows the same song twice, and picking the
+        // copy would replay the song that just ended.
         final current = queue.index;
-        var pick = current;
-        while (pick == current) {
-          pick = _random.nextInt(queue.length);
+        final currentTitle = queue.current?.trackId;
+        final candidates = [
+          for (var index = 0; index < queue.length; index++)
+            if (index != current && queue.entries[index].trackId != currentTitle) index,
+        ];
+        if (candidates.isEmpty) {
+          try {
+            await player.seek(Duration.zero);
+            await player.play();
+          } catch (error) {
+            failure = 'Das Lied konnte nicht gespielt werden: $error';
+          }
+          _changes.add(null);
+          return;
         }
-        queue.index = pick;
+        queue.index = candidates[_random.nextInt(candidates.length)];
         try {
           await playCurrent();
         } catch (error) {
