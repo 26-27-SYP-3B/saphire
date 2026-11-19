@@ -180,6 +180,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
       // The names the menu offers come from the server, so they are read with the library. A
       // page that guesses them would show playlists that are not there.
       _loadPlaylists();
+    } else if (widget.initialTrackId != null) {
+      // A link names a song in the server library; without a server it cannot be opened, and
+      // saying so is better than silently opening the device library.
+      _openedLink = true;
+      _note = 'Das verlinkte Lied ist nicht in der Bibliothek.';
     }
   }
 
@@ -236,6 +241,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
       return;
     }
     await _play(linked);
+    // A failed queue call or a refused token must not consume the link for good: a later read
+    // (the retry on the page) tries the song again instead of silently forgetting it.
+    if (widget.queue.current?.trackId != linked.id) _openedLink = false;
   }
 
   /// The names the menu can offer. A page that has not read them shows only the queue, and
@@ -246,7 +254,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
       final playlists = await widget.playlists.list();
       if (mounted) setState(() => _playlists = playlists);
     } on PlaylistException catch (error) {
-      if (mounted) {
+      // A note about a link that could not be opened is the more specific answer; a failed
+      // playlist read must not replace it.
+      if (mounted && _note == null) {
         setState(() {
           _note = error.message;
           _noteIsReadError = false;
