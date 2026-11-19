@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/storage/session_store.dart';
 import '../../../core/storage/settings_store.dart';
+import '../../../core/utils/audio_format.dart';
 import '../../../core/utils/pick_audio.dart';
 import '../../../shared/widgets/app_shell.dart';
 import '../../playlists/data/playlist_repository.dart';
@@ -28,9 +29,9 @@ String artistOf(Track track) => track.artist.isNotEmpty
     ? track.artist
     : (looksLikeFileName(track.title) ? artistFromName(track.title) : '');
 
-/// The extensions the server accepts (see api-docs.md), so a title ending in one of them is
+/// The extensions a song can have (see `audioExtensions`), so a title ending in one of them is
 /// the name it was stored under rather than a tagged title.
-const fileExtensions = ['mp3', 'wav', 'm4a', 'ogg', 'opus', 'flac', 'aac'];
+final fileExtensions = [for (final extension in audioExtensions) extension.substring(1)];
 
 bool looksLikeFileName(String title) {
   final dot = title.lastIndexOf('.');
