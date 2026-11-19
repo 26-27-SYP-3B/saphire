@@ -9,6 +9,7 @@ import 'package:saphire_client/features/auth/data/auth_repository.dart';
 import 'package:saphire_client/features/auth/domain/user.dart';
 import 'package:saphire_client/features/auth/presentation/auth_screen.dart';
 import 'package:saphire_client/features/home/presentation/home_screen.dart';
+import 'package:saphire_client/features/library/presentation/library_screen.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
 
 import '../../support/stub_adapter.dart';
@@ -224,6 +225,52 @@ void main() {
     router.go('/home');
     await tester.pumpAndSettle();
     expect(find.byType(HomeScreen), findsOneWidget);
+  });
+
+  // A link into the app survives the form: the login returns to what was asked for, and a song
+  // the link named is the one the library opens. Without the "from" the user would land on the
+  // home screen and have to find the song again.
+  testWidgets('a link survives the login and opens the song it names', (tester) async {
+    final repository = FakeRepository(null);
+    final wiring = Wiring(
+      repository.session,
+      libraryAdapter: StubAdapter(200, [
+        {'id': 8.0, 'title': 'Technogal.mp3', 'artist': 'Kraftwerk'},
+      ]),
+      queueAdapter: StubAdapter(200, [
+        {'position': 1.0, 'track_id': 8.0, 'title': 'Technogal.mp3', 'artist': 'Kraftwerk'},
+      ]),
+    );
+    addTearDown(wiring.dispose);
+
+    final router = buildRouter(
+      auth: repository,
+      uploads: UploadRepository(Dio(), repository.session),
+      library: wiring.library,
+      playlists: wiring.playlists,
+      queues: wiring.queues,
+      queue: wiring.queue,
+      player: wiring.player,
+      session: repository.session,
+      settings: withServer(),
+      dio: Dio(),
+    );
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+
+    // The link names a song, so the form comes first.
+    router.go('/library?track=8');
+    await tester.pumpAndSettle();
+    expect(find.byType(AuthScreen), findsOneWidget);
+
+    await fillForm(tester);
+    await submit(tester, 'Anmelden');
+
+    // Back at the library, with the song from the link in the queue.
+    expect(find.byType(LibraryScreen), findsOneWidget);
+    expect(find.text('Technogal.mp3'), findsWidgets);
+    expect(wiring.queue.current?.trackId, 8);
   });
 
   // Local mode has no account, so the guard must let the app reach the home screen. The
