@@ -789,6 +789,21 @@ void main() {
     expect(find.text('Bohne'), findsWidgets);
   });
 
+  // Without a server there is no library the link could name, so it says so instead of quietly
+  // opening the device pages.
+  testWidgets('a link in local mode says the song is not in the library', (tester) async {
+    final audio = FakePlayer();
+    await openLibrary(
+      tester,
+      audio: audio,
+      settings: SettingsStore()..save(localMode: true),
+      initialTrackId: 8,
+    );
+
+    expect(find.text('Das verlinkte Lied ist nicht in der Bibliothek.'), findsOneWidget);
+    expect(audio.opened, isEmpty);
+  });
+
   // A link to a song that is no longer in the library must not open a different one; it says
   // what is missing and leaves the page as it is.
   testWidgets('a link to a missing song says so and plays nothing', (tester) async {
