@@ -35,9 +35,36 @@ import '../../support/wiring.dart';
 // The artist and the length are what the server read out of the file (api-docs.md,
 // GET /api/music); the row with no length shows a dash instead of a guess.
 const libraryAnswer = [
-  {'id': 4.0, 'title': 'Neutrone (Remix)', 'artist': 'Kraftwerk', 'duration_ms': 215000.0, 'uploaded_at': 300.0},
-  {'id': 8.0, 'title': 'Alle Songs', 'artist': 'Zukunft', 'duration_ms': 0.0, 'uploaded_at': 200.0},
-  {'id': 9.0, 'title': 'Bohne', 'artist': 'Anna', 'duration_ms': 121000.0, 'uploaded_at': 100.0},
+  {
+    'id': 4.0,
+    'title': 'Neutrone (Remix)',
+    'artist': 'Kraftwerk',
+    'album': 'Trans Europa Express',
+    'genre': 'Elektronik',
+    'year': 1977.0,
+    'duration_ms': 215000.0,
+    'uploaded_at': 300.0,
+  },
+  {
+    'id': 8.0,
+    'title': 'Alle Songs',
+    'artist': 'Zukunft',
+    'album': '',
+    'genre': 'Pop',
+    'year': 0.0,
+    'duration_ms': 0.0,
+    'uploaded_at': 200.0,
+  },
+  {
+    'id': 9.0,
+    'title': 'Bohne',
+    'artist': 'Anna',
+    'album': 'Gemüse',
+    'genre': 'Pop',
+    'year': 2024.0,
+    'duration_ms': 121000.0,
+    'uploaded_at': 100.0,
+  },
 ];
 
 // What POST /api/queue answers for a fill from one song: that song at slot 1. A queue entry
@@ -84,11 +111,12 @@ Future<Wiring> openLibrary(
   SongPlayer? audio,
   SettingsStore? settings,
   LocalLibrary? localLibrary,
+  Size size = const Size(1600, 1200),
   bool settle = true,
 }) async {
   // The test font draws every glyph as wide as the font size, so this page needs
   // more room than the default test window.
-  tester.view..physicalSize = const Size(1600, 1200)..devicePixelRatio = 1.0;
+  tester.view..physicalSize = size..devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
 
@@ -141,6 +169,25 @@ Future<void> pickSort(WidgetTester tester, String key) async {
   await tester.pumpAndSettle();
 }
 
+/// The filter panel is opened by its button; after a pick the label carries the count, so
+/// this only works while no filter is set.
+Future<void> openFilterPanel(WidgetTester tester) async {
+  await tester.tap(find.text('Filter'));
+  await tester.pumpAndSettle();
+}
+
+/// A filter value is drawn as a chip and, for an artist, again in a row, so a pick addresses
+/// the chip by the category it belongs to rather than by the text it shows.
+Future<void> pickFilter(WidgetTester tester, String category, String value) async {
+  final chip = find.byKey(ValueKey('filter-$category-$value'));
+  // The panel scrolls when it is taller than its box, so a category further down has to be
+  // brought into view before it can be tapped.
+  await tester.ensureVisible(chip);
+  await tester.pumpAndSettle();
+  await tester.tap(chip);
+  await tester.pumpAndSettle();
+}
+
 /// The rows as the page shows them, top to bottom. A row can only be told apart by
 /// the text it draws, so the titles are what the order is read from.
 List<String> shownOrder(WidgetTester tester, List<String> titles) {
@@ -164,6 +211,12 @@ void main() {
 
     expect(tracks.map((track) => track.title), ['Neutrone (Remix)', 'Alle Songs', 'Bohne']);
     expect(tracks.first.artist, 'Kraftwerk');
+    expect(tracks.first.album, 'Trans Europa Express');
+    expect(tracks.first.genre, 'Elektronik');
+    expect(tracks.first.year, 1977);
+    // A file that names none of them must not read as one.
+    expect(tracks[1].album, '');
+    expect(tracks[1].year, 0);
     // JSON numbers arrive as double on the web, so the length must survive the cast.
     expect(tracks.first.durationMs, 215000);
     expect(tracks[1].durationMs, 0);
@@ -784,5 +837,161 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(HomeScreen), findsOneWidget);
+  });
+
+  // The filter is read from the songs, so it can only offer what the list can show. A picked
+  // value narrows the list at once and says how many songs are left.
+  testWidgets('the filter narrows the list and shows the hit count', (tester) async {
+    await openLibrary(tester);
+    await openFilterPanel(tester);
+
+    expect(find.byKey(const ValueKey('filter-Interpret-Kraftwerk')), findsOneWidget);
+    expect(find.byKey(const ValueKey('filter-Album-Gemüse')), findsOneWidget);
+    expect(find.byKey(const ValueKey('filter-Genre-Pop')), findsOneWidget);
+    expect(find.byKey(const ValueKey('filter-Erscheinungsjahr-2024')), findsOneWidget);
+
+    await pickFilter(tester, 'Interpret', 'Kraftwerk');
+
+    expect(find.text('Neutrone (Remix)'), findsOneWidget);
+    expect(find.text('Bohne'), findsNothing);
+    expect(find.text('Alle Songs'), findsNothing);
+    expect(find.text('1 von 3 Songs passen zu den Filtern'), findsOneWidget);
+    // The pick stays visible above the list, so the narrowed list says why it is narrow.
+    expect(find.text('Interpret: Kraftwerk'), findsOneWidget);
+  });
+
+  // Two values of one category are an "or"; a second category is an "and" on top.
+  testWidgets('values of a category are combined with or, categories with and', (tester) async {
+    await openLibrary(tester);
+    await openFilterPanel(tester);
+
+    await pickFilter(tester, 'Interpret', 'Kraftwerk');
+    await pickFilter(tester, 'Interpret', 'Anna');
+
+    expect(find.text('Neutrone (Remix)'), findsOneWidget);
+    expect(find.text('Bohne'), findsOneWidget);
+    expect(find.text('Alle Songs'), findsNothing);
+    expect(find.text('2 von 3 Songs passen zu den Filtern'), findsOneWidget);
+
+    // Kraftwerk's genre is Elektronik, Anna's is Pop, so the genre category is an "and" on
+    // top of the artist "or": only Anna's song has both her and Pop.
+    await pickFilter(tester, 'Genre', 'Pop');
+    expect(find.text('Bohne'), findsOneWidget);
+    expect(find.text('Neutrone (Remix)'), findsNothing);
+
+    // The second genre is the "or" that lets the other artist through again.
+    await pickFilter(tester, 'Genre', 'Elektronik');
+    expect(find.text('Neutrone (Remix)'), findsOneWidget);
+    expect(find.text('Bohne'), findsOneWidget);
+  });
+
+  // A missing value is a value: a song without an album is not hidden from every album
+  // filter, it is under "Unbekannt". A song on this device has no tags, so it is there too.
+  testWidgets('a song without metadata is filtered as Unbekannt', (tester) async {
+    final local = LocalLibrary()..add(name: 'Lokales Lied.mp3');
+    await openLibrary(tester, localLibrary: local);
+    await openFilterPanel(tester);
+
+    await pickFilter(tester, 'Album', 'Unbekannt');
+
+    expect(find.text('Alle Songs'), findsOneWidget);
+    expect(find.text('Lokales Lied.mp3'), findsOneWidget);
+    expect(find.text('Neutrone (Remix)'), findsNothing);
+    expect(find.text('Bohne'), findsNothing);
+  });
+
+  testWidgets('the year is a filter value like any other', (tester) async {
+    await openLibrary(tester);
+    await openFilterPanel(tester);
+
+    await pickFilter(tester, 'Erscheinungsjahr', '2024');
+
+    expect(find.text('Bohne'), findsOneWidget);
+    expect(find.text('Neutrone (Remix)'), findsNothing);
+    expect(find.text('Alle Songs'), findsNothing);
+  });
+
+  // Search, filter and sort apply together: the filter decides which songs are in the list,
+  // the search narrows that list, and the sort orders what is left.
+  testWidgets('search and filter apply together, and the reset brings the library back', (tester) async {
+    await openLibrary(tester);
+    await openFilterPanel(tester);
+    await pickFilter(tester, 'Interpret', 'Kraftwerk');
+
+    // Close the panel so the chip row is the only place with the reset button.
+    await tester.tap(find.text('Filter (1)'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'bohne');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Keine Songs gefunden.'), findsOneWidget);
+    expect(find.text('0 von 3 Songs passen zu Suche und Filter'), findsOneWidget);
+
+    // The empty state offers the reset, so the filter can be taken off without going back to
+    // the panel. The search stays, because it is not a filter.
+    await tester.tap(find.widgetWithText(TextButton, 'Filter zurücksetzen').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Bohne'), findsOneWidget);
+    expect(find.text('Neutrone (Remix)'), findsNothing);
+    expect(find.text('1 von 3 Songs passen zur Suche'), findsOneWidget);
+    expect(find.textContaining('Filter:'), findsNothing);
+  });
+
+  // One chip can be taken off on its own, and the last reset takes all of them off.
+  testWidgets('a chip removes one filter, the reset removes all', (tester) async {
+    await openLibrary(tester);
+    await openFilterPanel(tester);
+    await pickFilter(tester, 'Interpret', 'Kraftwerk');
+    await pickFilter(tester, 'Interpret', 'Anna');
+    await tester.tap(find.text('Filter (2)'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Filter Interpret: Anna entfernen'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Neutrone (Remix)'), findsOneWidget);
+    expect(find.text('Bohne'), findsNothing);
+    expect(find.text('Interpret: Anna'), findsNothing);
+    expect(find.text('Interpret: Kraftwerk'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(TextButton, 'Filter zurücksetzen'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Neutrone (Remix)'), findsOneWidget);
+    expect(find.text('Bohne'), findsOneWidget);
+    expect(find.text('Alle Songs'), findsOneWidget);
+    expect(find.text('Interpret: Kraftwerk'), findsNothing);
+    expect(find.text('3 Songs'), findsOneWidget);
+  });
+
+  // A phone in landscape is wide enough for the inline panel by width, but not by height: the
+  // header would overflow the page, so it gets the same overlay as a portrait phone.
+  testWidgets('a wide but short window gets the filter overlay', (tester) async {
+    await openLibrary(tester, size: const Size(844, 390));
+    await openFilterPanel(tester);
+
+    expect(find.byType(BottomSheet), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Anwenden'), findsOneWidget);
+  });
+
+  // On a phone the filter is an overlay with an Apply button, because the list behind it is
+  // not visible while the overlay is open.
+  testWidgets('on a phone the filter is applied from an overlay', (tester) async {
+    await openLibrary(tester, size: const Size(360, 740));
+    await openFilterPanel(tester);
+
+    expect(find.byType(BottomSheet), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Anwenden'), findsOneWidget);
+
+    await pickFilter(tester, 'Interpret', 'Anna');
+    await tester.tap(find.widgetWithText(FilledButton, 'Anwenden'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Bohne'), findsOneWidget);
+    expect(find.text('Neutrone (Remix)'), findsNothing);
+    expect(find.text('Interpret: Anna'), findsOneWidget);
+    expect(find.text('1 von 3 Songs passen zu den Filtern'), findsOneWidget);
   });
 }

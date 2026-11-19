@@ -73,9 +73,16 @@ fn audio_of(count: usize) -> Vec<u8> {
     data
 }
 
-/// A whole MP3 an upload can send: a tag that names a title and an artist, and ten frames.
+/// A whole MP3 an upload can send: a tag that names a title, an artist, an album, a genre and a
+/// year, and ten frames.
 fn tagged_mp3() -> Vec<u8> {
-    let tag = build_id3_tag(&[("TIT2", text_frame(0, "Neutrone (Remix)")), ("TPE1", text_frame(0, "Kraftwerk"))]);
+    let tag = build_id3_tag(&[
+        ("TIT2", text_frame(0, "Neutrone (Remix)")),
+        ("TPE1", text_frame(0, "Kraftwerk")),
+        ("TALB", text_frame(0, "Trans Europa Express")),
+        ("TCON", text_frame(0, "Elektronik")),
+        ("TDRC", text_frame(0, "1977-03-01")),
+    ]);
     [tag, audio_of(10)].concat()
 }
 
@@ -163,12 +170,18 @@ async fn read_range(test: &common::Test, path: &str, token: &str, range: &str) -
 
 /// The fields `api-docs.md` documents for a track, in the documented order. `user_id` is not one
 /// of them, so the two ways of reading a row can only be compared on the fields that are answered.
-fn documented(track: &music::Track) -> (i64, &str, &str, &str, i64, &str, i64, &str, i64) {
+// A tuple is the point: it is the documented order, and a struct would hide that it is a test
+// comparison rather than a second shape the server could answer.
+#[allow(clippy::type_complexity)]
+fn documented(track: &music::Track) -> (i64, &str, &str, &str, &str, &str, i64, i64, &str, i64, &str, i64) {
     (
         track.id,
         &track.uploaded_by,
         &track.title,
         &track.artist,
+        &track.album,
+        &track.genre,
+        track.year,
         track.duration_ms,
         &track.stored_name,
         track.size,
@@ -396,6 +409,9 @@ async fn upload_titles_a_file_by_its_tags_and_falls_back_to_the_name() {
     let tagged = common::decode::<music::Track>(&reply.body);
     assert_eq!(tagged.title, "Neutrone (Remix)", "the answer does not show what the file says: {}", reply.body);
     assert_eq!(tagged.artist, "Kraftwerk", "the answer does not show what the file says: {}", reply.body);
+    assert_eq!(tagged.album, "Trans Europa Express", "the answer does not show the album: {}", reply.body);
+    assert_eq!(tagged.genre, "Elektronik", "the answer does not show the genre: {}", reply.body);
+    assert_eq!(tagged.year, 1977, "the answer does not show the year: {}", reply.body);
     // Ten frames of 1152 samples at 32000 Hz.
     assert_eq!(tagged.duration_ms, 10 * 1152 * 1000 / 32000, "the answer does not show the length the frames give: {}", reply.body);
 
@@ -412,6 +428,9 @@ async fn upload_titles_a_file_by_its_tags_and_falls_back_to_the_name() {
     let plain = common::decode::<music::Track>(&reply.body);
     assert_eq!(plain.title, "Mein Song.mp3", "an untagged file is not titled by the name it was sent with: {}", reply.body);
     assert_eq!(plain.artist, "", "a file that does not name an artist must not report one: {}", reply.body);
+    assert_eq!(plain.album, "", "a file that does not name an album must not report one: {}", reply.body);
+    assert_eq!(plain.genre, "", "a file that does not name a genre must not report one: {}", reply.body);
+    assert_eq!(plain.year, 0, "a file that does not name a year must not report one: {}", reply.body);
     assert_eq!(plain.duration_ms, 10 * 1152 * 1000 / 32000, "an untagged file is not measured: {}", reply.body);
 }
 
@@ -449,8 +468,21 @@ async fn list_answers_the_full_row_ordered_by_id() {
     for id in [5, 2] {
         common::run(&test, move |conn| {
             conn.execute(
-                "INSERT INTO track (id, user_id, title, stored_name, size, content_type, uploaded_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                (id, user.id, format!("song-{id}.wav"), format!("file-{id}.wav"), 1, "audio/wav", now),
+                "INSERT INTO track (id, user_id, title, artist, album, genre, year, stored_name, size, content_type, uploaded_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                (
+                    id,
+                    user.id,
+                    format!("song-{id}.wav"),
+                    format!("artist-{id}"),
+                    format!("album-{id}"),
+                    format!("genre-{id}"),
+                    1900 + id,
+                    format!("file-{id}.wav"),
+                    1,
+                    "audio/wav",
+                    now,
+                ),
             )
             .map_err(db::failure)?;
             Ok(())
@@ -469,14 +501,18 @@ async fn list_answers_the_full_row_ordered_by_id() {
     assert_eq!(entries[1]["title"].as_str(), Some("song-5.wav"), "the titles do not match the ids: {}", reply.body);
 
     // Every row is the full track as the upload answer shows it, including who added it: the
-    // library is shared, so a bare user id would show nothing. A row inserted without tags reads as
-    // an empty artist and a length of 0, which is what the client shows as a dash.
-    for entry in &entries {
+    // library is shared, so a bare user id would show nothing. Distinct album and genre values
+    // prove the two columns are read under the names they are stored in, not only that both are
+    // present.
+    for (entry, id) in entries.iter().zip([2, 5]) {
         let object = entry.as_object().expect("an entry is an object");
-        assert_eq!(object.len(), 9, "an entry does not carry the documented row: {entry}");
+        assert_eq!(object.len(), 12, "an entry does not carry the documented row: {entry}");
         assert_eq!(entry["uploaded_by"].as_str(), Some("lukas"), "an entry does not name who added it: {entry}");
-        assert_eq!(entry["artist"].as_str(), Some(""), "a row without tags does not read as empty: {entry}");
-        assert_eq!(entry["duration_ms"].as_i64(), Some(0), "a row without tags does not read as empty: {entry}");
+        assert_eq!(entry["artist"].as_str(), Some(format!("artist-{id}").as_str()), "an entry lost its artist: {entry}");
+        assert_eq!(entry["album"].as_str(), Some(format!("album-{id}").as_str()), "an entry lost its album: {entry}");
+        assert_eq!(entry["genre"].as_str(), Some(format!("genre-{id}").as_str()), "an entry lost its genre: {entry}");
+        assert_eq!(entry["year"].as_i64(), Some(1900 + id), "an entry lost its year: {entry}");
+        assert_eq!(entry["duration_ms"].as_i64(), Some(0), "an entry without a length does not read as 0: {entry}");
     }
 }
 
@@ -683,12 +719,15 @@ async fn ensure_columns_adds_the_missing_columns_to_an_old_track_table() {
 
     let track = common::run(&test, move |conn| music::get_by_id(conn, track_id)).await;
     assert_eq!(track.artist, "", "an old row read as {track:?}, wanted the empty defaults");
+    assert_eq!(track.album, "", "an old row read as {track:?}, wanted the empty defaults");
+    assert_eq!(track.genre, "", "an old row read as {track:?}, wanted the empty defaults");
+    assert_eq!(track.year, 0, "an old row read as {track:?}, wanted the empty defaults");
     assert_eq!(track.duration_ms, 0, "an old row read as {track:?}, wanted the empty defaults");
 
     // Running it again does not add a column twice, which is why it checks what is already there.
     common::run(&test, |conn| music::ensure_columns(conn).map_err(db::failure)).await;
 
-    for column in ["artist", "duration_ms"] {
+    for column in ["artist", "album", "genre", "year", "duration_ms"] {
         let times = common::run(&test, move |conn| {
             let times: i64 = conn
                 .query_row("SELECT COUNT(*) FROM pragma_table_info('track') WHERE name = ?1", (column,), |row| row.get(0))

@@ -10,6 +10,9 @@ class Track {
     required this.id,
     required this.title,
     this.artist = '',
+    this.album = '',
+    this.genre = '',
+    this.year = 0,
     this.durationMs = 0,
     this.uploadedBy = '',
     this.storedName = '',
@@ -25,6 +28,15 @@ class Track {
   /// What the file's tags name as the artist. Empty when the file does not say one.
   final String artist;
 
+  /// What the file's tags name as the album. Empty when the file does not say one.
+  final String album;
+
+  /// What the file's tags name as the genre. Empty when the file does not say one.
+  final String genre;
+
+  /// The year the tags name, 0 when they name none.
+  final int year;
+
   /// The playing time in milliseconds, 0 when the format cannot be measured.
   final int durationMs;
 
@@ -39,6 +51,9 @@ class Track {
     id: (json['id'] as num).toInt(),
     title: json['title'] as String,
     artist: json['artist'] as String? ?? '',
+    album: json['album'] as String? ?? '',
+    genre: json['genre'] as String? ?? '',
+    year: (json['year'] as num?)?.toInt() ?? 0,
     durationMs: (json['duration_ms'] as num?)?.toInt() ?? 0,
     uploadedBy: json['uploaded_by'] as String? ?? '',
     storedName: json['stored_name'] as String? ?? '',

@@ -222,7 +222,7 @@ curl -X POST localhost:8080/api/music/upload \
 
 | Status | When | Example body |
 |---|---|---|
-| `201 Created` | File saved in the library and the row inserted | `{"id": 4, "uploaded_by": "lukas", "title": "Neutrone (Remix)", "artist": "Kraftwerk", "duration_ms": 261000, "stored_name": "18cfd7db41d243d98cc87c4ab33dded6.mp3", "size": 4237, "content_type": "audio/mpeg", "uploaded_at": 1793974311}` |
+| `201 Created` | File saved in the library and the row inserted | `{"id": 4, "uploaded_by": "lukas", "title": "Neutrone (Remix)", "artist": "Kraftwerk", "album": "Trans Europa Express", "genre": "Elektronik", "year": 1977, "duration_ms": 261000, "stored_name": "18cfd7db41d243d98cc87c4ab33dded6.mp3", "size": 4237, "content_type": "audio/mpeg", "uploaded_at": 1793974311}` |
 | `401 Unauthorized` | Missing `Authorization: Bearer` header | `{"error": "authorization header with a Bearer token is missing"}` |
 | `401 Unauthorized` | Unknown or expired token | `{"error": "session is not valid or expired"}` |
 | `400 Bad Request` | Not `multipart/form-data`, no file, the field is not named `file`, an empty file, a name with no usable characters, or content that is not audio | `{"error": "only audio files are accepted (mp3, wav, m4a, ogg, opus, flac, aac)"}` |
@@ -238,10 +238,13 @@ curl -X POST localhost:8080/api/music/upload \
   is removed again, so a library entry never points at a missing file.
 - `stored_name` is what the file is called inside the library folder; `GET /api/music`
   sends it back, and `GET /api/music/{id}` names it in `Content-Disposition`.
-- `artist` and `duration_ms` are what the file says about itself (`server/src/metadata.rs`):
-  the `TPE1` tag and the length from the frame headers. Only MP3 can be measured from
-  the bytes, so the other accepted containers keep `0`, and a file with no tags keeps an
-  empty artist. A client shows a dash for those rather than a guess.
+- `artist`, `album`, `genre`, `year` and `duration_ms` are what the file says about itself
+  (`server/src/metadata.rs`): the `TPE1`, `TALB`, `TCON` and `TDRC`/`TYER` tags and the length
+  from the frame headers. Only MP3 is read, so the other accepted containers keep `""` and
+  `0`; a file with no tags keeps the same defaults. The client draws a dash for a missing
+  artist or length and offers a missing artist, album, genre or year under the filter value
+  "Unbekannt" (for an untagged file name it may show the `interpret - titel` fallback the
+  library already had).
 - Database schema:
 
   ```sql
@@ -250,6 +253,9 @@ curl -X POST localhost:8080/api/music/upload \
       user_id INTEGER NOT NULL REFERENCES user(id),
       title TEXT NOT NULL,
       artist TEXT NOT NULL DEFAULT '',
+      album TEXT NOT NULL DEFAULT '',
+      genre TEXT NOT NULL DEFAULT '',
+      year INTEGER NOT NULL DEFAULT 0,
       duration_ms INTEGER NOT NULL DEFAULT 0,
       stored_name TEXT NOT NULL UNIQUE,
       size INTEGER NOT NULL,
@@ -279,21 +285,23 @@ Authorization: Bearer <token>
 [
   {
     "id": 4, "uploaded_by": "lukas", "title": "lied.wav", "artist": "",
-    "duration_ms": 0, "stored_name": "18cfd7db41d243d98cc87c4ab33dded6.wav",
+    "album": "", "genre": "", "year": 0, "duration_ms": 0,
+    "stored_name": "18cfd7db41d243d98cc87c4ab33dded6.wav",
     "size": 32, "content_type": "audio/wav", "uploaded_at": 1793974311
   }
 ]
 ```
 
 Every field `POST /api/music/upload` reported is in the answer, including `uploaded_by`
-and `stored_name`. A row without tags reads as an empty artist and a length of `0`,
-which a client shows as a dash rather than a guess.
+and `stored_name`. A row without tags reads as an empty artist, album and genre, a year
+of `0` and a length of `0`; the client draws a dash for the missing artist and length and
+filters the four metadata fields as "Unbekannt".
 
 **Responses**
 
 | Status | When | Example body |
 |---|---|---|
-| `200 OK` | Library listed, ordered by `id` | `[{ "id": 4, "uploaded_by": "lukas", "title": "lied.wav", "artist": "", "duration_ms": 0, "stored_name": "18cfd7db…wav", "size": 32, "content_type": "audio/wav", "uploaded_at": 1793974311 }]` |
+| `200 OK` | Library listed, ordered by `id` | `[{ "id": 4, "uploaded_by": "lukas", "title": "lied.wav", "artist": "", "album": "", "genre": "", "year": 0, "duration_ms": 0, "stored_name": "18cfd7db…wav", "size": 32, "content_type": "audio/wav", "uploaded_at": 1793974311 }]` |
 | `401 Unauthorized` | Missing `Authorization: Bearer` header | `{"error": "authorization header with a Bearer token is missing"}` |
 | `401 Unauthorized` | Unknown or expired token (the row is dropped), or the token's user no longer exists | `{"error": "session is not valid or expired"}` |
 | `429 Too Many Requests` | Rate limit reached (10 requests per IP, refilling 1 token every 12 s — its own bucket). Includes a `Retry-After` header. | `{"error": "too many requests from this address, try again later"}` |

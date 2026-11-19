@@ -20,6 +20,15 @@ import '../domain/local_track.dart';
 /// The three the list can be ordered by. There is nothing else to order by.
 const sortKeys = ['Titel', 'Interpret', 'Hinzugefügt am'];
 
+/// The categories the filter offers, in the order the panel shows them. Every value of a
+/// category is read from the songs themselves, so the filter cannot offer something the list
+/// cannot show.
+const filterKeys = ['Interpret', 'Album', 'Genre', 'Erscheinungsjahr'];
+
+/// What a filter calls a song that does not have a value for a category. It is a real value
+/// that can be picked, not a gap: a song with no genre is still a song the user may want.
+const unknownFilter = 'Unbekannt';
+
 /// The artist shown for a row: what the file's tags name (api-docs.md, the artist field).
 /// Only a title that is still the name the client sent can be read as "interpret - titel",
 /// because that pattern is a naming habit, not something a tag says. A title that came from
@@ -74,6 +83,13 @@ class _Entry {
 
   /// A local file's tags are not read, so the row does not guess an artist from its name.
   String get artist => track == null ? '' : artistOf(track!);
+
+  String get album => track?.album ?? '';
+
+  String get genre => track?.genre ?? '';
+
+  /// 0 where the file names no year, which is every song on this device.
+  int get year => track?.year ?? 0;
 
   String get duration => track == null ? unknownValue : durationOf(track!);
 
@@ -134,6 +150,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
   String _sort = sortKeys.first;
   List<Track> _tracks = [];
   List<Playlist> _playlists = [];
+
+  /// The picked values per category. A category with several values matches songs that have
+  /// any of them; two categories must both match. Empty means no filter, not "nothing".
+  final Map<String, Set<String>> _filters = {};
+
+  /// Whether the wide layout shows the filter panel below the sort. On a phone the panel is
+  /// an overlay instead, so this stays false there.
+  bool _filtersOpen = false;
 
   // What a request answered: an error, or nothing when all is well.
   String? _note;
@@ -323,19 +347,126 @@ class _LibraryScreenState extends State<LibraryScreen> {
     await widget.playlists.addSong(playlistId, track.id);
   });
 
-  /// What the page shows now: the rows that match the search, in the order the sort was
-  /// picked. The songs on this device are part of the same list.
+  /// Every song, server and device, before search and filter. The filter offers its values
+  /// from this list, so a picked value cannot look at a list that is already narrowed by it.
+  List<_Entry> _entries() => [
+    for (final track in _tracks) _Entry.server(track, track.id),
+    for (var index = 0; index < _local.tracks.length; index++)
+      _Entry.local(_local.tracks[index], -index - 1),
+  ];
+
+  /// What a song says for one filter category. A missing value is "Unbekannt", which is a
+  /// filter of its own, so a song without a genre is not hidden from every genre filter.
+  String _filterValue(_Entry entry, String category) => switch (category) {
+    'Interpret' => entry.artist.isEmpty ? unknownFilter : entry.artist,
+    'Album' => entry.album.isEmpty ? unknownFilter : entry.album,
+    'Genre' => entry.genre.isEmpty ? unknownFilter : entry.genre,
+    _ => entry.year == 0 ? unknownFilter : '${entry.year}',
+  };
+
+  /// The values each category offers, read from every song in the list. Ordering is what a
+  /// reader expects: names by name, years newest first, and "Unbekannt" at the end of a year
+  /// list because it is not a year.
+  Map<String, List<String>> _filterOptions() {
+    final entries = _entries();
+    return {
+      for (final category in filterKeys)
+        category: ({
+          for (final entry in entries) _filterValue(entry, category),
+        }.toList()..sort((a, b) {
+          if (category != 'Erscheinungsjahr') return a.toLowerCase().compareTo(b.toLowerCase());
+          if (a == unknownFilter) return 1;
+          if (b == unknownFilter) return -1;
+          return int.parse(b).compareTo(int.parse(a));
+        })),
+    };
+  }
+
+  bool _matchesFilters(_Entry entry) {
+    for (final category in filterKeys) {
+      final chosen = _filters[category];
+      if (chosen == null || chosen.isEmpty) continue;
+      if (!chosen.contains(_filterValue(entry, category))) return false;
+    }
+    return true;
+  }
+
+  void _toggleFilter(Map<String, Set<String>> filters, String category, String value) {
+    final values = filters.putIfAbsent(category, () => <String>{});
+    if (!values.remove(value)) values.add(value);
+    if (values.isEmpty) filters.remove(category);
+  }
+
+  void _removeFilter(String category, String value) {
+    final values = _filters[category];
+    if (values == null) return;
+    values.remove(value);
+    if (values.isEmpty) _filters.remove(category);
+  }
+
+  void _resetFilters() => setState(_filters.clear);
+
+  Map<String, Set<String>> _copyFilters() => {
+    for (final entry in _filters.entries) entry.key: {...entry.value},
+  };
+
+  /// Opens the filter. A phone gets it as an overlay from below (with "Anwenden", because the
+  /// list is behind it); a wide layout gets it inline below the sort and applies on every tap,
+  /// so the list narrows while the filter is still open.
+  Future<void> _openFilters() async {
+    final options = _filterOptions();
+
+    // The panel needs room below the list controls; a phone in landscape is wide but has no
+    // height for it, so it gets the overlay too.
+    final room = MediaQuery.sizeOf(context);
+    if (room.width >= 700 && room.height >= 700) {
+      setState(() => _filtersOpen = !_filtersOpen);
+      return;
+    }
+
+    var picked = _copyFilters();
+    final applied = await showModalBottomSheet<Map<String, Set<String>>>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheet) => Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+          child: _filterPanel(
+            options: options,
+            selected: picked,
+            onToggle: (category, value) => setSheet(() => _toggleFilter(picked, category, value)),
+            onReset: () => setSheet(() {
+              picked = {};
+            }),
+            onApply: () => Navigator.pop(sheetContext, {
+              for (final entry in picked.entries) entry.key: {...entry.value},
+            }),
+          ),
+        ),
+      ),
+    );
+
+    if (applied != null && mounted) {
+      setState(() {
+        _filters
+          ..clear()
+          ..addAll(applied);
+      });
+    }
+  }
+
+  /// What the page shows now: the rows that match the search and every picked filter, in the
+  /// order the sort was picked. The songs on this device are part of the same list, so the
+  /// filter applies to both sources.
   List<_Entry> _visible() {
     final query = _search.text.trim().toLowerCase();
-    final rows = <_Entry>[
-      for (final track in _tracks)
-        if (query.isEmpty ||
-            track.title.toLowerCase().contains(query) ||
-            artistOf(track).toLowerCase().contains(query))
-          _Entry.server(track, track.id),
-      for (var index = 0; index < _local.tracks.length; index++)
-        if (query.isEmpty || _local.tracks[index].title.toLowerCase().contains(query))
-          _Entry.local(_local.tracks[index], -index - 1),
+    final rows = [
+      for (final entry in _entries())
+        if ((query.isEmpty ||
+                entry.title.toLowerCase().contains(query) ||
+                entry.artist.toLowerCase().contains(query)) &&
+            _matchesFilters(entry))
+          entry,
     ];
 
     // Names and artists are compared without case, so "ahne" comes before "Zehn" the way a
@@ -366,12 +497,89 @@ class _LibraryScreenState extends State<LibraryScreen> {
     return rows;
   }
 
+  /// The filter itself, used inline on a wide layout and inside the phone's overlay. The
+  /// footer's buttons are different because only the phone has to apply a whole selection at
+  /// once; the wide layout has already narrowed the list while the chips were tapped.
+  Widget _filterPanel({
+    required Map<String, List<String>> options,
+    required Map<String, Set<String>> selected,
+    required void Function(String category, String value) onToggle,
+    required VoidCallback onReset,
+    VoidCallback? onApply,
+  }) {
+    final theme = Theme.of(context);
+
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.all(12),
+      constraints: const BoxConstraints(maxHeight: 320),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainer,
+        border: Border.all(color: theme.colorScheme.outline),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // The categories scroll; the buttons stay put, so "Anwenden" is reachable without
+          // scrolling past every value.
+          Flexible(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final category in filterKeys)
+                    if ((options[category] ?? const []).isNotEmpty) ...[
+                      Text(category, style: theme.textTheme.labelLarge),
+                      const SizedBox(height: 4),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          for (final value in options[category]!)
+                            FilterChip(
+                              key: ValueKey('filter-$category-$value'),
+                              label: Text(value),
+                              selected: selected[category]?.contains(value) ?? false,
+                              onSelected: (_) => onToggle(category, value),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                ],
+              ),
+            ),
+          ),
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              TextButton(
+                onPressed: selected.isEmpty ? null : onReset,
+                child: const Text('Filter zurücksetzen'),
+              ),
+              if (onApply != null) FilledButton(onPressed: onApply, child: const Text('Anwenden')),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final rows = _visible();
     final total = _tracks.length + _local.tracks.length;
+    final filtering = _filters.isNotEmpty;
+    final searching = _search.text.trim().isNotEmpty;
+    final filterCount = _filters.values.fold<int>(0, (sum, values) => sum + values.length);
+    final room = MediaQuery.sizeOf(context);
+    final narrow = room.width < 700 || room.height < 700;
 
     return AppShell(
       selected: '/library',
@@ -397,9 +605,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 // this line says nothing until something is actually there.
                 if (!_loading && total > 0)
                   Text(
-                    _search.text.trim().isEmpty
+                    !filtering && !searching
                         ? '$total Songs'
-                        : '${rows.length} von $total Songs passen zur Suche',
+                        : '${rows.length} von $total Songs passen '
+                              '${filtering && searching ? 'zu Suche und Filter' : filtering ? 'zu den Filtern' : 'zur Suche'}',
                     style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
                   ),
               ],
@@ -439,8 +648,46 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
-                  children: [for (final key in sortKeys) _sortChip(key)],
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    for (final key in sortKeys) _sortChip(key),
+                    OutlinedButton.icon(
+                      onPressed: _openFilters,
+                      icon: const Icon(Icons.filter_list, size: 18),
+                      label: Text(filterCount == 0 ? 'Filter' : 'Filter ($filterCount)'),
+                    ),
+                  ],
                 ),
+                // The picked values stay visible above the list, so a narrowed list always
+                // says why it is narrow. Each chip can be taken off on its own; the button
+                // takes all of them off at once.
+                if (_filters.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      for (final category in filterKeys)
+                        for (final value in _filters[category] ?? const <String>{})
+                          InputChip(
+                            label: Text('$category: $value'),
+                            onDeleted: () => setState(() => _removeFilter(category, value)),
+                            deleteButtonTooltipMessage: 'Filter $category: $value entfernen',
+                          ),
+                      TextButton(onPressed: _resetFilters, child: const Text('Filter zurücksetzen')),
+                    ],
+                  ),
+                ],
+                // A wide layout keeps the filter open below the list controls; the phone puts
+                // the same panel in an overlay instead.
+                if (_filtersOpen && !narrow)
+                  _filterPanel(
+                    options: _filterOptions(),
+                    selected: _filters,
+                    onToggle: (category, value) => setState(() => _toggleFilter(_filters, category, value)),
+                    onReset: _resetFilters,
+                  ),
               ],
             ),
           ),
@@ -533,6 +780,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Widget _empty() {
     final theme = Theme.of(context);
+    final emptyLibrary = _tracks.isEmpty && _local.tracks.isEmpty;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
@@ -541,15 +789,27 @@ class _LibraryScreenState extends State<LibraryScreen> {
         children: [
           // Where a message above already says what went wrong, nothing here claims what the
           // library holds — that would be the page lying about an answer it never got.
-          if (_note == null)
+          if (_note == null) ...[
             Text(
-              _tracks.length + _local.tracks.length == 0
+              emptyLibrary
                   ? (_settings.localMode
-                      ? 'Die Bibliothek ist noch leer. Füge auf der Startseite lokale Songs hinzu.'
-                      : 'Die Bibliothek ist noch leer. Lade einen Song hoch, um sie zu füllen.')
+                        ? 'Die Bibliothek ist noch leer. Füge auf der Startseite lokale Songs hinzu.'
+                        : 'Die Bibliothek ist noch leer. Lade einen Song hoch, um sie zu füllen.')
+                  : _filters.isNotEmpty
+                  ? 'Keine Songs gefunden.'
                   : 'Keine Songs passen zur Suche.',
               style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
+            // A filter the user set can hide every song, and the list behind this message is
+            // not the place to take it off again.
+            if (!emptyLibrary && _filters.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(onPressed: _resetFilters, child: const Text('Filter zurücksetzen')),
+              ),
+            ],
+          ],
         ],
       ),
     );
