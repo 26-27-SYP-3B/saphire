@@ -42,12 +42,6 @@ class _PlayerViewState extends State<PlayerView> {
   /// would stand still while the song runs.
   Duration _at = Duration.zero;
 
-  // What this view set as the volume. The player is the thing that turns it down, but a slider
-  // needs the value it last had. The value before muting is kept, so "Ton an" returns to what the
-  // listener had, not to full volume.
-  double _volume = 1.0;
-  double _volumeBeforeMute = 1.0;
-
   // Where the thumb is while a finger is on the progress bar. The position stream keeps running,
   // so without this the thumb would be pulled back under the finger.
   double? _drag;
@@ -85,14 +79,14 @@ class _PlayerViewState extends State<PlayerView> {
     }
   }
 
+  // The volume belongs to the player, not this page: the page is recreated while the audio keeps
+  // playing, and a slider that started at its default would show a volume that is not set.
   void _setVolume(double value) {
-    // 0 is the mute button's value; the slider's last real value is what unmuting returns to.
-    if (value > 0) _volumeBeforeMute = value;
-    setState(() => _volume = value);
+    setState(() {});
     _run(() => widget.player.setVolume(value));
   }
 
-  void _toggleMute() => _setVolume(_volume > 0 ? 0 : (_volumeBeforeMute > 0 ? _volumeBeforeMute : 1));
+  void _toggleMute() => _setVolume(widget.player.volume > 0 ? 0 : widget.player.volumeBeforeMute);
 
   @override
   Widget build(BuildContext context) {
@@ -117,14 +111,20 @@ class _PlayerViewState extends State<PlayerView> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title ?? 'Nichts wird abgespielt', style: theme.textTheme.titleMedium),
                     Text(
-                      // shortcut: the acceptance criteria ask for an Interpret, but neither a queue
-                      // answer nor a picked file names one, so this line says where the song is.
-                      // Upgrade: `artist` in the queue response (api-docs.md), then this line shows
-                      // it. The player names the line, so the bar and this view agree.
+                      title ?? 'Nichts wird abgespielt',
+                      style: theme.textTheme.titleMedium,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      // The artist from the queue answer when it names one, otherwise the slot or
+                      // the reason nothing is playing. The player names the line, so the bar and
+                      // this view agree.
                       _note ?? widget.player.statusNote,
                       style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 ),
@@ -178,8 +178,8 @@ class _PlayerViewState extends State<PlayerView> {
                 icon: const Icon(Icons.skip_previous),
               ),
               IconButton(
-                // The ten-second jumps are what a phone has buttons for; a song is not restarted by
-                // them, only moved inside itself.
+                // The ten-second jumps move inside the song. A forward jump that would land past
+                // the end starts the next song instead (see QueuePlayer.skip).
                 tooltip: '10 Sekunden zurück',
                 onPressed: total == Duration.zero || _busy ? null : () => _run(() => widget.player.skip(const Duration(seconds: -10))),
                 icon: const Icon(Icons.replay_10),
@@ -216,14 +216,14 @@ class _PlayerViewState extends State<PlayerView> {
               Expanded(
                 child: Slider(
                   max: 1,
-                  value: _volume,
+                  value: widget.player.volume,
                   onChanged: _busy ? null : _setVolume,
                 ),
               ),
               IconButton(
-                tooltip: _volume == 0 ? 'Ton an' : 'Stumm',
+                tooltip: widget.player.volume == 0 ? 'Ton an' : 'Stumm',
                 onPressed: _busy ? null : _toggleMute,
-                icon: Icon(_volume == 0 ? Icons.volume_off : Icons.volume_up),
+                icon: Icon(widget.player.volume == 0 ? Icons.volume_off : Icons.volume_up),
               ),
             ],
           ),

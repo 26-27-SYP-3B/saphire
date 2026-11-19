@@ -789,9 +789,9 @@ class _QueuePanelState extends State<QueuePanel> {
   /// A row, whether it is the one that is playing or one that comes next. The current row is the
   /// highlighted one, because it is the only thing on this page that is happening now.
   ///
-  /// shortcut: the queue answer has no cover and no artist (api-docs.md), so the tile is the
-  /// placeholder the start page already uses and the line under the title says what the answer
-  /// does have. Upgrade: cover and artist when the library rows carry them.
+  /// The queue answer names the artist but no cover (api-docs.md), so the tile is the placeholder
+  /// the start page already uses and the line under the title is the artist when there is one.
+  /// shortcut: no cover per song. Upgrade: a cover on the library row, then the tile can show it.
   Widget _content(QueueEntry entry, {bool dropOn = false}) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;

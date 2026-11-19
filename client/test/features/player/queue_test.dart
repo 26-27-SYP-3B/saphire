@@ -18,8 +18,8 @@ import '../../support/fake_player.dart';
 import '../../support/stub_adapter.dart';
 import '../../support/wiring.dart';
 
-// A queue answer as the server sends it: position, track_id, title, and nothing that says
-// what filled it or what was played before.
+// A queue answer as the server sends it: position, track_id, title and artist, and nothing that
+// says what filled it or what was played before.
 const queueAnswer = [
   {'position': 1.0, 'track_id': 8.0, 'title': 'Technogal.mp3'},
   {'position': 2.0, 'track_id': 4.0, 'title': 'lied.wav'},
@@ -1152,5 +1152,13 @@ void main() {
     await tester.tap(button);
     await tester.pumpAndSettle();
     expect(find.byType(QueuePanel), findsNothing);
+  });
+
+  // The artist belongs to the song, so a row that moves or becomes a hand-added row keeps it.
+  test('a queue row keeps its artist when it moves or is marked manual', () {
+    const row = QueueEntry(position: 1, trackId: 8, title: 'Technogal.mp3', artist: 'Kraftwerk');
+
+    expect(row.withPosition(3).artist, 'Kraftwerk');
+    expect(row.asManual().artist, 'Kraftwerk');
   });
 }
