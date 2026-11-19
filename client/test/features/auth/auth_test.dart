@@ -9,8 +9,10 @@ import 'package:saphire_client/features/auth/data/auth_repository.dart';
 import 'package:saphire_client/features/auth/domain/user.dart';
 import 'package:saphire_client/features/auth/presentation/auth_screen.dart';
 import 'package:saphire_client/features/home/presentation/home_screen.dart';
+import 'package:saphire_client/features/library/presentation/library_screen.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
 
+import '../../support/fake_player.dart';
 import '../../support/stub_adapter.dart';
 import '../../support/wiring.dart';
 
@@ -224,6 +226,132 @@ void main() {
     router.go('/home');
     await tester.pumpAndSettle();
     expect(find.byType(HomeScreen), findsOneWidget);
+  });
+
+  // A link into the app survives the form: the login returns to what was asked for, and a song
+  // the link named is the one the library opens. Without the "from" the user would land on the
+  // home screen and have to find the song again.
+  testWidgets('a link survives the login and opens the song it names', (tester) async {
+    final repository = FakeRepository(null);
+    final audio = FakePlayer();
+    final wiring = Wiring(
+      repository.session,
+      libraryAdapter: StubAdapter(200, [
+        {'id': 8.0, 'title': 'Technogal.mp3', 'artist': 'Kraftwerk'},
+      ]),
+      playlistAdapter: StubAdapter(200, <Object>[]),
+      queueAdapter: StubAdapter(200, [
+        {'position': 1.0, 'track_id': 8.0, 'title': 'Technogal.mp3', 'artist': 'Kraftwerk'},
+      ]),
+      audio: audio,
+    );
+    addTearDown(wiring.dispose);
+
+    final router = buildRouter(
+      auth: repository,
+      uploads: UploadRepository(Dio(), repository.session),
+      library: wiring.library,
+      playlists: wiring.playlists,
+      queues: wiring.queues,
+      queue: wiring.queue,
+      player: wiring.player,
+      session: repository.session,
+      settings: withServer(),
+      dio: Dio(),
+    );
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+
+    // The link names a song, so the form comes first.
+    router.go('/library?track=8');
+    await tester.pumpAndSettle();
+    expect(find.byType(AuthScreen), findsOneWidget);
+
+    await fillForm(tester);
+    await submit(tester, 'Anmelden');
+
+    // Back at the library, with the song from the link in the queue.
+    expect(find.byType(LibraryScreen), findsOneWidget);
+    expect(find.text('Technogal.mp3'), findsWidgets);
+    expect(wiring.queue.current?.trackId, 8);
+    expect(audio.played, isNotEmpty);
+  });
+
+  // The link is not lost by switching to the register form: registering from it still ends on
+  // the song the link named.
+  testWidgets('a link survives switching to register', (tester) async {
+    final repository = FakeRepository(null);
+    final wiring = Wiring(
+      repository.session,
+      libraryAdapter: StubAdapter(200, [
+        {'id': 8.0, 'title': 'Technogal.mp3', 'artist': 'Kraftwerk'},
+      ]),
+      playlistAdapter: StubAdapter(200, <Object>[]),
+      queueAdapter: StubAdapter(200, [
+        {'position': 1.0, 'track_id': 8.0, 'title': 'Technogal.mp3', 'artist': 'Kraftwerk'},
+      ]),
+    );
+    addTearDown(wiring.dispose);
+
+    final router = buildRouter(
+      auth: repository,
+      uploads: UploadRepository(Dio(), repository.session),
+      library: wiring.library,
+      playlists: wiring.playlists,
+      queues: wiring.queues,
+      queue: wiring.queue,
+      player: wiring.player,
+      session: repository.session,
+      settings: withServer(),
+      dio: Dio(),
+    );
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+
+    router.go('/library?track=8');
+    await tester.pumpAndSettle();
+    expect(find.byType(AuthScreen), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(TextButton, 'Registrieren'));
+    await tester.pumpAndSettle();
+    await fillForm(tester);
+    await submit(tester, 'Registrieren');
+
+    expect(find.byType(LibraryScreen), findsOneWidget);
+    expect(wiring.queue.current?.trackId, 8);
+  });
+
+  // A "from" that names another host, an unknown page or an encoded separator is ignored: the
+  // login goes home instead of becoming a redirect to something the app does not own.
+  testWidgets('an unsafe link target is not followed', (tester) async {
+    final repository = FakeRepository(null);
+    repository.session.save('f' * 64, DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch ~/ 1000);
+    final wiring = Wiring(repository.session);
+    addTearDown(wiring.dispose);
+
+    final router = buildRouter(
+      auth: repository,
+      uploads: UploadRepository(Dio(), repository.session),
+      library: wiring.library,
+      playlists: wiring.playlists,
+      queues: wiring.queues,
+      queue: wiring.queue,
+      player: wiring.player,
+      session: repository.session,
+      settings: withServer(),
+      dio: Dio(),
+    );
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+
+    for (final from in ['https://evil.example', '//evil.example', '/nope', '/%2F%2Fevil.example', '/\\evil.example']) {
+      router.go('/login?from=${Uri.encodeComponent(from)}');
+      await tester.pumpAndSettle();
+      expect(find.byType(HomeScreen), findsOneWidget, reason: from);
+    }
   });
 
   // Local mode has no account, so the guard must let the app reach the home screen. The

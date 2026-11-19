@@ -33,6 +33,22 @@ import '../features/upload/data/upload_repository.dart';
 /// belong to the whole app, so the bar at the bottom of every page shows the same list a
 /// playlist just filled. A route that made its own queue would lose it on the next
 /// navigation.
+/// The pages a login may return to. A "from" address is a path in this app, never an absolute
+/// URL or a path the router does not know: either would turn the login form into a redirect to
+/// something the user never asked for, or into an error page.
+const _fromPaths = {'/home', '/library', '/playlists', '/settings'};
+
+String? _safeFrom(String? value) {
+  if (value == null || value.isEmpty || value.contains('\\')) return null;
+  // Encoded separators can turn into the same path only after decoding, which is too late.
+  final lower = value.toLowerCase();
+  if (lower.contains('%2f') || lower.contains('%5c')) return null;
+  final uri = Uri.tryParse(value);
+  if (uri == null || uri.hasScheme || uri.hasAuthority) return null;
+  if (!_fromPaths.contains(uri.path)) return null;
+  return value;
+}
+
 GoRouter buildRouter({
   required AuthRepository auth,
   required UploadRepository uploads,
@@ -67,11 +83,12 @@ GoRouter buildRouter({
       final atAuthPage = state.matchedLocation == '/login' || state.matchedLocation == '/register';
       // A session restored from the last run skips the form; a browser that
       // reloads on the login page has no session left and stays there.
-      if (loggedIn && atAuthPage) return '/home';
+      // A link that landed on the form first sends the user back to what they asked for.
+      if (loggedIn && atAuthPage) return _safeFrom(state.uri.queryParameters['from']) ?? '/home';
       // The setup is the page that finds the first server, so it stays reachable
       // without a session – and so does the home screen in local mode.
       if (!loggedIn && !atAuthPage && state.matchedLocation != '/setup' && !settingsStore.localMode) {
-        return '/login';
+        return '/login?from=${Uri.encodeComponent(state.uri.toString())}';
       }
       return null;
     },
@@ -86,11 +103,21 @@ GoRouter buildRouter({
       ),
       GoRoute(
         path: '/login',
-        builder: (context, state) => AuthScreen(repository: auth, mode: AuthMode.login, settings: settingsStore),
+        builder: (context, state) => AuthScreen(
+          repository: auth,
+          mode: AuthMode.login,
+          settings: settingsStore,
+          from: _safeFrom(state.uri.queryParameters['from']),
+        ),
       ),
       GoRoute(
         path: '/register',
-        builder: (context, state) => AuthScreen(repository: auth, mode: AuthMode.register, settings: settingsStore),
+        builder: (context, state) => AuthScreen(
+          repository: auth,
+          mode: AuthMode.register,
+          settings: settingsStore,
+          from: _safeFrom(state.uri.queryParameters['from']),
+        ),
       ),
       GoRoute(
         path: '/home',
@@ -137,6 +164,7 @@ GoRouter buildRouter({
           session: session,
           settings: settingsStore,
           localLibrary: localLibrary,
+          initialTrackId: int.tryParse(state.uri.queryParameters['track'] ?? ''),
         ),
       ),
     ],

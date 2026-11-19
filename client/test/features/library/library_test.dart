@@ -84,6 +84,7 @@ Future<Wiring> openLibrary(
   SongPlayer? audio,
   SettingsStore? settings,
   LocalLibrary? localLibrary,
+  int? initialTrackId,
   bool settle = true,
 }) async {
   // The test font draws every glyph as wide as the font size, so this page needs
@@ -122,6 +123,7 @@ Future<Wiring> openLibrary(
         pickAudio: pickAudio ?? (() async => [(name: 'song.mp3', bytes: Uint8List.fromList([1, 2, 3]))]),
         settings: settings,
         localLibrary: localLibrary ?? LocalLibrary(),
+        initialTrackId: initialTrackId,
       ),
     ),
   );
@@ -715,6 +717,48 @@ void main() {
     expect(audio.opened, hasLength(1));
     expect(audio.played, hasLength(2));
     expect(find.descendant(of: find.byType(PlayerBar), matching: find.text('lokal.mp3')), findsOneWidget);
+  });
+
+  // A shared link names a song, not a page: opening it is the same as tapping that row, so the
+  // song is in the queue and the player has opened its stream.
+  testWidgets('a link opens the library at the song it names', (tester) async {
+    final audio = FakePlayer();
+    final wiring = await openLibrary(
+      tester,
+      audio: audio,
+      queues: StubAdapter(200, queueFor(9, 'Bohne')),
+      initialTrackId: 9,
+    );
+
+    expect(wiring.queue.current?.trackId, 9);
+    expect(audio.opened, ['$apiBaseUrl/api/music/9']);
+    // The row and the bar at the bottom both name the song that is now playing.
+    expect(find.text('Bohne'), findsWidgets);
+  });
+
+  // Without a server there is no library the link could name, so it says so instead of quietly
+  // opening the device pages.
+  testWidgets('a link in local mode says the song is not in the library', (tester) async {
+    final audio = FakePlayer();
+    await openLibrary(
+      tester,
+      audio: audio,
+      settings: SettingsStore()..save(localMode: true),
+      initialTrackId: 8,
+    );
+
+    expect(find.text('Das verlinkte Lied ist nicht in der Bibliothek.'), findsOneWidget);
+    expect(audio.opened, isEmpty);
+  });
+
+  // A link to a song that is no longer in the library must not open a different one; it says
+  // what is missing and leaves the page as it is.
+  testWidgets('a link to a missing song says so and plays nothing', (tester) async {
+    final audio = FakePlayer();
+    await openLibrary(tester, audio: audio, initialTrackId: 999);
+
+    expect(find.text('Das verlinkte Lied ist nicht in der Bibliothek.'), findsOneWidget);
+    expect(audio.opened, isEmpty);
   });
 
   // Every page draws the same items from nav_bar.dart, so a page can only be opened where

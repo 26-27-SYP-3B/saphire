@@ -11,10 +11,14 @@ enum AuthMode { register, login }
 
 /// The register and login window.
 class AuthScreen extends StatefulWidget {
-  const AuthScreen({super.key, required this.repository, required this.mode, this.settings});
+  const AuthScreen({super.key, required this.repository, required this.mode, this.settings, this.from});
 
   final AuthRepository repository;
   final AuthMode mode;
+
+  /// The page a link asked for before the login. The router only hands over a path inside the
+  /// app, so a successful login returns there instead of always to the home screen.
+  final String? from;
 
   /// What the app remembers about running without a server. A test that only checks the
   /// form can leave it out; the store then stays in memory.
@@ -63,7 +67,7 @@ class _AuthScreenState extends State<AuthScreen> {
       // A login is the way out of local mode, so the guard lets the next restart start
       // on the login form again instead of opening the home screen without an account.
       await widget.settings?.save(localMode: false);
-      if (mounted) context.go('/home');
+      if (mounted) context.go(widget.from ?? '/home');
     } on AuthException catch (error) {
       if (mounted) setState(() => _note = error.message);
     } finally {
@@ -84,7 +88,11 @@ class _AuthScreenState extends State<AuthScreen> {
       note: _note,
       linkQuestion: isRegister ? 'Schon ein Konto?' : 'Noch kein Konto?',
       linkLabel: isRegister ? 'Anmelden' : 'Registrieren',
-      linkTo: isRegister ? '/login' : '/register',
+      // The way to the other form keeps the link that led here, so registering after a shared
+      // link still ends on the song.
+      linkTo: widget.from == null
+          ? (isRegister ? '/login' : '/register')
+          : '${isRegister ? '/login' : '/register'}?from=${Uri.encodeComponent(widget.from!)}',
       // The way into local mode: no account, no server, the songs from the device. The
       // guided setup (a later screen) lands in the same place.
       footer: TextButton(
