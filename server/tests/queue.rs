@@ -107,10 +107,17 @@ async fn queue_is_only_songs_and_order() {
     assert_eq!(reply.status, StatusCode::OK, "fill from an empty playlist -> {} ({})", reply.status, reply.body);
     assert_eq!(reply.body.trim(), "[]", "an empty queue must answer as an empty array, not null: {}", reply.body);
 
-    // An entry has position, track_id and title and nothing else. There is no field that
-    // could say what filled the queue, so any source produces the same shape.
+    // An entry has position, track_id, title and artist and nothing else. There is no field
+    // that could say what filled the queue, so any source produces the same shape.
     let track = upload_track(&test, &token, "lied.wav").await;
     let track_id = track.id;
+    // The upload of a WAV carries no tags, so give the row an artist the answer has to show.
+    common::run(&test, move |conn| {
+        conn.execute("UPDATE track SET artist = 'Kraftwerk' WHERE id = ?1", (track_id,))
+            .map_err(db::failure)?;
+        Ok(())
+    })
+    .await;
     common::post(&test, "/api/queue/songs", &format!(r#"{{"track_id": {track_id}}}"#), &token).await;
 
     let reply = common::get(&test, "/api/queue", &token).await;
@@ -121,7 +128,17 @@ async fn queue_is_only_songs_and_order() {
     let object = rows[0].as_object().expect("the entry is an object");
     let mut keys: Vec<&str> = object.keys().map(String::as_str).collect();
     keys.sort_unstable();
-    assert_eq!(keys, ["position", "title", "track_id"], "an entry carries {keys:?}, which would record where it came from");
+    assert_eq!(
+        keys,
+        ["artist", "position", "title", "track_id"],
+        "an entry carries {keys:?}, which would record where it came from"
+    );
+    assert_eq!(
+        rows[0]["artist"].as_str(),
+        Some("Kraftwerk"),
+        "an entry does not carry the artist of its song: {}",
+        reply.body
+    );
 }
 
 // A queue is filled in the order the source gives, which for a playlist is its positions,
@@ -227,6 +244,12 @@ async fn append_queue_entry() {
 
     let track = upload_track(&test, &token, "lied.wav").await;
     let track_id = track.id;
+    common::run(&test, move |conn| {
+        conn.execute("UPDATE track SET artist = 'Kraftwerk' WHERE id = ?1", (track_id,))
+            .map_err(db::failure)?;
+        Ok(())
+    })
+    .await;
 
     let reply = common::post(&test, "/api/queue/songs", &format!(r#"{{"track_id": {track_id}}}"#), &token).await;
     assert_eq!(reply.status, StatusCode::CREATED, "append -> {} ({})", reply.status, reply.body);
@@ -235,6 +258,7 @@ async fn append_queue_entry() {
     assert_eq!(added.position, 1, "append answered {added:?}, wanted position 1");
     assert_eq!(added.track_id, track_id, "append answered {added:?}, wanted the song it was asked for");
     assert_eq!(added.title, track.title, "append answered {added:?}, wanted the title from the library");
+    assert_eq!(added.artist, "Kraftwerk", "append answered {added:?}, wanted the artist from the library");
 
     // The same song twice is allowed, because a queue is an order, not a set.
     let reply = common::post(&test, "/api/queue/songs", &format!(r#"{{"track_id": {track_id}}}"#), &token).await;

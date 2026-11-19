@@ -93,8 +93,9 @@ class MediaService extends BaseAudioHandler {
       return;
     }
 
-    // A song on this device has no id the plugin could use, and no artist: neither a queue answer
-    // nor a picked file names one, so the notification shows the title alone.
+    // A song on this device has no id the plugin could use and no artist: a picked file does not
+    // name one, so the notification shows the title alone there. A queue entry carries its artist
+    // (api-docs.md) and the media item below shows it.
     final shown = mediaItem.value;
     if (shown == null || shown.title != title || shown.duration != player.duration) {
       mediaItem.add(MediaItem(

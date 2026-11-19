@@ -9,6 +9,7 @@ class QueueEntry {
     required this.position,
     required this.trackId,
     required this.title,
+    this.artist = '',
     this.manual = false,
     this.local,
   });
@@ -26,6 +27,10 @@ class QueueEntry {
   final int trackId;
   final String title;
 
+  /// The artist the file's tags name, empty when it names none. A song on this device has no
+  /// tags to read, so a local row keeps the empty default.
+  final String artist;
+
   /// How the row got into the queue: the person put it there themselves, or a list did. The
   /// queue answer names no source, so this is what the mirror keeps, and it is the only thing
   /// a refresh can carry over.
@@ -38,14 +43,15 @@ class QueueEntry {
     position: (json['position'] as num).toInt(),
     trackId: (json['track_id'] as num).toInt(),
     title: json['title'] as String,
+    artist: json['artist'] as String? ?? '',
   );
 
   /// The same song at another slot. The mirror renumbers this way, so a page shows the
   /// numbers the next read from the server would return.
   QueueEntry withPosition(int position) =>
-      QueueEntry(position: position, trackId: trackId, title: title, manual: manual, local: local);
+      QueueEntry(position: position, trackId: trackId, title: title, artist: artist, manual: manual, local: local);
 
-  QueueEntry asManual() => QueueEntry(position: position, trackId: trackId, title: title, manual: true, local: local);
+  QueueEntry asManual() => QueueEntry(position: position, trackId: trackId, title: title, artist: artist, manual: true, local: local);
 }
 
 /// Where a queue gets its songs. These are the three sources api-docs.md lists. A queue

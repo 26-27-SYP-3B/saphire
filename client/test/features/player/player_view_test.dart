@@ -13,8 +13,8 @@ import '../../support/wiring.dart';
 
 // Two songs, so a test can watch the player move away from one and back to it.
 const queueAnswer = [
-  {'position': 1.0, 'track_id': 8.0, 'title': 'Technogal.mp3'},
-  {'position': 2.0, 'track_id': 4.0, 'title': 'lied.wav'},
+  {'position': 1.0, 'track_id': 8.0, 'title': 'Technogal.mp3', 'artist': 'Kraftwerk'},
+  {'position': 2.0, 'track_id': 4.0, 'title': 'lied.wav', 'artist': ''},
 ];
 
 /// Pumps the full player the way AppShell draws it on a phone, with a valid session. The view is
@@ -101,6 +101,9 @@ void main() {
     );
 
     expect(find.text('Technogal.mp3'), findsOneWidget);
+    // The queue answer names the artist the file's tags named, so the player shows it under the
+    // title instead of the slot number.
+    expect(find.text('Kraftwerk'), findsOneWidget);
 
     await tester.tap(find.byTooltip('Pause'));
     await tester.pumpAndSettle();
@@ -116,6 +119,7 @@ void main() {
     expect(wiring.queue.current?.title, 'Technogal.mp3');
 
     // The ten-second buttons jump from where the song is, not from its start.
+    audio.at(const Duration(seconds: 10));
     await tester.tap(find.byTooltip('10 Sekunden vor'));
     await tester.pumpAndSettle();
     expect(audio.sought, [const Duration(seconds: 20)]);
@@ -178,7 +182,15 @@ void main() {
 
     expect(find.text('Nichts wird abgespielt'), findsOneWidget);
 
-    for (final tooltip in ['Wiedergeben', 'Vorheriges Lied', 'Nächstes Lied', '10 Sekunden vor', '10 Sekunden zurück']) {
+    for (final tooltip in [
+      'Wiedergeben',
+      'Vorheriges Lied',
+      'Nächstes Lied',
+      '10 Sekunden vor',
+      '10 Sekunden zurück',
+      'Wiederholen',
+      'Zufällige Wiedergabe',
+    ]) {
       expect(
         tester.widget<IconButton>(find.ancestor(of: find.byTooltip(tooltip), matching: find.byType(IconButton))).onPressed,
         isNull,
@@ -188,5 +200,77 @@ void main() {
     expect(audio.played, isEmpty);
     expect(audio.sought, isEmpty);
     expect(audio.volumes, isEmpty);
+  });
+
+  // The two ways a song does not simply move on, and the mute button, belong to the player the
+  // page shows: a control that only changed a local switch would not change what the next song is.
+  testWidgets('repeat, shuffle and mute reach the player', (tester) async {
+    final audio = FakePlayer();
+    addTearDown(audio.dispose);
+
+    final wiring = await openPlayer(
+      tester,
+      audio: audio,
+      prep: (wiring) async {
+        wiring.queue.fill(queueAnswer.map((entry) => QueueEntry.fromJson(entry.cast<String, dynamic>())).toList());
+        await wiring.player.playCurrent();
+        // A volume that is not the default, so a mute that always restores 1.0 cannot pass.
+        await wiring.player.setVolume(0.4);
+        audio.length(const Duration(seconds: 30));
+      },
+    );
+
+    await tester.tap(find.byTooltip('Wiederholen'));
+    await tester.pumpAndSettle();
+    expect(wiring.player.repeatOne, isTrue);
+
+    await tester.tap(find.byTooltip('Zufällige Wiedergabe'));
+    await tester.pumpAndSettle();
+    expect(wiring.player.shuffle, isTrue);
+
+    await tester.tap(find.byTooltip('Stumm'));
+    await tester.pumpAndSettle();
+    expect(audio.volumes.last, 0.0);
+    expect(find.byTooltip('Ton an'), findsOneWidget);
+
+    // Unmuting returns to the volume the listener had, not to full volume.
+    await tester.tap(find.byTooltip('Ton an'));
+    await tester.pumpAndSettle();
+    expect(audio.volumes.last, 0.4);
+
+    // The volume lives in the player, so a reopened page shows the same value instead of the
+    // slider's default.
+    await tester.pumpWidget(
+      MaterialApp(home: Scaffold(body: PlayerView(player: wiring.player))),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.widget<Slider>(find.byType(Slider).last).value, 0.4);
+  });
+
+  // The progress bar is the other way to seek: a press on it moves the label to the target while
+  // the finger is down, and the release is what tells the player where to go.
+  testWidgets('the progress bar moves the song to where it was tapped', (tester) async {
+    final audio = FakePlayer();
+    addTearDown(audio.dispose);
+
+    await openPlayer(
+      tester,
+      audio: audio,
+      prep: (wiring) async {
+        wiring.queue.fill(queueAnswer.map((entry) => QueueEntry.fromJson(entry.cast<String, dynamic>())).toList());
+        await wiring.player.playCurrent();
+        audio.length(const Duration(seconds: 30));
+        audio.at(const Duration(seconds: 10));
+      },
+    );
+
+    final bar = find.byType(Slider).first;
+    await tester.tapAt(tester.getCenter(bar) + const Offset(60, 0));
+    await tester.pumpAndSettle();
+
+    expect(audio.sought, isNotEmpty);
+    expect(audio.sought.last, greaterThan(const Duration(seconds: 10)));
+    // The label follows the released position, not the old one.
+    expect(find.text('0:10'), findsNothing);
   });
 }
