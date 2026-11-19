@@ -33,12 +33,19 @@ import '../features/upload/data/upload_repository.dart';
 /// belong to the whole app, so the bar at the bottom of every page shows the same list a
 /// playlist just filled. A route that made its own queue would lose it on the next
 /// navigation.
-/// A "from" address is a path inside this app, never an absolute URL: a query that names
-/// another host would turn the login form into an open redirect.
+/// The pages a login may return to. A "from" address is a path in this app, never an absolute
+/// URL or a path the router does not know: either would turn the login form into a redirect to
+/// something the user never asked for, or into an error page.
+const _fromPaths = {'/home', '/library', '/playlists', '/settings'};
+
 String? _safeFrom(String? value) {
-  if (value == null || value.isEmpty || !value.startsWith('/') || value.startsWith('//')) return null;
+  if (value == null || value.isEmpty || value.contains('\\')) return null;
+  // Encoded separators can turn into the same path only after decoding, which is too late.
+  final lower = value.toLowerCase();
+  if (lower.contains('%2f') || lower.contains('%5c')) return null;
   final uri = Uri.tryParse(value);
   if (uri == null || uri.hasScheme || uri.hasAuthority) return null;
+  if (!_fromPaths.contains(uri.path)) return null;
   return value;
 }
 

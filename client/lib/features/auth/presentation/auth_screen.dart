@@ -88,7 +88,11 @@ class _AuthScreenState extends State<AuthScreen> {
       note: _note,
       linkQuestion: isRegister ? 'Schon ein Konto?' : 'Noch kein Konto?',
       linkLabel: isRegister ? 'Anmelden' : 'Registrieren',
-      linkTo: isRegister ? '/login' : '/register',
+      // The way to the other form keeps the link that led here, so registering after a shared
+      // link still ends on the song.
+      linkTo: widget.from == null
+          ? (isRegister ? '/login' : '/register')
+          : '${isRegister ? '/login' : '/register'}?from=${Uri.encodeComponent(widget.from!)}',
       // The way into local mode: no account, no server, the songs from the device. The
       // guided setup (a later screen) lands in the same place.
       footer: TextButton(
