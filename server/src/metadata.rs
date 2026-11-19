@@ -2,18 +2,22 @@ use std::collections::HashMap;
 
 use crate::{music, sanitize};
 
-/// What an uploaded file says about itself: the title and the artist its tags name, and how
-/// long it plays. A file that does not say something stays empty or zero, so the library shows
-/// a dash instead of a guess.
+/// What an uploaded file says about itself: the title, artist, album, genre and year its tags
+/// name, and how long it plays. A file that does not say something stays empty or zero, so the
+/// library shows "Unbekannt" instead of a guess.
 ///
 /// Only MP3 is read here, because that is the format whose length can be worked out from the
 /// bytes alone (frame headers). The other accepted containers would need their own container
-/// parser, so they keep no duration. The values are read into the track row, which is the shape
-/// `api-docs.md` documents — this shape is not answered as itself.
+/// parser, so they keep no duration and no tags. The values are read into the track row, which
+/// is the shape `api-docs.md` documents — this shape is not answered as itself.
 #[derive(Debug, Default, PartialEq)]
 pub struct AudioMeta {
     pub title: String,
     pub artist: String,
+    pub album: String,
+    pub genre: String,
+    /// 0 when the file does not name a year.
+    pub year: i64,
     pub duration_ms: i64,
 }
 
@@ -22,8 +26,26 @@ pub fn read_audio_meta(data: &[u8]) -> AudioMeta {
     AudioMeta {
         title: tags.get("TIT2").cloned().unwrap_or_default(),
         artist: tags.get("TPE1").cloned().unwrap_or_default(),
+        album: tags.get("TALB").cloned().unwrap_or_default(),
+        genre: tags.get("TCON").cloned().unwrap_or_default(),
+        // ID3v2.4 writes the recording time in TDRC, ID3v2.3 the year in TYER. Both lead with
+        // the four digits a filter offers, so the same reader takes them.
+        year: ["TDRC", "TYER"]
+            .iter()
+            .find_map(|id| tags.get(*id).and_then(|text| year_of(text)))
+            .unwrap_or(0),
         duration_ms: mp3_duration_ms(data, audio_start),
     }
+}
+
+/// The year a tag text starts with. A full timestamp ("2021-05-04") counts by its first four
+/// digits; anything that does not start with four digits is not a year this library can filter.
+pub fn year_of(text: &str) -> Option<i64> {
+    let digits: String = text.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.len() != 4 {
+        return None;
+    }
+    digits.parse().ok()
 }
 
 /// Makes text that came out of a file safe to show. It is the same rule an uploaded name goes
@@ -78,7 +100,7 @@ pub fn read_id3v2(data: &[u8]) -> (HashMap<String, String>, usize) {
             break; // a frame that does not fit in the tag cannot be read
         }
 
-        if id == b"TIT2" || id == b"TPE1" {
+        if [b"TIT2".as_slice(), b"TPE1", b"TALB", b"TCON", b"TDRC", b"TYER"].contains(&id) {
             let name = String::from_utf8_lossy(id).to_string();
             tags.insert(name, clean_tag_text(&decode_frame_text(&data[position + 10..position + 10 + size])));
         }

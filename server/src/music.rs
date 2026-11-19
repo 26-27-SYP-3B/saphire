@@ -43,9 +43,10 @@ pub const AUDIO_EXTENSIONS: [(&str, &str); 7] = [
 /// lives. `uploaded_by` is not a column; it is filled for the answer so the shared library
 /// shows a name instead of a bare user id.
 ///
-/// `artist` and `duration_ms` are what the file itself said (see `metadata`). A file that does
-/// not say them stays empty or zero, and the client shows a dash. Field order is the order
-/// `api-docs.md` documents, so the answer and the documentation read the same.
+/// `artist`, `album`, `genre`, `year` and `duration_ms` are what the file itself said (see
+/// `metadata`). A file that does not say them stays empty or zero, and the client filters and
+/// shows them as "Unbekannt". Field order is the order `api-docs.md` documents, so the answer
+/// and the documentation read the same.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Track {
     pub id: i64,
@@ -54,6 +55,10 @@ pub struct Track {
     pub uploaded_by: String,
     pub title: String,
     pub artist: String,
+    pub album: String,
+    pub genre: String,
+    /// 0 when the tags name no year.
+    pub year: i64,
     pub duration_ms: i64,
     pub stored_name: String,
     pub size: i64,
@@ -63,8 +68,9 @@ pub struct Track {
 
 /// The columns a track is read with, in the order `scan_track` expects. The uploader is joined
 /// from the user table because the library answer shows a name, not a bare id.
-const TRACK_COLUMNS: &str = "track.id, track.user_id, track.title, track.artist, track.duration_ms, \
-    track.stored_name, track.size, track.content_type, track.uploaded_at, user.username";
+const TRACK_COLUMNS: &str = "track.id, track.user_id, track.title, track.artist, track.album, \
+    track.genre, track.year, track.duration_ms, track.stored_name, track.size, \
+    track.content_type, track.uploaded_at, user.username";
 
 /// Reads one row into a track. A single lookup and a list both use this, so they cannot
 /// disagree about what a row contains.
@@ -74,12 +80,15 @@ fn scan_track(row: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
         user_id: row.get(1)?,
         title: row.get(2)?,
         artist: row.get(3)?,
-        duration_ms: row.get(4)?,
-        stored_name: row.get(5)?,
-        size: row.get(6)?,
-        content_type: row.get(7)?,
-        uploaded_at: row.get(8)?,
-        uploaded_by: row.get(9)?,
+        album: row.get(4)?,
+        genre: row.get(5)?,
+        year: row.get(6)?,
+        duration_ms: row.get(7)?,
+        stored_name: row.get(8)?,
+        size: row.get(9)?,
+        content_type: row.get(10)?,
+        uploaded_at: row.get(11)?,
+        uploaded_by: row.get(12)?,
     })
 }
 
@@ -90,6 +99,9 @@ pub fn ensure_table(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
             user_id INTEGER NOT NULL REFERENCES user(id),
             title TEXT NOT NULL,
             artist TEXT NOT NULL DEFAULT '',
+            album TEXT NOT NULL DEFAULT '',
+            genre TEXT NOT NULL DEFAULT '',
+            year INTEGER NOT NULL DEFAULT 0,
             duration_ms INTEGER NOT NULL DEFAULT 0,
             stored_name TEXT UNIQUE NOT NULL,
             size INTEGER NOT NULL,
@@ -120,6 +132,9 @@ pub fn ensure_columns(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
 
     for (name, definition) in [
         ("artist", "artist TEXT NOT NULL DEFAULT ''"),
+        ("album", "album TEXT NOT NULL DEFAULT ''"),
+        ("genre", "genre TEXT NOT NULL DEFAULT ''"),
+        ("year", "year INTEGER NOT NULL DEFAULT 0"),
         ("duration_ms", "duration_ms INTEGER NOT NULL DEFAULT 0"),
     ] {
         if have.iter().any(|column| column == name) {
@@ -153,11 +168,14 @@ pub fn open_library() -> Result<String, Failure> {
 
 pub fn insert(conn: &rusqlite::Connection, track: &mut Track) -> Result<(), Failure> {
     conn.execute(
-        "INSERT INTO track (user_id, title, artist, duration_ms, stored_name, size, content_type, uploaded_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO track (user_id, title, artist, album, genre, year, duration_ms, stored_name, size, content_type, uploaded_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         (
             track.user_id,
             &track.title,
             &track.artist,
+            &track.album,
+            &track.genre,
+            track.year,
             track.duration_ms,
             &track.stored_name,
             track.size,
@@ -182,7 +200,8 @@ pub fn get_by_id(conn: &rusqlite::Connection, id: i64) -> Result<Track, Failure>
 
 /// The whole library ordered by id, as one full row per song. The library is shared, so the
 /// list shows who added a song and what the file said about itself; a row without tags reads as
-/// an empty artist and a length of 0, which the client shows as a dash rather than a guess.
+/// empty metadata and a length of 0, which the client shows as a dash and filters as "Unbekannt"
+/// rather than guessing.
 /// An empty library answers as an empty list, not as nothing, so a client does not have to tell
 /// the two apart.
 pub fn list(conn: &rusqlite::Connection) -> Result<Vec<Track>, Failure> {
@@ -364,9 +383,10 @@ pub async fn handle_upload(State(state): State<AppState>, req: Request) -> Respo
         Err(message) => return respond::error(StatusCode::BAD_REQUEST, &message),
     };
 
-    // The artist and the playing time come from the file itself. They are read before anything
+    // The tags and the playing time come from the file itself. They are read before anything
     // is stored, so the row and the answer show the same values. Only MP3 has a length that can
-    // be worked out from the bytes; the other containers keep 0, which the client shows as a dash.
+    // be worked out from the bytes, and only MP3 tags are read; the other containers keep empty
+    // values, which the client shows and filters as "Unbekannt".
     let meta = if media_type == "audio/mpeg" {
         metadata::read_audio_meta(&data)
     } else {
@@ -403,6 +423,9 @@ pub async fn handle_upload(State(state): State<AppState>, req: Request) -> Respo
         uploaded_by: uploader.username,
         title,
         artist: meta.artist,
+        album: meta.album,
+        genre: meta.genre,
+        year: meta.year,
         duration_ms: meta.duration_ms,
         stored_name: stored,
         size: data.len() as i64,

@@ -81,16 +81,50 @@ fn read_audio_meta_reads_the_tags_and_the_duration() {
     let mut file = build_id3_tag(
         3,
         false,
-        &[("TIT2", text_frame(0, "Neutrone (Remix)")), ("TPE1", text_frame(0, "Kraftwerk"))],
+        &[
+            ("TIT2", text_frame(0, "Neutrone (Remix)")),
+            ("TPE1", text_frame(0, "Kraftwerk")),
+            ("TALB", text_frame(0, "Trans Europa Express")),
+            ("TCON", text_frame(0, "Elektronik")),
+            ("TYER", text_frame(0, "1977")),
+        ],
     );
     file.extend_from_slice(&audio_of(10));
 
     let meta = metadata::read_audio_meta(&file);
     assert_eq!(meta.title, "Neutrone (Remix)", "the TIT2 frame was not read: {meta:?}");
     assert_eq!(meta.artist, "Kraftwerk", "the TPE1 frame was not read: {meta:?}");
+    assert_eq!(meta.album, "Trans Europa Express", "the TALB frame was not read: {meta:?}");
+    assert_eq!(meta.genre, "Elektronik", "the TCON frame was not read: {meta:?}");
+    assert_eq!(meta.year, 1977, "the TYER frame was not read: {meta:?}");
 
     // 10 frames of 1152 samples at 32000 Hz is 360 ms.
     assert_eq!(meta.duration_ms, 10 * 1152 * 1000 / 32000, "the duration is not the frames the file has");
+}
+
+// ID3v2.4 writes the time in TDRC, and a full timestamp still carries the year the filter
+// offers. A tag that names no time must not make one up.
+#[test]
+fn read_audio_meta_reads_the_year_from_a_full_timestamp() {
+    let tag = build_id3_tag(4, true, &[("TDRC", text_frame(3, "2021-05-04"))]);
+    let meta = metadata::read_audio_meta(&tag);
+    assert_eq!(meta.year, 2021, "the year was not taken from TDRC: {meta:?}");
+
+    let tag = build_id3_tag(4, true, &[("TDRC", text_frame(3, "unknown"))]);
+    assert_eq!(metadata::read_audio_meta(&tag).year, 0, "a text that is not a year gave one");
+
+    // A TDRC that carries no year must not hide a valid TYER next to it.
+    let tag = build_id3_tag(
+        4,
+        true,
+        &[("TDRC", text_frame(3, "unknown")), ("TYER", text_frame(0, "1999"))],
+    );
+    assert_eq!(metadata::read_audio_meta(&tag).year, 1999, "a valid TYER was hidden by an unreadable TDRC");
+
+    assert_eq!(metadata::year_of("1999"), Some(1999));
+    assert_eq!(metadata::year_of("2021-05-04"), Some(2021));
+    assert_eq!(metadata::year_of("21"), None);
+    assert_eq!(metadata::year_of("abcd"), None);
 }
 
 #[test]
