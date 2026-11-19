@@ -24,6 +24,9 @@ class FakePlayer implements SongPlayer {
     if (openError != null) throw Exception(openError);
     opened.add(url);
     lastHeaders = headers;
+    // Opening another song starts at its beginning; a fake that kept the old position would let
+    // a test see a "back" press restart a song that was never played.
+    _position = Duration.zero;
   }
 
   Map<String, String> lastHeaders = const {};

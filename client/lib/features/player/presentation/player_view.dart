@@ -43,8 +43,10 @@ class _PlayerViewState extends State<PlayerView> {
   Duration _at = Duration.zero;
 
   // What this view set as the volume. The player is the thing that turns it down, but a slider
-  // needs the value it last had.
+  // needs the value it last had. The value before muting is kept, so "Ton an" returns to what the
+  // listener had, not to full volume.
   double _volume = 1.0;
+  double _volumeBeforeMute = 1.0;
 
   // Where the thumb is while a finger is on the progress bar. The position stream keeps running,
   // so without this the thumb would be pulled back under the finger.
@@ -82,6 +84,15 @@ class _PlayerViewState extends State<PlayerView> {
       if (mounted) setState(() => _busy = false);
     }
   }
+
+  void _setVolume(double value) {
+    // 0 is the mute button's value; the slider's last real value is what unmuting returns to.
+    if (value > 0) _volumeBeforeMute = value;
+    setState(() => _volume = value);
+    _run(() => widget.player.setVolume(value));
+  }
+
+  void _toggleMute() => _setVolume(_volume > 0 ? 0 : (_volumeBeforeMute > 0 ? _volumeBeforeMute : 1));
 
   @override
   Widget build(BuildContext context) {
@@ -129,7 +140,9 @@ class _PlayerViewState extends State<PlayerView> {
           const SizedBox(height: 12),
           Row(
             children: [
-              Text(_clock(_at)),
+              // While a finger is on the bar the label follows the thumb, so the target time is
+              // readable before the release that seeks.
+              Text(_clock(_drag == null ? _at : Duration(milliseconds: _drag!.round()))),
               Expanded(
                 child: Slider(
                   // A song whose length the player does not know cannot be seeked to a tenth of it,
@@ -190,21 +203,28 @@ class _PlayerViewState extends State<PlayerView> {
           ),
           Row(
             children: [
-              const SizedBox(width: 20),
-              const Icon(Icons.volume_down),
+              IconButton(
+                tooltip: 'Wiederholen',
+                onPressed: title == null ? null : () => setState(() => widget.player.repeatOne = !widget.player.repeatOne),
+                icon: Icon(Icons.repeat_one, color: widget.player.repeatOne ? scheme.primary : null),
+              ),
+              IconButton(
+                tooltip: 'Zufällige Wiedergabe',
+                onPressed: title == null ? null : () => setState(() => widget.player.shuffle = !widget.player.shuffle),
+                icon: Icon(Icons.shuffle, color: widget.player.shuffle ? scheme.primary : null),
+              ),
               Expanded(
                 child: Slider(
                   max: 1,
                   value: _volume,
-                  onChanged: _busy
-                      ? null
-                      : (value) {
-                          setState(() => _volume = value);
-                          _run(() => widget.player.setVolume(value));
-                        },
+                  onChanged: _busy ? null : _setVolume,
                 ),
               ),
-              const SizedBox(width: 20),
+              IconButton(
+                tooltip: _volume == 0 ? 'Ton an' : 'Stumm',
+                onPressed: _busy ? null : _toggleMute,
+                icon: Icon(_volume == 0 ? Icons.volume_off : Icons.volume_up),
+              ),
             ],
           ),
         ],

@@ -469,4 +469,125 @@ void main() {
     expect(player.localTitle, isNull);
     expect(fake.stopped, hasLength(1));
   });
+
+  // "Back" inside a song restarts it; only at its start does it leave the song. The first row
+  // has nothing before it, so a restart is also the only thing the button can do there.
+  test('previous restarts the song after a few seconds and moves back only at its start', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final queue = PlaybackQueue();
+    queue.fill([
+      QueueEntry(position: 1, trackId: 8, title: 'a'),
+      QueueEntry(position: 2, trackId: 4, title: 'b'),
+    ]);
+    final player = QueuePlayer(queue: queue, player: fake, session: loggedIn());
+    addTearDown(player.dispose);
+
+    await player.playCurrent();
+    fake.length(const Duration(seconds: 30));
+    fake.at(const Duration(seconds: 10));
+
+    expect(await player.previous(), isTrue);
+    expect(queue.current?.trackId, 8, reason: 'a restart must not leave the song');
+    expect(fake.sought.last, Duration.zero);
+    expect(fake.opened, ['$apiBaseUrl/api/music/8'], reason: 'a restart must not open the file again');
+
+    // At the start of the first row there is still nothing before it.
+    fake.at(Duration.zero);
+    expect(await player.previous(), isFalse);
+  });
+
+  // The forward ten-second button plays the next song when the jump would land past the end,
+  // because there is nothing left of this one to hear.
+  test('a forward jump past the end starts the next song', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final queue = PlaybackQueue();
+    queue.fill([
+      QueueEntry(position: 1, trackId: 8, title: 'a'),
+      QueueEntry(position: 2, trackId: 4, title: 'b'),
+    ]);
+    final player = QueuePlayer(queue: queue, player: fake, session: loggedIn());
+    addTearDown(player.dispose);
+
+    await player.playCurrent();
+    fake.length(const Duration(seconds: 30));
+    fake.at(const Duration(seconds: 25));
+
+    await player.skip(const Duration(seconds: 10));
+    expect(queue.current?.trackId, 4);
+    expect(fake.opened.last, '$apiBaseUrl/api/music/4');
+  });
+
+  // Exactly ten seconds left is not "less than ten": the jump lands on the end of the song,
+  // and the player's own "completed" moves on.
+  test('a jump that lands on the end stays in the song', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final queue = PlaybackQueue();
+    queue.fill([
+      QueueEntry(position: 1, trackId: 8, title: 'a'),
+      QueueEntry(position: 2, trackId: 4, title: 'b'),
+    ]);
+    final player = QueuePlayer(queue: queue, player: fake, session: loggedIn());
+    addTearDown(player.dispose);
+
+    await player.playCurrent();
+    fake.length(const Duration(seconds: 30));
+    fake.at(const Duration(seconds: 20));
+
+    await player.skip(const Duration(seconds: 10));
+    expect(queue.current?.trackId, 8);
+    expect(fake.sought.last, const Duration(seconds: 30));
+  });
+
+  // Repeat-one is answered by the player, because the end of a song happens without a tap.
+  test('repeat plays the song that ended again', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final queue = PlaybackQueue();
+    queue.fill([
+      QueueEntry(position: 1, trackId: 8, title: 'a'),
+      QueueEntry(position: 2, trackId: 4, title: 'b'),
+    ]);
+    final player = QueuePlayer(queue: queue, player: fake, session: loggedIn());
+    addTearDown(player.dispose);
+
+    await player.playCurrent();
+    fake.length(const Duration(seconds: 30));
+    fake.at(const Duration(seconds: 20));
+    player.repeatOne = true;
+
+    fake.complete();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(queue.current?.trackId, 8);
+    expect(fake.sought.last, Duration.zero);
+    expect(fake.played, hasLength(2));
+    expect(fake.playing, isTrue);
+  });
+
+  // Shuffle picks another entry of the same queue, not the one that just ended.
+  test('shuffle plays a random other song from the queue', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final queue = PlaybackQueue();
+    queue.fill([
+      QueueEntry(position: 1, trackId: 8, title: 'a'),
+      QueueEntry(position: 2, trackId: 4, title: 'b'),
+      QueueEntry(position: 3, trackId: 6, title: 'c'),
+    ]);
+    final player = QueuePlayer(queue: queue, player: fake, session: loggedIn());
+    addTearDown(player.dispose);
+
+    await player.playCurrent();
+    player.shuffle = true;
+
+    fake.complete();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(queue.current?.trackId, isNot(8));
+    expect(fake.opened.last, anyOf('$apiBaseUrl/api/music/4', '$apiBaseUrl/api/music/6'));
+    expect(fake.playing, isTrue);
+  });
 }
