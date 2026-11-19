@@ -327,6 +327,108 @@ async fn upload_rejects_bad_uploads() {
             common::not_audio(),
             StatusCode::BAD_REQUEST,
         ),
+        (
+            "a BMP named like audio",
+            "file",
+            "cover.mp3",
+            b"BM\x00\x00\x00\x00\x00\x00\x00\x00".to_vec(),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "a TIFF named like audio",
+            "file",
+            "cover.wav",
+            b"II*\x00\x08\x00\x00\x00".to_vec(),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "an icon named like audio",
+            "file",
+            "cover.m4a",
+            b"\x00\x00\x01\x00\x01\x00\x10\x10".to_vec(),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "a HEIC image named like audio",
+            "file",
+            "cover.flac",
+            b"\x00\x00\x00\x18ftypheic\x00\x00\x00\x00".to_vec(),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "a tar archive named like audio",
+            "file",
+            "song.ogg",
+            {
+                let mut tar = vec![0u8; 257];
+                tar.extend_from_slice(b"ustar\x0000");
+                tar
+            },
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "a gzip archive named like audio",
+            "file",
+            "song.mp3",
+            b"\x1f\x8b\x08\x00\x00\x00\x00\x00".to_vec(),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "an ELF binary named like audio",
+            "file",
+            "song.wav",
+            b"\x7fELF\x02\x01\x01\x00".to_vec(),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "a RAR archive named like audio",
+            "file",
+            "song.m4a",
+            b"Rar!\x1a\x07\x00".to_vec(),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "a 7z archive named like audio",
+            "file",
+            "song.aac",
+            b"7z\xbc\xaf\x27\x1c".to_vec(),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "an XZ archive named like audio",
+            "file",
+            "song.flac",
+            b"\xfd7zXZ\x00\x00\x00".to_vec(),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "a bzip2 archive named like audio",
+            "file",
+            "song.opus",
+            b"BZh9\x31\x41\x59\x26".to_vec(),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "a zstd archive named like audio",
+            "file",
+            "song.aiff",
+            b"\x28\xb5\x2f\xfd\x00\x00\x00".to_vec(),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "UTF-16 text named like audio",
+            "file",
+            "notes.mp3",
+            b"\xff\xfeh\x00i\x00".to_vec(),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "a picture behind a leading newline",
+            "file",
+            "cover.mp3",
+            b"\n\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR".to_vec(),
+            StatusCode::BAD_REQUEST,
+        ),
         ("empty file", "file", "empty.wav", Vec::new(), StatusCode::BAD_REQUEST),
         ("field is not a file", "file", "", common::not_audio(), StatusCode::BAD_REQUEST),
         ("wrong field name", "upload", "song.flac", common::not_audio(), StatusCode::BAD_REQUEST),
@@ -381,6 +483,50 @@ async fn upload_rejects_bad_uploads() {
 
     let stored = common::json(&reply.body)["stored_name"].as_str().unwrap_or_default().to_string();
     assert!(!stored.contains('/'), "stored name is not a plain library file name: {stored}");
+}
+
+/// The bytes win over the extension when they name a format: the stored content type is what the
+/// file really is, not what it was called.
+#[tokio::test]
+async fn the_bytes_name_the_format_when_the_extension_disagrees() {
+    let test = common::setup().await;
+    let token = common::token(&test, "lukas", "valid-password").await;
+
+    let ogg = b"OggS\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00".to_vec();
+    let reply = common::upload(&test, &token, "file", "song.mp3", &ogg).await;
+    assert_eq!(reply.status, StatusCode::CREATED, "ogg bytes named .mp3 -> {} ({})", reply.status, reply.body);
+
+    let track = common::json(&reply.body);
+    assert_eq!(
+        track["content_type"].as_str(),
+        Some("audio/ogg"),
+        "the extension won over the bytes: {}",
+        reply.body
+    );
+}
+
+/// A client name can carry a suffix the filesystem cannot take, or one that cannot be a media
+/// subtype. The bytes still name the format, so the file is stored under a plain generated name
+/// instead of answering a server error or building a broken content type.
+#[tokio::test]
+async fn a_name_that_cannot_be_a_suffix_is_stored_without_one() {
+    let test = common::setup().await;
+    let token = common::token(&test, "lukas", "valid-password").await;
+
+    for name in [format!("song.{}", "a".repeat(300)), "lied.äöü".to_string(), "track.".to_string()] {
+        let reply = common::upload(&test, &token, "file", &name, &common::tiny_wav()).await;
+        assert_eq!(reply.status, StatusCode::CREATED, "{name} -> {} ({})", reply.status, reply.body);
+
+        let track = common::json(&reply.body);
+        let stored = track["stored_name"].as_str().unwrap_or_default();
+        assert_eq!(stored.len(), 32, "{name} was stored as {stored}, wanted a plain generated name");
+        assert_eq!(
+            track["content_type"].as_str(),
+            Some("audio/wav"),
+            "{name} was not stored with the type the bytes name: {}",
+            reply.body
+        );
+    }
 }
 
 /// What the Go version refused: its sniffer reported `application/ogg`, which is not an

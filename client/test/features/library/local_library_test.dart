@@ -64,6 +64,40 @@ void main() {
     expect(library.tracks, isEmpty);
   });
 
+  // The device side refuses the same formats the server does, so a folder import cannot put a
+  // picture or an archive in the library under an audio name.
+  test('pictures, archives and text under an audio name are refused', () {
+    final library = LocalLibrary();
+    final cases = {
+      'webp.flac': [0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50],
+      'text.aiff': [...'just some text'.codeUnits],
+      'elf.ogg': [0x7F, 0x45, 0x4C, 0x46, 2, 1, 1, 0],
+      'rar.m4a': [0x52, 0x61, 0x72, 0x21, 0x1A, 7, 0],
+      'heic.flac': [0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63],
+      'bmp.wav': [0x42, 0x4D, 0, 0, 0, 0, 0, 0],
+      'tar.ogg': [...List<int>.filled(257, 0), ...'ustar'.codeUnits],
+    };
+
+    for (final entry in cases.entries) {
+      expect(
+        library.add(name: entry.key, bytes: Uint8List.fromList(entry.value)),
+        'die Datei ist keine gültige Audiodatei',
+        reason: entry.key,
+      );
+    }
+    expect(library.tracks, isEmpty);
+  });
+
+  // A real audio format whose header is printable is still a song.
+  test('a FLAC header is not mistaken for text', () {
+    final library = LocalLibrary();
+
+    final refused = library.add(name: 'song.flac', bytes: Uint8List.fromList([0x66, 0x4C, 0x61, 0x43, 0, 0, 0, 34]));
+
+    expect(refused, null);
+    expect(library.tracks, hasLength(1));
+  });
+
   test('the frame header of a file without a tag is enough', () {
     expect(LocalLibrary().isMp3(frameMp3()), true);
   });

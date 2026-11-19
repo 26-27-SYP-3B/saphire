@@ -280,6 +280,18 @@ fn is_audio(media_type: &str) -> bool {
 /// containers it recognizes, and the formats a file renamed `.mp3` turns out to be. Unknown
 /// bytes answer as plain binary, which is what lets an extension decide.
 fn sniff(data: &[u8]) -> String {
+    // A BOM and leading whitespace are not part of a song or a picture, so a signature behind
+    // them is still the same format. shortcut: only those prefixes are skipped; a file with an
+    // arbitrary byte in front is classified by its extension.
+    let data = data.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(data);
+    let start = data.iter().take_while(|byte| byte.is_ascii_whitespace()).count();
+    let data = &data[start..];
+
+    // A UTF-16 text file is text, not binary. Neither a WAV nor an MP3 starts with this mark.
+    if data.starts_with(&[0xFF, 0xFE]) || data.starts_with(&[0xFE, 0xFF]) {
+        return "text/plain; charset=utf-16".to_string();
+    }
+
     // RIFF is a container, not a format: WAVE is audio, but WebP and AVI are not, and a
     // picture renamed .mp3 must not pass as one.
     if data.len() >= 12 && &data[..4] == b"RIFF" {
@@ -292,7 +304,21 @@ fn sniff(data: &[u8]) -> String {
         .to_string();
     }
 
-    const SIGNATURES: [(&[u8], &str); 13] = [
+    // HEIF and M4A share the ISO base media header; only the brand says which one this is.
+    if data.len() >= 12 && &data[4..8] == b"ftyp" {
+        return match &data[8..12] {
+            b"heic" | b"heix" | b"hevc" | b"hevx" | b"mif1" | b"msf1" => "image/heic",
+            _ => "application/octet-stream",
+        }
+        .to_string();
+    }
+
+    // A tar archive has no signature at byte 0; its header names the format at byte 257.
+    if data.len() >= 262 && &data[257..262] == b"ustar" {
+        return "application/x-tar".to_string();
+    }
+
+    const SIGNATURES: [(&[u8], &str); 22] = [
         (b"ID3", "audio/mpeg"),
         (b"ID2", "audio/mpeg"),
         (b"Ogg", "audio/ogg"),
@@ -301,11 +327,20 @@ fn sniff(data: &[u8]) -> String {
         (b"GIF8", "image/gif"),
         (b"%PDF", "application/pdf"),
         (b"PK\x03\x04", "application/zip"),
+        (b"PK\x05\x06", "application/zip"),
+        (b"PK\x07\x08", "application/zip"),
         (b"\x1f\x8b", "application/gzip"),
         (b"\x7fELF", "application/x-elf"),
         (b"MZ", "application/x-msdownload"),
         (b"Rar!", "application/vnd.rar"),
         (b"7z\xbc\xaf", "application/x-7z-compressed"),
+        (b"BM", "image/bmp"),
+        (b"II*\0", "image/tiff"),
+        (b"MM\0*", "image/tiff"),
+        (b"\x00\x00\x01\x00", "image/x-icon"),
+        (b"\xfd7zXZ\x00", "application/x-xz"),
+        (b"BZh", "application/x-bzip2"),
+        (b"\x28\xb5\x2f\xfd", "application/zstd"),
     ];
 
     for (signature, media_type) in SIGNATURES {
@@ -409,7 +444,12 @@ pub async fn handle_upload(State(state): State<AppState>, req: Request) -> Respo
         return respond::error(StatusCode::BAD_REQUEST, "the uploaded file has no usable name");
     }
 
-    let stored = match stored_file_name(&extension) {
+    // The suffix becomes part of a file name inside the library, and the extension is the
+    // client's text: a name like `song.<300 bytes>` would be too long for the filesystem and
+    // answer a 500, and `song.äöü` cannot be a media subtype. A validated suffix is used, or
+    // none when the bytes already named the format.
+    let suffix = if audio_subtype(&extension).is_some() { extension.as_str() } else { "" };
+    let stored = match stored_file_name(suffix) {
         Ok(stored) => stored,
         Err(err) => return respond::answer(&err, "could not name the file"),
     };
