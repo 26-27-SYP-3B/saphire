@@ -578,8 +578,8 @@ Body: one JSON object with `source` (and `source_id` where the source needs it).
 
 ```json
 [
-  { "position": 1, "track_id": 8, "title": "Technogal.mp3" },
-  { "position": 2, "track_id": 4, "title": "lied.wav" }
+  { "position": 1, "track_id": 8, "title": "Technogal.mp3", "artist": "Kraftwerk" },
+  { "position": 2, "track_id": 4, "title": "lied.wav", "artist": "" }
 ]
 ```
 
@@ -604,7 +604,7 @@ with the shape above; `401`, `429` and `500` as in `POST /api/queue`.
 #### `POST /api/queue/songs`
 
 Adds one song at the end without a source — the plain queue feature. `201 Created` with
-`{"position": 3, "track_id": 8, "title": "Technogal.mp3"}`. `track_id` must be in the
+`{"position": 3, "track_id": 8, "title": "Technogal.mp3", "artist": "Kraftwerk"}`. `track_id` must be in the
 library; the limit is a real limit, not a silent drop. Statuses as in
 `POST /api/playlists/{id}/songs`.
 

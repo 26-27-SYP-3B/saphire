@@ -21,6 +21,9 @@ pub struct QueueEntry {
     pub position: i64,
     pub track_id: i64,
     pub title: String,
+    /// The artist the file's tags name, empty when it names none. The player bar shows it under
+    /// the title, the same way the library row does.
+    pub artist: String,
 }
 
 /// The JSON body of `POST /api/queue`: which source fills the queue. `source_id` is needed for
@@ -142,7 +145,7 @@ fn ids(conn: &rusqlite::Connection, query: &str, param: Option<i64>) -> Result<V
 pub fn entries(conn: &rusqlite::Connection, user_id: i64) -> Result<Vec<QueueEntry>, Failure> {
     let mut statement = conn
         .prepare(
-            "SELECT q.position, q.track_id, t.title
+            "SELECT q.position, q.track_id, t.title, t.artist
             FROM queue_entry q JOIN track t ON t.id = q.track_id
             WHERE q.user_id = ?1 ORDER BY q.position",
         )
@@ -155,6 +158,7 @@ pub fn entries(conn: &rusqlite::Connection, user_id: i64) -> Result<Vec<QueueEnt
                 position: row.get(0)?,
                 track_id: row.get(1)?,
                 title: row.get(2)?,
+                artist: row.get(3)?,
             })
         })
         .map_err(db::failure)?;
@@ -174,11 +178,13 @@ pub fn append(conn: &rusqlite::Connection, user_id: i64, track_id: i64) -> Resul
         return Err(Failure::QueueFull);
     }
 
-    let title = match conn
-        .query_row("SELECT title FROM track WHERE id = ?1", (track_id,), |row| row.get::<_, String>(0))
+    let (title, artist) = match conn
+        .query_row("SELECT title, artist FROM track WHERE id = ?1", (track_id,), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
         .map_err(db::failure)
     {
-        Ok(title) => title,
+        Ok(tags) => tags,
         Err(Failure::NoRows) => return Err(Failure::SongNotInLibrary),
         Err(err) => return Err(err),
     };
@@ -190,6 +196,7 @@ pub fn append(conn: &rusqlite::Connection, user_id: i64, track_id: i64) -> Resul
         position,
         track_id,
         title,
+        artist,
     })
 }
 
