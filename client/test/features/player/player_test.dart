@@ -347,6 +347,32 @@ void main() {
     expect(fake.opened, isEmpty);
   });
 
+  // A row picked in the queue is not current until its file really opened. A missing file
+  // must not leave the bar and the notification naming a song that never played.
+  test('a local queue row that cannot be opened does not become current', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final queue = PlaybackQueue();
+    final good = LocalTrack(title: 'a.mp3', bytes: Uint8List.fromList([0xFF, 0xFB]));
+    final broken = LocalTrack(title: 'gone.mp3');
+    final player = QueuePlayer(queue: queue, player: fake, session: SessionStore());
+    addTearDown(player.dispose);
+
+    await player.playLocalQueue([good, broken]);
+    queue.fill([QueueEntry.fromLocal(1, good), QueueEntry.fromLocal(2, broken)]);
+    queue.advance();
+    queue.advance();
+
+    await expectLater(
+      player.playAt(queue.current!),
+      throwsA(isA<PlaybackException>().having((error) => error.message, 'message', contains('nicht gefunden'))),
+    );
+
+    expect(player.localTitle, isNull);
+    expect(queue.current, isNull);
+    expect(fake.playing, isFalse);
+  });
+
   // One file that cannot be read must not end the list: the player moves on to the next
   // one and still says which file was skipped.
   test('an auto-advance skips a local file that cannot be read', () async {

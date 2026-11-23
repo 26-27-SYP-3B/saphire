@@ -934,11 +934,12 @@ async fn ensure_columns_adds_the_missing_columns_to_an_old_track_table() {
     assert_eq!(track.genre, "", "an old row read as {track:?}, wanted the empty defaults");
     assert_eq!(track.year, 0, "an old row read as {track:?}, wanted the empty defaults");
     assert_eq!(track.duration_ms, 0, "an old row read as {track:?}, wanted the empty defaults");
+    assert!(track.waveform.is_empty(), "an old row read as {track:?}, wanted no waveform");
 
     // Running it again does not add a column twice, which is why it checks what is already there.
     common::run(&test, |conn| music::ensure_columns(conn).map_err(db::failure)).await;
 
-    for column in ["artist", "album", "genre", "year", "duration_ms"] {
+    for column in ["artist", "album", "genre", "year", "duration_ms", "waveform"] {
         let times = common::run(&test, move |conn| {
             let times: i64 = conn
                 .query_row("SELECT COUNT(*) FROM pragma_table_info('track') WHERE name = ?1", (column,), |row| row.get(0))

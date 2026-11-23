@@ -184,6 +184,13 @@ fn read_waveform_follows_the_audio() {
 
     // A file the decoder cannot read must not panic or invent bars.
     assert!(metadata::read_waveform(b"not audio").is_empty());
+
+    // MP3 is the format most uploads use; the decoder must not quietly fall back to [].
+    assert_eq!(
+        metadata::read_waveform(&audio_of(10)).len(),
+        metadata::WAVEFORM_BARS,
+        "an MP3 produced no waveform bars"
+    );
 }
 
 // ID3v2.4 may put several strings in one frame, separated by NUL. A field here holds one

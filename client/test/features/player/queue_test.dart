@@ -1178,9 +1178,20 @@ void main() {
 
   // The artist belongs to the song, so a row that moves or becomes a hand-added row keeps it.
   test('a queue row keeps its artist when it moves or is marked manual', () {
-    const row = QueueEntry(position: 1, trackId: 8, title: 'Technogal.mp3', artist: 'Kraftwerk');
+    const row = QueueEntry(
+      position: 1,
+      trackId: 8,
+      title: 'Technogal.mp3',
+      artist: 'Kraftwerk',
+      durationMs: 174000,
+      waveform: [0, 128, 255],
+    );
 
     expect(row.withPosition(3).artist, 'Kraftwerk');
+    expect(row.withPosition(3).durationMs, 174000);
+    expect(row.withPosition(3).waveform, [0, 128, 255]);
     expect(row.asManual().artist, 'Kraftwerk');
+    expect(row.asManual().durationMs, 174000);
+    expect(row.asManual().waveform, [0, 128, 255]);
   });
 }

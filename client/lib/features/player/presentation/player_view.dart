@@ -109,7 +109,15 @@ class _PlayerViewState extends State<PlayerView> {
   // playing, and a slider that started at its default would show a volume that is not set.
   void _setVolume(double value) {
     setState(() {});
-    _run(() => widget.player.setVolume(value));
+    // A slider sends many values while the finger moves; the busy gate would drop all but the
+    // first. The last one has to win, so the call is not queued behind _busy.
+    unawaited(
+      widget.player.setVolume(value).catchError((Object error) {
+        if (mounted) {
+          setState(() => _note = 'Das Lied konnte nicht gespielt werden: $error');
+        }
+      }),
+    );
   }
 
   void _toggleMute() =>
@@ -143,6 +151,9 @@ class _PlayerViewState extends State<PlayerView> {
         // the card scrolls when the window is shorter than that, so a landscape phone keeps every
         // control instead of clipping the bottom.
         final coverHeight = math.max(100.0, height - 36 - 255);
+        // When the card fits, the vertical drag belongs to the swipe-down-to-close gesture.
+        // Only a card that has to scroll uses the drag for scrolling.
+        final scrolls = height < 400;
         final sheetHeight = math.min(
           math.max(84.0, 64.0 + _queueEntries().length * 56.0),
           math.max(84.0, coverHeight - 16),
@@ -170,6 +181,7 @@ class _PlayerViewState extends State<PlayerView> {
               ),
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
               child: SingleChildScrollView(
+                physics: scrolls ? null : const NeverScrollableScrollPhysics(),
                 child: Column(
                   children: [
                     SizedBox(
@@ -611,7 +623,7 @@ class _PlayerViewState extends State<PlayerView> {
       iconSize: 20,
       onPressed: onPressed,
       style: IconButton.styleFrom(
-        minimumSize: const Size(36, 36),
+        minimumSize: const Size(48, 48),
         padding: EdgeInsets.zero,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),

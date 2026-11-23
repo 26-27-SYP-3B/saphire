@@ -288,7 +288,17 @@ class QueuePlayer {
       // The mirror and the list the player plays name the same row, so the page points at the
       // song that is audible.
       queue.index = row.position - 1;
-      await _openLocal();
+      try {
+        await _openLocal();
+      } catch (error) {
+        // The file was deleted or cannot be read: the row must not stay current, or the bar
+        // would name a song that never played.
+        _localIndex = -1;
+        queue.index = -1;
+        await player.stop();
+        _changes.add(null);
+        rethrow;
+      }
       return true;
     }
 

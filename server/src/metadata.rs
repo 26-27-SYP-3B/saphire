@@ -14,6 +14,11 @@ use crate::{music, sanitize};
 /// rescale a list of varying length on every frame.
 pub const WAVEFORM_BARS: usize = 64;
 
+/// How many 1024-sample blocks are read for one waveform. At 44.1 kHz this is about 39
+/// minutes, far more than a song, and it keeps a corrupt or absurdly long file from decoding
+/// forever on the request thread.
+const MAX_WAVEFORM_BLOCKS: usize = 100_000;
+
 /// What an uploaded file says about itself: the title, artist, album, genre and year its tags
 /// name, and how long it plays. A file that does not say something stays empty or zero, so the
 /// library shows "Unbekannt" instead of a guess.
@@ -96,7 +101,7 @@ pub fn read_waveform(data: &[u8]) -> Vec<u8> {
     let mut sum_squares = 0.0f32;
     let mut block_samples = 0usize;
 
-    while let Ok(Some(packet)) = format.next_packet() {
+    'packets: while let Ok(Some(packet)) = format.next_packet() {
         if packet.track_id != track_id {
             continue;
         }
@@ -113,6 +118,9 @@ pub fn read_waveform(data: &[u8]) -> Vec<u8> {
                         blocks.push((sum_squares / block_samples as f32).sqrt());
                         sum_squares = 0.0;
                         block_samples = 0;
+                        if blocks.len() >= MAX_WAVEFORM_BLOCKS {
+                            break 'packets;
+                        }
                     }
                 }
             }

@@ -1,4 +1,5 @@
 use std::io;
+use std::sync::Arc;
 
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, Request, State};
@@ -461,11 +462,16 @@ pub async fn handle_upload(State(state): State<AppState>, req: Request) -> Respo
         metadata::AudioMeta::default()
     };
     // The waveform is decoded here so every client gets the same bars without downloading the
-    // song twice. The body is already in memory; a song the decoder does not know keeps an empty
+    // song twice. Decoding is CPU work, so it runs on a blocking worker instead of holding the
+    // async request thread for a whole song. A song the decoder does not know keeps an empty
     // list and the player falls back to its neutral bars.
-    // shortcut: the decode runs on the request thread; uploads are rare. Upgrade: spawn_blocking
-    // if uploads ever become concurrent.
-    let waveform = metadata::read_waveform(&data);
+    let data = Arc::new(data);
+    let waveform = {
+        let data = Arc::clone(&data);
+        tokio::task::spawn_blocking(move || metadata::read_waveform(&data))
+            .await
+            .unwrap_or_default()
+    };
 
     // The title is what the file names itself when its tags do, otherwise the name the client
     // sent.
@@ -492,7 +498,7 @@ pub async fn handle_upload(State(state): State<AppState>, req: Request) -> Respo
     // at a file that is not there. If the insert fails, the file is removed again so nothing
     // is left half-saved.
     let target = std::path::Path::new(&state.library).join(&stored);
-    if tokio::fs::write(&target, &data).await.is_err() {
+    if tokio::fs::write(&target, &data[..]).await.is_err() {
         return respond::error(StatusCode::INTERNAL_SERVER_ERROR, "could not save the file");
     }
 
