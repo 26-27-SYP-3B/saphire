@@ -102,6 +102,19 @@ fn read_audio_meta_reads_the_tags_and_the_duration() {
     assert_eq!(meta.duration_ms, 10 * 1152 * 1000 / 32000, "the duration is not the frames the file has");
 }
 
+// An unsynchronised tag inserts NUL bytes into the text. Reading it as if it were plain UTF-16
+// would show mojibake, so the whole tag is left unread and the audio still starts after it.
+#[test]
+fn an_unsynchronised_tag_is_left_unread() {
+    let mut tag = build_id3_tag(4, true, &[("TIT2", text_frame(3, "Titel"))]);
+    tag[5] = 0x80;
+    tag.extend_from_slice(&audio_of(2));
+
+    let meta = metadata::read_audio_meta(&tag);
+    assert_eq!(meta.title, "", "an unsynchronised tag was read as text: {meta:?}");
+    assert_eq!(meta.duration_ms, 2 * 1152 * 1000 / 32000, "the audio after the tag was missed");
+}
+
 // ID3v2.4 writes the time in TDRC, and a full timestamp still carries the year the filter
 // offers. A tag that names no time must not make one up.
 #[test]
@@ -125,6 +138,18 @@ fn read_audio_meta_reads_the_year_from_a_full_timestamp() {
     assert_eq!(metadata::year_of("2021-05-04"), Some(2021));
     assert_eq!(metadata::year_of("21"), None);
     assert_eq!(metadata::year_of("abcd"), None);
+}
+
+// ID3v2.4 may put several strings in one frame, separated by NUL. A field here holds one
+// value, so the first has to survive while the separator must not weld the values together.
+#[test]
+fn read_audio_meta_takes_the_first_of_several_values() {
+    let tag = build_id3_tag(4, true, &[("TCON", text_frame(3, "Pop\0Rock"))]);
+    assert_eq!(metadata::read_audio_meta(&tag).genre, "Pop", "the values were welded together");
+
+    // A blank first value is not a value; the next one is.
+    let tag = build_id3_tag(4, true, &[("TCON", text_frame(3, " \0Rock"))]);
+    assert_eq!(metadata::read_audio_meta(&tag).genre, "Rock", "a blank value hid the next one");
 }
 
 #[test]

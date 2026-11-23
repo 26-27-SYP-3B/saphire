@@ -250,6 +250,9 @@ async fn upload_saves_to_the_shared_library() {
     assert_eq!(track["uploaded_by"].as_str(), Some("lukas"), "answer is incomplete: {}", reply.body);
     assert_eq!(track["size"].as_i64(), Some(common::tiny_wav().len() as i64), "wrong size: {}", reply.body);
     assert_eq!(track["content_type"].as_str(), Some("audio/wav"), "wrong content type: {}", reply.body);
+    assert_eq!(track["album"].as_str(), Some(""), "a WAV must not invent an album: {}", reply.body);
+    assert_eq!(track["genre"].as_str(), Some(""), "a WAV must not invent a genre: {}", reply.body);
+    assert_eq!(track["year"].as_i64(), Some(0), "a WAV must not invent a year: {}", reply.body);
 
     // The file is in the shared library folder under the generated name.
     let stored = track["stored_name"].as_str().expect("the answer has a stored_name").to_string();

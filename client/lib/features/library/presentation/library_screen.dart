@@ -30,6 +30,11 @@ const filterKeys = ['Interpret', 'Album', 'Genre', 'Erscheinungsjahr'];
 /// that can be picked, not a gap: a song with no genre is still a song the user may want.
 const unknownFilter = 'Unbekannt';
 
+/// The window height the inline filter panel needs. The page body is shorter than the window
+/// by the player bar and, on a narrow page, the bottom navigation, so a window that merely
+/// clears the panel's own height would clip its footer.
+const filterPanelMinHeight = 860.0;
+
 /// The artist shown for a row: what the file's tags name (api-docs.md, the artist field).
 /// Only a title that is still the name the client sent can be read as "interpret - titel",
 /// because that pattern is a naming habit, not something a tag says. A title that came from
@@ -452,6 +457,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
     for (final entry in _filters.entries) entry.key: {...entry.value},
   };
 
+  /// Whether the window has room for the filter panel below the sort. A larger text scale
+  /// makes every row taller, so the window has to grow with it.
+  bool _inlineFilters(BuildContext context) {
+    final room = MediaQuery.sizeOf(context);
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    return room.width >= 700 && room.height >= filterPanelMinHeight * textScale;
+  }
+
   /// Opens the filter. A phone gets it as an overlay from below (with "Anwenden", because the
   /// list is behind it); a wide layout gets it inline below the sort and applies on every tap,
   /// so the list narrows while the filter is still open.
@@ -460,8 +473,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
     // The panel needs room below the list controls; a phone in landscape is wide but has no
     // height for it, so it gets the overlay too.
-    final room = MediaQuery.sizeOf(context);
-    if (room.width >= 700 && room.height >= 700) {
+    if (_inlineFilters(context)) {
       setState(() => _filtersOpen = !_filtersOpen);
       return;
     }
@@ -548,6 +560,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     required void Function(String category, String value) onToggle,
     required VoidCallback onReset,
     VoidCallback? onApply,
+    bool showReset = true,
   }) {
     final theme = Theme.of(context);
 
@@ -599,10 +612,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
             spacing: 8,
             runSpacing: 4,
             children: [
-              TextButton(
-                onPressed: selected.isEmpty ? null : onReset,
-                child: const Text('Filter zurücksetzen'),
-              ),
+              if (showReset)
+                TextButton(
+                  onPressed: selected.isEmpty ? null : onReset,
+                  child: const Text('Filter zurücksetzen'),
+                ),
               if (onApply != null) FilledButton(onPressed: onApply, child: const Text('Anwenden')),
             ],
           ),
@@ -620,8 +634,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final filtering = _filters.isNotEmpty;
     final searching = _search.text.trim().isNotEmpty;
     final filterCount = _filters.values.fold<int>(0, (sum, values) => sum + values.length);
-    final room = MediaQuery.sizeOf(context);
-    final narrow = room.width < 700 || room.height < 700;
+    final inlineFilters = _inlineFilters(context);
 
     return AppShell(
       selected: '/library',
@@ -723,12 +736,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 ],
                 // A wide layout keeps the filter open below the list controls; the phone puts
                 // the same panel in an overlay instead.
-                if (_filtersOpen && !narrow)
+                if (_filtersOpen && inlineFilters)
                   _filterPanel(
                     options: _filterOptions(),
                     selected: _filters,
                     onToggle: (category, value) => setState(() => _toggleFilter(_filters, category, value)),
                     onReset: _resetFilters,
+                    // The chip row right above the panel already resets all filters.
+                    showReset: false,
                   ),
               ],
             ),
