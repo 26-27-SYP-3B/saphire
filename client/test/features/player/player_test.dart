@@ -658,6 +658,31 @@ void main() {
     expect(fake.sought, isEmpty);
   });
 
+  // A random pick that cannot be opened must not stay current: the bar would name a song that
+  // never played, and the play button would retry the same broken file.
+  test('a shuffle that cannot open a song stops and reports it', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final queue = PlaybackQueue();
+    queue.fill([
+      QueueEntry(position: 1, trackId: 8, title: 'a'),
+      QueueEntry(position: 2, trackId: 4, title: 'b'),
+    ]);
+    final player = QueuePlayer(queue: queue, player: fake, session: loggedIn());
+    addTearDown(player.dispose);
+
+    await player.playCurrent();
+    player.shuffle = true;
+    fake.openError = 'die Datei ist kaputt';
+
+    fake.complete();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(player.failure, contains('konnte nicht gespielt werden'));
+    expect(queue.current, isNull);
+    expect(fake.playing, isFalse);
+  });
+
   // Shuffle picks another entry of the same queue, not the one that just ended.
   test('shuffle plays a random other song from the queue', () async {
     final fake = FakePlayer();

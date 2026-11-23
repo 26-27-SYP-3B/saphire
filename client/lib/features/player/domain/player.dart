@@ -584,6 +584,10 @@ class QueuePlayer {
           await playCurrent();
         } catch (error) {
           failure = 'Das Lied konnte nicht gespielt werden: $error';
+          // The picked song never played, so it must not stay current: the bar would name it
+          // and the play button would retry the same broken file.
+          queue.index = -1;
+          await player.stop();
           _changes.add(null);
         }
         return;

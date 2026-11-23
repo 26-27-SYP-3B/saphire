@@ -107,8 +107,8 @@ async fn queue_is_only_songs_and_order() {
     assert_eq!(reply.status, StatusCode::OK, "fill from an empty playlist -> {} ({})", reply.status, reply.body);
     assert_eq!(reply.body.trim(), "[]", "an empty queue must answer as an empty array, not null: {}", reply.body);
 
-    // An entry has position, track_id, title and artist and nothing else. There is no field
-    // that could say what filled the queue, so any source produces the same shape.
+    // An entry has position, track_id, title, artist and duration and nothing else. There is
+    // no field that could say what filled the queue, so any source produces the same shape.
     let track = upload_track(&test, &token, "lied.wav").await;
     let track_id = track.id;
     // The upload of a WAV carries no tags, so give the row an artist the answer has to show.
@@ -130,7 +130,7 @@ async fn queue_is_only_songs_and_order() {
     keys.sort_unstable();
     assert_eq!(
         keys,
-        ["artist", "position", "title", "track_id"],
+        ["artist", "duration_ms", "position", "title", "track_id"],
         "an entry carries {keys:?}, which would record where it came from"
     );
     assert_eq!(

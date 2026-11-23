@@ -45,8 +45,13 @@ class PlayerBar extends StatefulWidget {
 
 class _PlayerBarState extends State<PlayerBar> {
   StreamSubscription<void>? _changes;
+  StreamSubscription<Duration>? _position;
   String? _note;
   bool _busy = false;
+
+  /// Where the song is, kept from the player's stream: the bar shows a running time, and a
+  /// label that only changed on a tap would stand still while the song plays.
+  Duration _at = Duration.zero;
 
   @override
   void initState() {
@@ -54,11 +59,15 @@ class _PlayerBarState extends State<PlayerBar> {
     _changes = widget.player.changes.listen((_) {
       if (mounted) setState(() {});
     });
+    _position = widget.player.positionStream.listen((position) {
+      if (mounted) setState(() => _at = position);
+    });
   }
 
   @override
   void dispose() {
     _changes?.cancel();
+    _position?.cancel();
     super.dispose();
   }
 
@@ -118,11 +127,26 @@ class _PlayerBarState extends State<PlayerBar> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    title ?? 'Nichts wird abgespielt',
-                    style: theme.textTheme.labelLarge,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          title ?? 'Nichts wird abgespielt',
+                          style: theme.textTheme.labelLarge,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (title != null) ...[
+                        const SizedBox(width: 8),
+                        // The running time and the length are the same pair the full player
+                        // shows, so the bar does not make the user open it just to see them.
+                        Text(
+                          '${_clock(_at)} / ${_clock(widget.player.duration)}',
+                          style: theme.textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
+                        ),
+                      ],
+                    ],
                   ),
                   Text(
                     // What is known about the queue: the artist the answer named, or an error,
@@ -166,4 +190,7 @@ class _PlayerBarState extends State<PlayerBar> {
       ),
     );
   }
+
+  static String _clock(Duration at) =>
+      '${at.inMinutes}:${(at.inSeconds % 60).toString().padLeft(2, '0')}';
 }

@@ -16,7 +16,7 @@ void main() {
     final wiring = Wiring(loggedIn(), queueAdapter: StubAdapter(200, <Object>[]), audio: audio);
     addTearDown(wiring.dispose);
 
-    wiring.queue.fill([QueueEntry(position: 1, trackId: 8, title: 'Technogal.mp3')]);
+    wiring.queue.fill([QueueEntry(position: 1, trackId: 8, title: 'Technogal.mp3', artist: 'Kraftwerk')]);
     await wiring.player.playCurrent();
     audio.length(const Duration(seconds: 30));
 
@@ -31,6 +31,7 @@ void main() {
     final (service, _) = await openSong(audio);
 
     expect(service.mediaItem.value?.title, 'Technogal.mp3');
+    expect(service.mediaItem.value?.artist, 'Kraftwerk');
     expect(service.playbackState.value.playing, isTrue);
 
     await service.pause();
