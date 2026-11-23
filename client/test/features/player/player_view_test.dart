@@ -1,8 +1,11 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:saphire_client/core/config/api_config.dart';
 import 'package:saphire_client/core/storage/session_store.dart';
+import 'package:saphire_client/features/library/domain/local_track.dart';
 import 'package:saphire_client/features/player/domain/player.dart';
 import 'package:saphire_client/features/player/domain/queue.dart';
 import 'package:saphire_client/features/player/presentation/player_view.dart';
@@ -32,9 +35,10 @@ Future<Wiring> openPlayer(
   VoidCallback? onClose,
   VoidCallback? onQueueOpen,
   Future<void> Function(Wiring wiring)? prep,
+  Size size = const Size(420, 900),
 }) async {
   // A phone-shaped window, below AppShell.wideAt, so the view is measured as a phone shows it.
-  tester.view..physicalSize = const Size(420, 900)..devicePixelRatio = 1.0;
+  tester.view..physicalSize = size..devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
 
@@ -109,6 +113,47 @@ void main() {
     audio.at(const Duration(seconds: 11));
     await tester.pumpAndSettle();
     expect(find.text('0:11 / 0:30'), findsOneWidget);
+  });
+
+  // A 320 dp phone is the narrowest shape the transport has to fit. The queue button and the
+  // three transport buttons may not push the play button off the card.
+  testWidgets('the player fits a small phone', (tester) async {
+    final audio = FakePlayer();
+    addTearDown(audio.dispose);
+
+    final wiring = await openPlayer(
+      tester,
+      audio: audio,
+      size: const Size(320, 568),
+      prep: (wiring) async {
+        wiring.queue.fill([QueueEntry(position: 1, trackId: 8, title: 'Technogal.mp3')]);
+        await wiring.player.playCurrent();
+        audio.length(const Duration(seconds: 30));
+      },
+    );
+
+    expect(wiring.queue.current?.trackId, 8);
+    expect(find.byTooltip('Pause'), findsOneWidget);
+  });
+
+  // A landscape phone is wide but short. The card scrolls instead of clipping the controls.
+  testWidgets('the player scrolls in a short landscape window', (tester) async {
+    final audio = FakePlayer();
+    addTearDown(audio.dispose);
+
+    await openPlayer(
+      tester,
+      audio: audio,
+      size: const Size(851, 393),
+      prep: (wiring) async {
+        wiring.queue.fill([QueueEntry(position: 1, trackId: 8, title: 'Technogal.mp3')]);
+        await wiring.player.playCurrent();
+        audio.length(const Duration(seconds: 30));
+      },
+    );
+
+    expect(find.byType(SingleChildScrollView), findsOneWidget);
+    expect(find.byTooltip('Warteschlange'), findsOneWidget);
   });
 
   // The last song's length can still be known after the queue ended. The ten-second buttons
@@ -250,7 +295,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('2 Titel'), findsOneWidget);
-    expect(find.text('Kraftwerk'), findsWidgets);
+    // One artist under the title, one in the queue row.
+    expect(find.text('Kraftwerk'), findsNWidgets(2));
     expect(find.text('2:54'), findsOneWidget);
 
     await tester.tap(find.text('lied.wav'));
@@ -258,6 +304,63 @@ void main() {
 
     expect(wiring.queue.current?.title, 'lied.wav');
     expect(audio.opened.last, '$apiBaseUrl/api/music/4');
+    // The second song has no artist tag, so only its queue row still names the first one.
+    expect(find.text('Kraftwerk'), findsOneWidget);
+  });
+
+  // A device list is its own queue; the sheet must not claim it is empty while a file plays.
+  testWidgets('the compact queue shows the device list', (tester) async {
+    final audio = FakePlayer();
+    addTearDown(audio.dispose);
+
+    await openPlayer(
+      tester,
+      audio: audio,
+      prep: (wiring) async {
+        await wiring.player.playLocalQueue([
+          LocalTrack(title: 'a.mp3', bytes: Uint8List.fromList([0xFF, 0xFB])),
+          LocalTrack(title: 'b.mp3', bytes: Uint8List.fromList([0xFF, 0xFB])),
+        ]);
+      },
+    );
+
+    await tester.tap(find.byTooltip('Warteschlange'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('2 Titel'), findsOneWidget);
+    expect(find.text('a.mp3'), findsWidgets);
+    expect(find.text('b.mp3'), findsOneWidget);
+
+    await tester.tap(find.text('b.mp3'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('b.mp3'), findsWidgets);
+  });
+
+  // The sheet sits over the cover, not over the seek bar, so a tap on the bar still seeks.
+  testWidgets('the seek bar works while the queue sheet is open', (tester) async {
+    final audio = FakePlayer();
+    addTearDown(audio.dispose);
+
+    await openPlayer(
+      tester,
+      audio: audio,
+      prep: (wiring) async {
+        wiring.queue.fill([QueueEntry(position: 1, trackId: 8, title: 'Technogal.mp3')]);
+        await wiring.player.playCurrent();
+        audio.length(const Duration(seconds: 30));
+        audio.at(const Duration(seconds: 10));
+      },
+    );
+
+    await tester.tap(find.byTooltip('Warteschlange'));
+    await tester.pumpAndSettle();
+
+    final bar = find.byType(Slider).first;
+    await tester.tapAt(tester.getCenter(bar) + const Offset(40, 0));
+    await tester.pumpAndSettle();
+
+    expect(audio.sought, isNotEmpty);
   });
 
   // Without a song there is nothing to play or move, so the controls are off and a tap on one of

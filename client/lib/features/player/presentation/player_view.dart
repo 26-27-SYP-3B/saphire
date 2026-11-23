@@ -65,8 +65,15 @@ class _PlayerViewState extends State<PlayerView> {
     super.initState();
     // A song that ends on its own has no tap behind it, so without a listener this view would keep
     // showing the song that just finished.
+    _at = widget.player.position;
     _changes = widget.player.changes.listen((_) {
-      if (mounted) setState(() {});
+      if (mounted) {
+        setState(() {
+          // A different song starts at its own position, not at the one the last song ended on.
+          _at = widget.player.position;
+          _drag = null;
+        });
+      }
     });
     _position = widget.player.positionStream.listen((position) {
       if (mounted) setState(() => _at = position);
@@ -86,6 +93,8 @@ class _PlayerViewState extends State<PlayerView> {
     setState(() => _busy = true);
     try {
       await action();
+      // A message belongs to the action that failed; a later success must not keep it.
+      if (mounted && _note != null) setState(() => _note = null);
     } catch (error) {
       if (mounted) setState(() => _note = 'Das Lied konnte nicht gespielt werden: $error');
     } finally {
@@ -121,9 +130,13 @@ class _PlayerViewState extends State<PlayerView> {
         final phone = constraints.maxWidth < 600;
         final width = phone ? constraints.maxWidth - 24 : math.min(constraints.maxWidth - 48, 480.0);
         final height = phone ? constraints.maxHeight - 24 : math.min(constraints.maxHeight - 48, width * 1.6);
+        // The fixed parts below the cover are about 255 px tall. The cover takes the rest, and
+        // the card scrolls when the window is shorter than that, so a landscape phone keeps every
+        // control instead of clipping the bottom.
+        final coverHeight = math.max(100.0, height - 36 - 255);
         final sheetHeight = math.min(
-          math.max(84.0, 64.0 + widget.player.queue.length * 56.0),
-          height * 0.56,
+          math.max(84.0, 64.0 + _queueEntries().length * 56.0),
+          math.max(84.0, coverHeight - 16),
         );
 
         return Center(
@@ -147,59 +160,48 @@ class _PlayerViewState extends State<PlayerView> {
                 ],
               ),
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
-              child: Stack(
-                children: [
-                  Column(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          children: [
-                            Expanded(child: _cover(context, title)),
-                            const SizedBox(height: 16),
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: Text(
-                                title ?? 'Nichts wird abgespielt',
-                                style: theme.textTheme.headlineMedium?.copyWith(
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: -0.9,
-                                  color: scheme.onSurface,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: Text(
-                                subtitle,
-                                style: theme.textTheme.bodyMedium?.copyWith(
-                                  color: failed ? scheme.error : scheme.onSurfaceVariant,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            const SizedBox(height: 14),
-                            _progress(context, total),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      _controls(context, title, total, playing),
-                      const SizedBox(height: 6),
-                      _moreControls(context, title, total),
-                    ],
-                  ),
-                  if (_queueOpen)
-                    Positioned(
-                      left: 12,
-                      right: 12,
-                      bottom: 134,
-                      child: SizedBox(height: sheetHeight, child: _queueSheet(context)),
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    SizedBox(
+                      height: coverHeight,
+                      width: double.infinity,
+                      child: _cover(context, title, sheetHeight),
                     ),
-                ],
+                    const SizedBox(height: 16),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        title ?? 'Nichts wird abgespielt',
+                        style: theme.textTheme.headlineMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.9,
+                          color: scheme.onSurface,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        subtitle,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: failed ? scheme.error : scheme.onSurfaceVariant,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    _progress(context, total),
+                    const SizedBox(height: 12),
+                    _controls(context, title, total, playing),
+                    const SizedBox(height: 6),
+                    _moreControls(context, title, total),
+                  ],
+                ),
               ),
             ),
           ),
@@ -210,7 +212,10 @@ class _PlayerViewState extends State<PlayerView> {
 
   /// The cover area. The library keeps no picture per song, so the placeholder is a soft navy to
   /// warm gradient with the app's note mark; it is the same size a real cover would use.
-  Widget _cover(BuildContext context, String? title) {
+  Widget _cover(BuildContext context, String? title, double sheetHeight) {
+    final entries = _queueEntries();
+    final current = _queueCurrent(entries);
+
     return Stack(
       children: [
         Positioned.fill(
@@ -255,14 +260,46 @@ class _PlayerViewState extends State<PlayerView> {
               style: TextStyle(color: Colors.white38, fontSize: 12),
             ),
           ),
+        if (_queueOpen)
+          Positioned(
+            left: 8,
+            right: 8,
+            bottom: 8,
+            child: SizedBox(
+              height: sheetHeight,
+              child: _queueSheet(context, entries, current),
+            ),
+          ),
       ],
     );
+  }
+
+  /// The rows the compact queue shows. A device list is its own queue; while it owns playback
+  /// the server mirror is stale, so the list comes from the player instead.
+  List<QueueEntry> _queueEntries() {
+    final local = widget.player.localQueue;
+    if (local.isEmpty) return widget.player.queue.entries;
+    return [for (var index = 0; index < local.length; index++) QueueEntry.fromLocal(index + 1, local[index])];
+  }
+
+  QueueEntry? _queueCurrent(List<QueueEntry> entries) {
+    final local = widget.player.localCurrent;
+    if (local != null) {
+      for (final entry in entries) {
+        if (identical(entry.local, local)) return entry;
+      }
+      return null;
+    }
+    return widget.player.queue.current;
   }
 
   Widget _progress(BuildContext context, Duration total) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final totalMs = total.inMilliseconds;
+    // A stopped player keeps the length of the song it last had. With no current song the bar
+    // must not offer a seek into that stale file.
+    final hasSong = widget.player.localCurrent != null || widget.player.queue.current != null;
+    final totalMs = hasSong ? total.inMilliseconds : 0;
     final positionMs = (_drag ?? _at.inMilliseconds.toDouble()).clamp(0.0, totalMs > 0 ? totalMs.toDouble() : 1.0);
     final progress = totalMs > 0 ? positionMs / totalMs : 0.0;
 
@@ -271,7 +308,7 @@ class _PlayerViewState extends State<PlayerView> {
         // While a finger is on the bar the label follows the thumb, so the target time is
         // readable before the release that seeks.
         Text(
-          _clock(_drag == null ? _at : Duration(milliseconds: _drag!.round())),
+          hasSong ? _clock(_drag == null ? _at : Duration(milliseconds: _drag!.round())) : '0:00',
           style: theme.textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
         ),
         const SizedBox(width: 10),
@@ -325,7 +362,7 @@ class _PlayerViewState extends State<PlayerView> {
         ),
         const SizedBox(width: 10),
         Text(
-          _clock(total),
+          hasSong ? _clock(total) : '–',
           style: theme.textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
         ),
       ],
@@ -343,6 +380,7 @@ class _PlayerViewState extends State<PlayerView> {
           active: _queueOpen,
           onPressed: () => setState(() => _queueOpen = !_queueOpen),
         ),
+        const SizedBox(width: 8),
         Expanded(
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -365,8 +403,6 @@ class _PlayerViewState extends State<PlayerView> {
             ],
           ),
         ),
-        // Balances the queue button so the transport stays centred on the card.
-        const SizedBox(width: 44, height: 44),
       ],
     );
   }
@@ -410,16 +446,16 @@ class _PlayerViewState extends State<PlayerView> {
       message: tooltip,
       child: Material(
         color: active ? playerAccent.withValues(alpha: 0.16) : Colors.transparent,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
         child: InkWell(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(14),
           onTap: onPressed,
           child: Container(
-            width: 44,
-            height: 44,
+            width: 48,
+            height: 48,
             decoration: BoxDecoration(
               border: Border.all(color: active ? playerAccent : playerCardBorder),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(14),
             ),
             child: Icon(icon, size: 20, color: active ? playerAccent : scheme.onSurfaceVariant),
           ),
@@ -435,35 +471,32 @@ class _PlayerViewState extends State<PlayerView> {
 
     return Row(
       children: [
-        IconButton(
+        _smallButton(
           tooltip: 'Zufällige Wiedergabe',
-          iconSize: 20,
+          icon: Icons.shuffle,
+          color: widget.player.shuffle ? playerAccent : scheme.onSurfaceVariant,
           onPressed: disabled ? null : () => setState(() => widget.player.shuffle = !widget.player.shuffle),
-          icon: Icon(Icons.shuffle, color: widget.player.shuffle ? playerAccent : scheme.onSurfaceVariant),
         ),
-        IconButton(
+        _smallButton(
           tooltip: '10 Sekunden zurück',
-          iconSize: 20,
+          icon: Icons.replay_10,
           onPressed: jumpDisabled ? null : () => _run(() => widget.player.skip(const Duration(seconds: -10))),
-          icon: const Icon(Icons.replay_10),
         ),
-        IconButton(
+        _smallButton(
           tooltip: '10 Sekunden vor',
-          iconSize: 20,
+          icon: Icons.forward_10,
           onPressed: jumpDisabled ? null : () => _run(() => widget.player.skip(const Duration(seconds: 10))),
-          icon: const Icon(Icons.forward_10),
         ),
-        IconButton(
+        _smallButton(
           tooltip: 'Wiederholen',
-          iconSize: 20,
+          icon: Icons.repeat_one,
+          color: widget.player.repeatOne ? playerAccent : scheme.onSurfaceVariant,
           onPressed: disabled ? null : () => setState(() => widget.player.repeatOne = !widget.player.repeatOne),
-          icon: Icon(Icons.repeat_one, color: widget.player.repeatOne ? playerAccent : scheme.onSurfaceVariant),
         ),
-        IconButton(
+        _smallButton(
           tooltip: widget.player.volume == 0 ? 'Ton an' : 'Stumm',
-          iconSize: 20,
+          icon: widget.player.volume == 0 ? Icons.volume_off : Icons.volume_up,
           onPressed: _busy ? null : _toggleMute,
-          icon: Icon(widget.player.volume == 0 ? Icons.volume_off : Icons.volume_up),
         ),
         Expanded(
           child: SliderTheme(
@@ -487,14 +520,31 @@ class _PlayerViewState extends State<PlayerView> {
     );
   }
 
+  Widget _smallButton({
+    required String tooltip,
+    required IconData icon,
+    required VoidCallback? onPressed,
+    Color? color,
+  }) {
+    return IconButton(
+      tooltip: tooltip,
+      iconSize: 20,
+      onPressed: onPressed,
+      style: IconButton.styleFrom(
+        minimumSize: const Size(36, 36),
+        padding: EdgeInsets.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      icon: Icon(icon, color: color),
+    );
+  }
+
   /// The compact queue the player opens. It is the same list the frame's full panel shows, but
   /// only what a listener needs while the song runs: the order, the artist and the length. A row
   /// starts its song; the tune button asks the frame for the full panel with the row menu.
-  Widget _queueSheet(BuildContext context) {
+  Widget _queueSheet(BuildContext context, List<QueueEntry> entries, QueueEntry? current) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final entries = widget.player.queue.entries;
-    final current = widget.player.queue.current;
 
     return Material(
       color: const Color(0xFF202633),

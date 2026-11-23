@@ -95,8 +95,9 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     expect(player.failure, contains('konnte nicht gespielt werden'));
-    // The queue did move; the failure is about opening, not about the order.
-    expect(queue.current?.trackId, 4);
+    // The row never opened, so it must not stay current and the audio stays stopped.
+    expect(queue.current, isNull);
+    expect(fake.playing, isFalse);
 
     // The next attempt that works clears it, so the page does not keep an old error.
     fake.openError = null;
@@ -184,6 +185,49 @@ void main() {
     expect(player.localTitle, isNull);
     expect(player.localQueue.map((track) => track.title), ['a.mp3', 'b.mp3']);
     expect(fake.stopped.length, 1);
+  });
+
+  // The queue panel mirrors a device list into the playback queue. A row there has no server
+  // id, so pressing play must open the file, not ask the streaming endpoint for /api/music/-1.
+  test('a local row in the mirror opens the file on this device', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final queue = PlaybackQueue();
+    final track = LocalTrack(title: 'a.mp3', bytes: Uint8List.fromList([0xFF, 0xFB]));
+    final player = QueuePlayer(queue: queue, player: fake, session: SessionStore());
+    addTearDown(player.dispose);
+
+    await player.playLocalQueue([track]);
+    // What the queue panel does when it opens: mirror the device list into the playback queue.
+    queue.fill([QueueEntry.fromLocal(1, track)]);
+    await player.playCurrent();
+
+    expect(player.localTitle, 'a.mp3');
+    expect(fake.opened.last, startsWith('data:audio/mpeg'));
+    expect(fake.opened, isNot(contains('/api/music/-1')));
+  });
+
+  // When the last file of a device list ends, the mirror must not keep a row current: the bar
+  // would name a song that is no longer playing.
+  test('a finished device list clears the mirror current', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final queue = PlaybackQueue();
+    final player = QueuePlayer(queue: queue, player: fake, session: SessionStore());
+    addTearDown(player.dispose);
+
+    final track = LocalTrack(title: 'a.mp3', bytes: Uint8List.fromList([0xFF, 0xFB]));
+    await player.playLocalQueue([track]);
+    // What the queue panel does when it opens: mirror the device list and point at the playing row.
+    queue.fill([QueueEntry.fromLocal(1, track)]);
+    queue.advance();
+    expect(queue.current, isNotNull);
+
+    fake.complete();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(player.localTitle, isNull);
+    expect(queue.current, isNull);
   });
 
   // The next button has to move a local list too, and say when it was the last song.

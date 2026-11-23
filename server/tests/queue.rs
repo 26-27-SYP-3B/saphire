@@ -259,6 +259,7 @@ async fn append_queue_entry() {
     assert_eq!(added.track_id, track_id, "append answered {added:?}, wanted the song it was asked for");
     assert_eq!(added.title, track.title, "append answered {added:?}, wanted the title from the library");
     assert_eq!(added.artist, "Kraftwerk", "append answered {added:?}, wanted the artist from the library");
+    assert_eq!(added.duration_ms, track.duration_ms, "append answered {added:?}, wanted the length from the library");
 
     // The same song twice is allowed, because a queue is an order, not a set.
     let reply = common::post(&test, "/api/queue/songs", &format!(r#"{{"track_id": {track_id}}}"#), &token).await;

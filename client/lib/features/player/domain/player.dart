@@ -206,6 +206,9 @@ class QueuePlayer {
     }
 
     _localIndex = -1;
+    // A finished device list is not a server row: the mirror must not keep naming the last
+    // device song as current after the audio stopped.
+    queue.index = -1;
     if (skipped != null) failure = skipped;
     _changes.add(null);
     await player.stop();
@@ -231,6 +234,8 @@ class QueuePlayer {
       await player.stop();
       _local.removeAt(index);
       _localIndex = -1;
+      // A mirror row is not a song that still plays: nothing is current after this removal.
+      queue.index = -1;
     } else {
       _local.removeAt(index);
       if (_localIndex > index) _localIndex -= 1;
@@ -244,6 +249,7 @@ class QueuePlayer {
     await player.stop();
     _local.clear();
     _localIndex = -1;
+    queue.index = -1;
     _changes.add(null);
   }
 
@@ -260,6 +266,7 @@ class QueuePlayer {
 
     if (current != null && _localIndex < 0) {
       await player.stop();
+      queue.index = -1;
       _changes.add(null);
     }
   }
@@ -306,10 +313,6 @@ class QueuePlayer {
   }
 
   Future<void> playCurrent() async {
-    // A server queue replaces what the device was playing from a list.
-    _local.clear();
-    _localIndex = -1;
-
     // Nothing is current until a player starts one. A queue that was just filled plays
     // from its first song, which is what pressing play means.
     final entry = queue.current ?? queue.advance();
@@ -318,17 +321,50 @@ class QueuePlayer {
       return;
     }
 
+    // The queue panel mirrors the device queue into this list, so a row here can be a file on
+    // this device. It has no server id, and opening it through the streaming endpoint would
+    // ask for /api/music/-1 and lose the device list.
+    if (entry.local != null) {
+      final at = _local.indexWhere((track) => identical(track, entry.local));
+      if (at < 0) {
+        queue.index = -1;
+        _changes.add(null);
+        return;
+      }
+      _localIndex = at;
+      try {
+        await _openLocal();
+      } catch (error) {
+        _localIndex = -1;
+        queue.index = -1;
+        await player.stop();
+        rethrow;
+      }
+      return;
+    }
+
+    // A server queue replaces what the device was playing from a list.
+    _local.clear();
+    _localIndex = -1;
     failure = null;
 
     // The token is only sent when there is one. "Bearer null" would be answered as an
     // unknown session, and the message the user sees would be about a token they never
     // sent.
     final token = session.token;
-    await player.open(
-      urlFor(entry.trackId),
-      headers: token == null ? const {} : {'Authorization': 'Bearer $token'},
-    );
-    await player.play();
+    try {
+      await player.open(
+        urlFor(entry.trackId),
+        headers: token == null ? const {} : {'Authorization': 'Bearer $token'},
+      );
+      await player.play();
+    } catch (error) {
+      // The song never opened, so it must not stay current: the bar would name it and the play
+      // button would retry the same broken file.
+      queue.index = -1;
+      await player.stop();
+      rethrow;
+    }
 
     // Reported here, because a row opened from a page has no next() or previous() behind it: without
     // this the bar, the queue and the notification would keep the song that was there before.
@@ -540,6 +576,7 @@ class QueuePlayer {
         // Nothing else in the list could be opened; keeping the old index would let a broken file
         // look like the current one.
         _localIndex = -1;
+        queue.index = -1;
         failure = skipped;
         _changes.add(null);
         await player.stop();

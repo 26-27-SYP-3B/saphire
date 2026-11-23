@@ -514,20 +514,20 @@ void main() {
   });
 
   // A song that cannot be opened is not a JSON answer from the server, so the message is the
-  // exception's own text, shown on the page that made the call. The bar only reports what it
-  // was asked to do itself, so it still names the slot here — which is what this test checks,
-  // because the page cannot show both at once.
+  // exception's own text, shown on the page that made the call. The song never opened, so it
+  // must not stay current and the bar must not name it as if it were playing.
   testWidgets('a song the player cannot start is named by the page, not by the bar', (tester) async {
     final audio = FakePlayer();
     audio.openError = 'das Audioobjekt ist geschlossen';
-    await openLibrary(tester, libraryBody: [libraryAnswer.first], queues: StubAdapter(200, queueFor(4, 'Neutrone (Remix)')), audio: audio);
+    final wiring = await openLibrary(tester, libraryBody: [libraryAnswer.first], queues: StubAdapter(200, queueFor(4, 'Neutrone (Remix)')), audio: audio);
 
     await tester.tap(playIcon(tester));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('das Audioobjekt ist geschlossen'), findsOneWidget);
+    expect(wiring.queue.current, isNull);
     expect(
-      find.descendant(of: find.byType(PlayerBar), matching: find.text('Warteschlange · Slot 1')),
+      find.descendant(of: find.byType(PlayerBar), matching: find.text('Nichts wird abgespielt')),
       findsOneWidget,
     );
   });

@@ -56,8 +56,9 @@ class _PlayerBarState extends State<PlayerBar> {
   @override
   void initState() {
     super.initState();
+    _at = widget.player.position;
     _changes = widget.player.changes.listen((_) {
-      if (mounted) setState(() {});
+      if (mounted) setState(() => _at = widget.player.position);
     });
     _position = widget.player.positionStream.listen((position) {
       if (mounted) setState(() => _at = position);

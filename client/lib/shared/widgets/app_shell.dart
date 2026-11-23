@@ -192,7 +192,13 @@ class _AppShellState extends State<AppShell> {
                     player: widget.player,
                     localMode: widget.localMode,
                     localLibrary: widget.localLibrary,
-                    onQueueOpen: () => setState(() => _queueOpen = !_queueOpen),
+                    onQueueOpen: () => setState(() {
+                      // The side panel and the full player cannot share the middle on a narrow
+                      // window: the queue would squeeze the player below its controls. Opening
+                      // the queue from the bar therefore closes the player first.
+                      _playerOpen = false;
+                      _queueOpen = !_queueOpen;
+                    }),
                     onPlayerOpen: () => setState(() {
                       _playerOpen = true;
                       // The full player is the whole page on a phone; a queue sheet floating over it
