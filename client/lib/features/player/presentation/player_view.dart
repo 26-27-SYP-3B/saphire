@@ -96,7 +96,9 @@ class _PlayerViewState extends State<PlayerView> {
       // A message belongs to the action that failed; a later success must not keep it.
       if (mounted && _note != null) setState(() => _note = null);
     } catch (error) {
-      if (mounted) setState(() => _note = 'Das Lied konnte nicht gespielt werden: $error');
+      if (mounted) {
+        setState(() => _note = 'Das Lied konnte nicht gespielt werden: $error');
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -109,7 +111,8 @@ class _PlayerViewState extends State<PlayerView> {
     _run(() => widget.player.setVolume(value));
   }
 
-  void _toggleMute() => _setVolume(widget.player.volume > 0 ? 0 : widget.player.volumeBeforeMute);
+  void _toggleMute() =>
+      _setVolume(widget.player.volume > 0 ? 0 : widget.player.volumeBeforeMute);
 
   @override
   Widget build(BuildContext context) {
@@ -128,8 +131,12 @@ class _PlayerViewState extends State<PlayerView> {
         // A phone has no room for a small card in the middle: the player fills the screen the
         // way the app does. A wider window gets the centred card the mock shows.
         final phone = constraints.maxWidth < 600;
-        final width = phone ? constraints.maxWidth - 24 : math.min(constraints.maxWidth - 48, 480.0);
-        final height = phone ? constraints.maxHeight - 24 : math.min(constraints.maxHeight - 48, width * 1.6);
+        final width = phone
+            ? constraints.maxWidth - 24
+            : math.min(constraints.maxWidth - 48, 480.0);
+        final height = phone
+            ? constraints.maxHeight - 24
+            : math.min(constraints.maxHeight - 48, width * 1.6);
         // The fixed parts below the cover are about 255 px tall. The cover takes the rest, and
         // the card scrolls when the window is shorter than that, so a landscape phone keeps every
         // control instead of clipping the bottom.
@@ -188,7 +195,9 @@ class _PlayerViewState extends State<PlayerView> {
                       child: Text(
                         subtitle,
                         style: theme.textTheme.bodyMedium?.copyWith(
-                          color: failed ? scheme.error : scheme.onSurfaceVariant,
+                          color: failed
+                              ? scheme.error
+                              : scheme.onSurfaceVariant,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -225,7 +234,11 @@ class _PlayerViewState extends State<PlayerView> {
               gradient: const LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [Color(0xFF0B1220), Color(0xFF161A24), Color(0xFF38251C)],
+                colors: [
+                  Color(0xFF0B1220),
+                  Color(0xFF161A24),
+                  Color(0xFF38251C),
+                ],
                 stops: [0, 0.55, 1],
               ),
             ),
@@ -279,7 +292,10 @@ class _PlayerViewState extends State<PlayerView> {
   List<QueueEntry> _queueEntries() {
     final local = widget.player.localQueue;
     if (local.isEmpty) return widget.player.queue.entries;
-    return [for (var index = 0; index < local.length; index++) QueueEntry.fromLocal(index + 1, local[index])];
+    return [
+      for (var index = 0; index < local.length; index++)
+        QueueEntry.fromLocal(index + 1, local[index]),
+    ];
   }
 
   QueueEntry? _queueCurrent(List<QueueEntry> entries) {
@@ -298,9 +314,14 @@ class _PlayerViewState extends State<PlayerView> {
     final scheme = theme.colorScheme;
     // A stopped player keeps the length of the song it last had. With no current song the bar
     // must not offer a seek into that stale file.
-    final hasSong = widget.player.localCurrent != null || widget.player.queue.current != null;
+    final hasSong =
+        widget.player.localCurrent != null ||
+        widget.player.queue.current != null;
     final totalMs = hasSong ? total.inMilliseconds : 0;
-    final positionMs = (_drag ?? _at.inMilliseconds.toDouble()).clamp(0.0, totalMs > 0 ? totalMs.toDouble() : 1.0);
+    final positionMs = (_drag ?? _at.inMilliseconds.toDouble()).clamp(
+      0.0,
+      totalMs > 0 ? totalMs.toDouble() : 1.0,
+    );
     final progress = totalMs > 0 ? positionMs / totalMs : 0.0;
 
     return Row(
@@ -308,8 +329,14 @@ class _PlayerViewState extends State<PlayerView> {
         // While a finger is on the bar the label follows the thumb, so the target time is
         // readable before the release that seeks.
         Text(
-          hasSong ? _clock(_drag == null ? _at : Duration(milliseconds: _drag!.round())) : '0:00',
-          style: theme.textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
+          hasSong
+              ? _clock(
+                  _drag == null ? _at : Duration(milliseconds: _drag!.round()),
+                )
+              : '0:00',
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
         ),
         const SizedBox(width: 10),
         Expanded(
@@ -319,7 +346,9 @@ class _PlayerViewState extends State<PlayerView> {
               alignment: Alignment.center,
               children: [
                 Positioned.fill(
-                  child: CustomPaint(painter: _WaveformPainter(progress: progress)),
+                  child: CustomPaint(
+                    painter: _WaveformPainter(progress: progress),
+                  ),
                 ),
                 Positioned.fill(
                   child: SliderTheme(
@@ -332,15 +361,21 @@ class _PlayerViewState extends State<PlayerView> {
                       thumbColor: Colors.white,
                       disabledThumbColor: playerBarMuted,
                       overlayColor: Colors.white.withValues(alpha: 0.12),
-                      thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 9, elevation: 8),
-                      overlayShape: const RoundSliderOverlayShape(overlayRadius: 20),
+                      thumbShape: const RoundSliderThumbShape(
+                        enabledThumbRadius: 10,
+                      ),
+                      overlayShape: const RoundSliderOverlayShape(
+                        overlayRadius: 20,
+                      ),
                     ),
                     child: Slider(
                       // A song whose length the player does not know cannot be seeked to a tenth of
                       // it, so the bar stays where it is.
                       max: totalMs > 0 ? totalMs.toDouble() : 1,
                       value: totalMs > 0 ? positionMs : 0,
-                      onChanged: totalMs > 0 ? (value) => setState(() => _drag = value) : null,
+                      onChanged: totalMs > 0
+                          ? (value) => setState(() => _drag = value)
+                          : null,
                       // Only the release seeks: one seek per drag frame fights the position stream
                       // and most of the jumps would be thrown away.
                       onChangeEnd: totalMs > 0
@@ -363,13 +398,20 @@ class _PlayerViewState extends State<PlayerView> {
         const SizedBox(width: 10),
         Text(
           hasSong ? _clock(total) : '–',
-          style: theme.textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
         ),
       ],
     );
   }
 
-  Widget _controls(BuildContext context, String? title, Duration total, bool playing) {
+  Widget _controls(
+    BuildContext context,
+    String? title,
+    Duration total,
+    bool playing,
+  ) {
     final disabled = title == null || _busy;
 
     return Row(
@@ -388,7 +430,9 @@ class _PlayerViewState extends State<PlayerView> {
               IconButton(
                 tooltip: 'Vorheriges Lied',
                 iconSize: 30,
-                onPressed: disabled ? null : () => _run(() => widget.player.previous()),
+                onPressed: disabled
+                    ? null
+                    : () => _run(() => widget.player.previous()),
                 icon: const Icon(Icons.skip_previous),
               ),
               const SizedBox(width: 10),
@@ -397,7 +441,9 @@ class _PlayerViewState extends State<PlayerView> {
               IconButton(
                 tooltip: 'Nächstes Lied',
                 iconSize: 30,
-                onPressed: disabled ? null : () => _run(() => widget.player.next()),
+                onPressed: disabled
+                    ? null
+                    : () => _run(() => widget.player.next()),
                 icon: const Icon(Icons.skip_next),
               ),
             ],
@@ -421,7 +467,9 @@ class _PlayerViewState extends State<PlayerView> {
       ),
       child: IconButton(
         tooltip: playing ? 'Pause' : 'Wiedergeben',
-        onPressed: disabled ? null : () => _run(playing ? widget.player.pause : widget.player.resume),
+        onPressed: disabled
+            ? null
+            : () => _run(playing ? widget.player.pause : widget.player.resume),
         icon: Icon(playing ? Icons.pause : Icons.play_arrow),
         iconSize: 34,
         style: IconButton.styleFrom(
@@ -445,7 +493,9 @@ class _PlayerViewState extends State<PlayerView> {
     return Tooltip(
       message: tooltip,
       child: Material(
-        color: active ? playerAccent.withValues(alpha: 0.16) : Colors.transparent,
+        color: active
+            ? playerAccent.withValues(alpha: 0.16)
+            : Colors.transparent,
         borderRadius: BorderRadius.circular(14),
         child: InkWell(
           borderRadius: BorderRadius.circular(14),
@@ -454,10 +504,16 @@ class _PlayerViewState extends State<PlayerView> {
             width: 48,
             height: 48,
             decoration: BoxDecoration(
-              border: Border.all(color: active ? playerAccent : playerCardBorder),
+              border: Border.all(
+                color: active ? playerAccent : playerCardBorder,
+              ),
               borderRadius: BorderRadius.circular(14),
             ),
-            child: Icon(icon, size: 20, color: active ? playerAccent : scheme.onSurfaceVariant),
+            child: Icon(
+              icon,
+              size: 20,
+              color: active ? playerAccent : scheme.onSurfaceVariant,
+            ),
           ),
         ),
       ),
@@ -475,23 +531,40 @@ class _PlayerViewState extends State<PlayerView> {
           tooltip: 'Zufällige Wiedergabe',
           icon: Icons.shuffle,
           color: widget.player.shuffle ? playerAccent : scheme.onSurfaceVariant,
-          onPressed: disabled ? null : () => setState(() => widget.player.shuffle = !widget.player.shuffle),
+          onPressed: disabled
+              ? null
+              : () => setState(
+                  () => widget.player.shuffle = !widget.player.shuffle,
+                ),
         ),
         _smallButton(
           tooltip: '10 Sekunden zurück',
           icon: Icons.replay_10,
-          onPressed: jumpDisabled ? null : () => _run(() => widget.player.skip(const Duration(seconds: -10))),
+          onPressed: jumpDisabled
+              ? null
+              : () => _run(
+                  () => widget.player.skip(const Duration(seconds: -10)),
+                ),
         ),
         _smallButton(
           tooltip: '10 Sekunden vor',
           icon: Icons.forward_10,
-          onPressed: jumpDisabled ? null : () => _run(() => widget.player.skip(const Duration(seconds: 10))),
+          onPressed: jumpDisabled
+              ? null
+              : () =>
+                    _run(() => widget.player.skip(const Duration(seconds: 10))),
         ),
         _smallButton(
           tooltip: 'Wiederholen',
           icon: Icons.repeat_one,
-          color: widget.player.repeatOne ? playerAccent : scheme.onSurfaceVariant,
-          onPressed: disabled ? null : () => setState(() => widget.player.repeatOne = !widget.player.repeatOne),
+          color: widget.player.repeatOne
+              ? playerAccent
+              : scheme.onSurfaceVariant,
+          onPressed: disabled
+              ? null
+              : () => setState(
+                  () => widget.player.repeatOne = !widget.player.repeatOne,
+                ),
         ),
         _smallButton(
           tooltip: widget.player.volume == 0 ? 'Ton an' : 'Stumm',
@@ -542,71 +615,99 @@ class _PlayerViewState extends State<PlayerView> {
   /// The compact queue the player opens. It is the same list the frame's full panel shows, but
   /// only what a listener needs while the song runs: the order, the artist and the length. A row
   /// starts its song; the tune button asks the frame for the full panel with the row menu.
-  Widget _queueSheet(BuildContext context, List<QueueEntry> entries, QueueEntry? current) {
+  Widget _queueSheet(
+    BuildContext context,
+    List<QueueEntry> entries,
+    QueueEntry? current,
+  ) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
-    return Material(
-      color: const Color(0xFF202633),
-      elevation: 10,
-      borderRadius: BorderRadius.circular(16),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Warteschlange',
-                    style: theme.textTheme.titleMedium,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                Text(
-                  '${entries.length} Titel',
-                  style: theme.textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
-                ),
-                if (widget.onQueueOpen != null)
-                  IconButton(
-                    tooltip: 'Warteschlange bearbeiten',
-                    iconSize: 18,
-                    onPressed: () {
-                      setState(() => _queueOpen = false);
-                      widget.onQueueOpen?.call();
-                    },
-                    icon: const Icon(Icons.tune),
-                  ),
-              ],
-            ),
-          ),
-          const Divider(height: 1, color: playerCardBorder),
-          Expanded(
-            child: entries.isEmpty
-                ? Center(
-                    child: Text(
-                      'Die Warteschlange ist leer.',
-                      style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-                    ),
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    itemCount: entries.length,
-                    itemBuilder: (context, index) {
-                      final entry = entries[index];
-                      final active = identical(entry, current);
-                      return _queueRow(context, index, entry, active);
-                    },
-                  ),
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.35),
+            blurRadius: 24,
+            offset: const Offset(0, 10),
           ),
         ],
+      ),
+      child: Material(
+        color: const Color(0xFF202633),
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: playerCardBorder),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Warteschlange',
+                      style: theme.textTheme.titleMedium,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Text(
+                    '${entries.length} Titel',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  if (widget.onQueueOpen != null)
+                    IconButton(
+                      tooltip: 'Warteschlange bearbeiten',
+                      iconSize: 18,
+                      onPressed: () {
+                        setState(() => _queueOpen = false);
+                        widget.onQueueOpen?.call();
+                      },
+                      icon: const Icon(Icons.tune),
+                    ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: playerCardBorder),
+            Expanded(
+              child: entries.isEmpty
+                  ? Center(
+                      child: Text(
+                        'Die Warteschlange ist leer.',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      itemCount: entries.length,
+                      itemBuilder: (context, index) {
+                        final entry = entries[index];
+                        final active = identical(entry, current);
+                        return _queueRow(context, index, entry, active);
+                      },
+                    ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _queueRow(BuildContext context, int index, QueueEntry entry, bool active) {
+  Widget _queueRow(
+    BuildContext context,
+    int index,
+    QueueEntry entry,
+    bool active,
+  ) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
@@ -642,7 +743,9 @@ class _PlayerViewState extends State<PlayerView> {
                   if (entry.artist.isNotEmpty)
                     Text(
                       entry.artist,
-                      style: theme.textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -651,8 +754,12 @@ class _PlayerViewState extends State<PlayerView> {
             ),
             const SizedBox(width: 8),
             Text(
-              entry.durationMs > 0 ? _clock(Duration(milliseconds: entry.durationMs)) : '–',
-              style: theme.textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
+              entry.durationMs > 0
+                  ? _clock(Duration(milliseconds: entry.durationMs))
+                  : '–',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
             ),
           ],
         ),
@@ -682,7 +789,9 @@ class _WaveformPainter extends CustomPainter {
 
     for (var index = 0; index < count; index++) {
       final at = index / (count - 1);
-      final wave = (math.sin(index * 1.31) * 0.5 + 0.5) * (math.sin(index * 0.43 + 0.8) * 0.35 + 0.65);
+      final wave =
+          (math.sin(index * 1.31) * 0.5 + 0.5) *
+          (math.sin(index * 0.43 + 0.8) * 0.35 + 0.65);
       final height = (5 + (size.height - 10) * wave).clamp(5.0, size.height);
       paint.color = at <= progress ? playerAccent : playerBarMuted;
       final x = index * (barWidth + gap) + barWidth / 2;
@@ -695,5 +804,6 @@ class _WaveformPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_WaveformPainter oldDelegate) => oldDelegate.progress != progress;
+  bool shouldRepaint(_WaveformPainter oldDelegate) =>
+      oldDelegate.progress != progress;
 }
