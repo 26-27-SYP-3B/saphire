@@ -8,8 +8,8 @@ import '../../../shared/widgets/server_url_field.dart';
 import '../../auth/data/auth_repository.dart';
 import '../data/server_check.dart';
 
-/// Der geführte Start beim ersten Aufruf: einen Server hinzufügen. 'Verbinden' prüft
-/// die Adresse und führt bei einer Bestätigung direkt zur Anmeldung.
+/// The guided start on the first call: add a server. 'Connect' checks the
+/// address and leads straight to the login on a confirmation.
 class SetupScreen extends StatefulWidget {
   const SetupScreen({
     super.key,
@@ -40,8 +40,8 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   Future<void> _connect() async {
-    // Ein leeres oder ungültiges Feld wird hier gestoppt, es geht keine Anfrage
-    // weg, und das Feld behält seinen Wert für den nächsten Versuch.
+    // An empty or invalid field is stopped here, no request goes out, and the
+    // field keeps its value for the next attempt.
     if (!_formKey.currentState!.validate()) return;
 
     setState(() {
@@ -61,17 +61,17 @@ class _SetupScreenState extends State<SetupScreen> {
       return;
     }
 
-    // Eine Session von einem früheren Server darf den Wechsel nicht überleben.
+    // A session from an earlier server must not survive the switch.
     await widget.repository.logout();
-    // Ein Server ersetzt den Start ohne Server, sonst bliebe der nächste Start dort.
+    // A server replaces the start without a server, otherwise the next start would stay there.
     await widget.settings.save(server: base, localMode: false);
     if (!mounted) return;
     context.go('/login');
   }
 
-  /// Der Weg ohne Server, gleich beim ersten Start: kein Konto, die Songs dieses Geräts.
+  /// The way without a server, straight from the first start: no account, the songs of this device.
   Future<void> _withoutServer() async {
-    // Eine Session gehört zu einem Server, den dieser Start nicht benutzt.
+    // A session belongs to a server that this start does not use.
     await widget.repository.logout();
     await widget.settings.save(localMode: true);
     if (!mounted) return;
