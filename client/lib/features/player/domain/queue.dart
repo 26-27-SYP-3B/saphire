@@ -11,6 +11,7 @@ class QueueEntry {
     required this.title,
     this.artist = '',
     this.durationMs = 0,
+    this.waveform = const [],
     this.manual = false,
     this.local,
   });
@@ -36,6 +37,9 @@ class QueueEntry {
   /// this device has no measured length, so it keeps 0.
   final int durationMs;
 
+  /// The song's shape as 64 peaks from 0 to 255, empty when the server could not decode it.
+  final List<int> waveform;
+
   /// How the row got into the queue: the person put it there themselves, or a list did. The
   /// queue answer names no source, so this is what the mirror keeps, and it is the only thing
   /// a refresh can carry over.
@@ -50,6 +54,9 @@ class QueueEntry {
     title: json['title'] as String,
     artist: json['artist'] as String? ?? '',
     durationMs: (json['duration_ms'] as num?)?.toInt() ?? 0,
+    waveform: [
+      for (final peak in json['waveform'] as List<dynamic>? ?? const []) (peak as num).toInt(),
+    ],
   );
 
   /// The same song at another slot. The mirror renumbers this way, so a page shows the
@@ -60,6 +67,7 @@ class QueueEntry {
     title: title,
     artist: artist,
     durationMs: durationMs,
+    waveform: waveform,
     manual: manual,
     local: local,
   );
@@ -70,6 +78,7 @@ class QueueEntry {
     title: title,
     artist: artist,
     durationMs: durationMs,
+    waveform: waveform,
     manual: true,
     local: local,
   );

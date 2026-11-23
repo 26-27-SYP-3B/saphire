@@ -716,13 +716,14 @@ async fn list_answers_the_full_row_ordered_by_id() {
     // present.
     for (entry, id) in entries.iter().zip([2, 5]) {
         let object = entry.as_object().expect("an entry is an object");
-        assert_eq!(object.len(), 12, "an entry does not carry the documented row: {entry}");
+        assert_eq!(object.len(), 13, "an entry does not carry the documented row: {entry}");
         assert_eq!(entry["uploaded_by"].as_str(), Some("lukas"), "an entry does not name who added it: {entry}");
         assert_eq!(entry["artist"].as_str(), Some(format!("artist-{id}").as_str()), "an entry lost its artist: {entry}");
         assert_eq!(entry["album"].as_str(), Some(format!("album-{id}").as_str()), "an entry lost its album: {entry}");
         assert_eq!(entry["genre"].as_str(), Some(format!("genre-{id}").as_str()), "an entry lost its genre: {entry}");
         assert_eq!(entry["year"].as_i64(), Some(1900 + id), "an entry lost its year: {entry}");
         assert_eq!(entry["duration_ms"].as_i64(), Some(0), "an entry without a length does not read as 0: {entry}");
+        assert_eq!(entry["waveform"].as_array().map(Vec::len), Some(0), "a row with no decoded audio has bars: {entry}");
     }
 }
 

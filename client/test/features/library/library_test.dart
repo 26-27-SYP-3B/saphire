@@ -43,6 +43,7 @@ const libraryAnswer = [
     'genre': 'Elektronik',
     'year': 1977.0,
     'duration_ms': 215000.0,
+    'waveform': [0.0, 64.0, 255.0],
     'uploaded_at': 300.0,
   },
   {
@@ -216,6 +217,7 @@ void main() {
     expect(tracks.first.album, 'Trans Europa Express');
     expect(tracks.first.genre, 'Elektronik');
     expect(tracks.first.year, 1977);
+    expect(tracks.first.waveform, [0, 64, 255]);
     // A file that names none of them must not read as one.
     expect(tracks[1].album, '');
     expect(tracks[1].year, 0);

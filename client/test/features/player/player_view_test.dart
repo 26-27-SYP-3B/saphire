@@ -17,7 +17,14 @@ import '../../support/wiring.dart';
 
 // Two songs, so a test can watch the player move away from one and back to it.
 const queueAnswer = [
-  {'position': 1.0, 'track_id': 8.0, 'title': 'Technogal.mp3', 'artist': 'Kraftwerk', 'duration_ms': 174000.0},
+  {
+    'position': 1.0,
+    'track_id': 8.0,
+    'title': 'Technogal.mp3',
+    'artist': 'Kraftwerk',
+    'duration_ms': 174000.0,
+    'waveform': [0.0, 128.0, 255.0],
+  },
   {'position': 2.0, 'track_id': 4.0, 'title': 'lied.wav', 'artist': '', 'duration_ms': 0.0},
 ];
 

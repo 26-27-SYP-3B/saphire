@@ -21,7 +21,13 @@ import '../../support/wiring.dart';
 // A queue answer as the server sends it: position, track_id, title and artist, and nothing that
 // says what filled it or what was played before.
 const queueAnswer = [
-  {'position': 1.0, 'track_id': 8.0, 'title': 'Technogal.mp3', 'duration_ms': 174000.0},
+  {
+    'position': 1.0,
+    'track_id': 8.0,
+    'title': 'Technogal.mp3',
+    'duration_ms': 174000.0,
+    'waveform': [0.0, 128.0, 255.0],
+  },
   {'position': 2.0, 'track_id': 4.0, 'title': 'lied.wav', 'duration_ms': 0.0},
   {'position': 3.0, 'track_id': 7.0, 'title': 'solo.mp3', 'duration_ms': 121000.0},
 ];
@@ -126,6 +132,7 @@ void main() {
     expect(entries.first.trackId, 8);
     expect(entries.first.title, 'Technogal.mp3');
     expect(entries.first.durationMs, 174000);
+    expect(entries.first.waveform, [0, 128, 255]);
 
     // An empty queue answers [], never null.
     final empty = QueueRepository(Dio()..httpClientAdapter = StubAdapter(200, <Object>[]), loggedIn());

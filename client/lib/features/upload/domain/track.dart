@@ -14,6 +14,7 @@ class Track {
     this.genre = '',
     this.year = 0,
     this.durationMs = 0,
+    this.waveform = const [],
     this.uploadedBy = '',
     this.storedName = '',
     this.size = 0,
@@ -40,6 +41,10 @@ class Track {
   /// The playing time in milliseconds, 0 when the format cannot be measured.
   final int durationMs;
 
+  /// The song's shape as 64 peaks from 0 to 255. Empty when the server could not decode it;
+  /// the player then draws its neutral bars.
+  final List<int> waveform;
+
   /// The name the file has inside the library folder: 16 random bytes as hex.
   final String storedName;
   final int size;
@@ -55,6 +60,9 @@ class Track {
     genre: json['genre'] as String? ?? '',
     year: (json['year'] as num?)?.toInt() ?? 0,
     durationMs: (json['duration_ms'] as num?)?.toInt() ?? 0,
+    waveform: [
+      for (final peak in json['waveform'] as List<dynamic>? ?? const []) (peak as num).toInt(),
+    ],
     uploadedBy: json['uploaded_by'] as String? ?? '',
     storedName: json['stored_name'] as String? ?? '',
     size: (json['size'] as num?)?.toInt() ?? 0,

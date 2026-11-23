@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../domain/player.dart';
@@ -121,6 +122,7 @@ class _PlayerViewState extends State<PlayerView> {
     final local = widget.player.localCurrent;
     final entry = widget.player.queue.current;
     final title = local?.title ?? entry?.title;
+    final waveform = local == null ? entry?.waveform ?? const <int>[] : const <int>[];
     final subtitle = _note ?? widget.player.statusNote;
     final failed = _note != null || widget.player.failure != null;
     final total = widget.player.duration;
@@ -204,7 +206,7 @@ class _PlayerViewState extends State<PlayerView> {
                       ),
                     ),
                     const SizedBox(height: 14),
-                    _progress(context, total),
+                    _progress(context, total, waveform),
                     const SizedBox(height: 12),
                     _controls(context, title, total, playing),
                     const SizedBox(height: 6),
@@ -309,7 +311,7 @@ class _PlayerViewState extends State<PlayerView> {
     return widget.player.queue.current;
   }
 
-  Widget _progress(BuildContext context, Duration total) {
+  Widget _progress(BuildContext context, Duration total, List<int> waveform) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     // A stopped player keeps the length of the song it last had. With no current song the bar
@@ -347,7 +349,7 @@ class _PlayerViewState extends State<PlayerView> {
               children: [
                 Positioned.fill(
                   child: CustomPaint(
-                    painter: _WaveformPainter(progress: progress),
+                    painter: _WaveformPainter(progress: progress, samples: waveform),
                   ),
                 ),
                 Positioned.fill(
@@ -414,17 +416,13 @@ class _PlayerViewState extends State<PlayerView> {
   ) {
     final disabled = title == null || _busy;
 
-    return Row(
-      children: [
-        _squareButton(
-          tooltip: 'Warteschlange',
-          icon: Icons.queue_music,
-          active: _queueOpen,
-          onPressed: () => setState(() => _queueOpen = !_queueOpen),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Row(
+    return SizedBox(
+      height: 64,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // The transport is centred on the card, not in the space left by the queue button.
+          Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               IconButton(
@@ -448,8 +446,17 @@ class _PlayerViewState extends State<PlayerView> {
               ),
             ],
           ),
-        ),
-      ],
+          Align(
+            alignment: Alignment.centerLeft,
+            child: _squareButton(
+              tooltip: 'Warteschlange',
+              icon: Icons.queue_music,
+              active: _queueOpen,
+              onPressed: () => setState(() => _queueOpen = !_queueOpen),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -771,28 +778,31 @@ class _PlayerViewState extends State<PlayerView> {
       '${at.inMinutes}:${(at.inSeconds % 60).toString().padLeft(2, '0')}';
 }
 
-/// The seek line's bars. A fixed pattern keeps the line stable between rebuilds; only the colour
-/// follows the position, so the bar reads like the waveform a music app uses.
+/// The seek line's bars. The server sends the peaks it decoded from the song, so the line is the
+/// song's shape; only the colour follows the position. A song without peaks falls back to a fixed
+/// pattern, which is still stable between rebuilds.
 class _WaveformPainter extends CustomPainter {
-  const _WaveformPainter({required this.progress});
+  const _WaveformPainter({required this.progress, required this.samples});
 
   final double progress;
+  final List<int> samples;
 
   @override
   void paint(Canvas canvas, Size size) {
-    const count = 52;
-    const barWidth = 3.0;
-    final gap = (size.width - count * barWidth) / (count - 1);
+    final count = samples.isEmpty ? 52 : samples.length;
+    final barWidth = (size.width / count * 0.55).clamp(1.0, 3.0);
+    final gap = (size.width - count * barWidth) / math.max(1, count - 1);
     final paint = Paint()
       ..strokeCap = StrokeCap.round
       ..strokeWidth = barWidth;
 
     for (var index = 0; index < count; index++) {
-      final at = index / (count - 1);
-      final wave =
-          (math.sin(index * 1.31) * 0.5 + 0.5) *
-          (math.sin(index * 0.43 + 0.8) * 0.35 + 0.65);
-      final height = (5 + (size.height - 10) * wave).clamp(5.0, size.height);
+      final at = index / math.max(1, count - 1);
+      final level = samples.isEmpty
+          ? (math.sin(index * 1.31) * 0.5 + 0.5) *
+                (math.sin(index * 0.43 + 0.8) * 0.35 + 0.65)
+          : samples[index].clamp(0, 255) / 255;
+      final height = (5 + (size.height - 10) * level).clamp(5.0, size.height);
       paint.color = at <= progress ? playerAccent : playerBarMuted;
       final x = index * (barWidth + gap) + barWidth / 2;
       canvas.drawLine(
@@ -805,5 +815,5 @@ class _WaveformPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_WaveformPainter oldDelegate) =>
-      oldDelegate.progress != progress;
+      oldDelegate.progress != progress || !listEquals(oldDelegate.samples, samples);
 }

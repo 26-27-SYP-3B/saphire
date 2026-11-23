@@ -58,6 +58,10 @@ pub struct Track {
     /// 0 when the tags name no year.
     pub year: i64,
     pub duration_ms: i64,
+    /// The song's shape as [`metadata::WAVEFORM_BARS`] peaks, empty when the file could not be
+    /// decoded. The player draws it behind the seek bar.
+    #[serde(default)]
+    pub waveform: Vec<u8>,
     pub stored_name: String,
     pub size: i64,
     pub content_type: String,
@@ -67,7 +71,7 @@ pub struct Track {
 /// The columns a track is read with, in the order `scan_track` expects. The uploader is joined
 /// from the user table because the library answer shows a name, not a bare id.
 const TRACK_COLUMNS: &str = "track.id, track.user_id, track.title, track.artist, track.album, \
-    track.genre, track.year, track.duration_ms, track.stored_name, track.size, \
+    track.genre, track.year, track.duration_ms, track.waveform, track.stored_name, track.size, \
     track.content_type, track.uploaded_at, user.username";
 
 /// Reads one row into a track. A single lookup and a list both use this, so they cannot
@@ -82,11 +86,12 @@ fn scan_track(row: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
         genre: row.get(5)?,
         year: row.get(6)?,
         duration_ms: row.get(7)?,
-        stored_name: row.get(8)?,
-        size: row.get(9)?,
-        content_type: row.get(10)?,
-        uploaded_at: row.get(11)?,
-        uploaded_by: row.get(12)?,
+        waveform: row.get(8)?,
+        stored_name: row.get(9)?,
+        size: row.get(10)?,
+        content_type: row.get(11)?,
+        uploaded_at: row.get(12)?,
+        uploaded_by: row.get(13)?,
     })
 }
 
@@ -101,6 +106,7 @@ pub fn ensure_table(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
             genre TEXT NOT NULL DEFAULT '',
             year INTEGER NOT NULL DEFAULT 0,
             duration_ms INTEGER NOT NULL DEFAULT 0,
+            waveform BLOB NOT NULL DEFAULT X'',
             stored_name TEXT UNIQUE NOT NULL,
             size INTEGER NOT NULL,
             content_type TEXT NOT NULL,
@@ -134,6 +140,7 @@ pub fn ensure_columns(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         ("genre", "genre TEXT NOT NULL DEFAULT ''"),
         ("year", "year INTEGER NOT NULL DEFAULT 0"),
         ("duration_ms", "duration_ms INTEGER NOT NULL DEFAULT 0"),
+        ("waveform", "waveform BLOB NOT NULL DEFAULT X''"),
     ] {
         if have.iter().any(|column| column == name) {
             continue;
@@ -166,7 +173,7 @@ pub fn open_library() -> Result<String, Failure> {
 
 pub fn insert(conn: &rusqlite::Connection, track: &mut Track) -> Result<(), Failure> {
     conn.execute(
-        "INSERT INTO track (user_id, title, artist, album, genre, year, duration_ms, stored_name, size, content_type, uploaded_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        "INSERT INTO track (user_id, title, artist, album, genre, year, duration_ms, waveform, stored_name, size, content_type, uploaded_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         (
             track.user_id,
             &track.title,
@@ -175,6 +182,7 @@ pub fn insert(conn: &rusqlite::Connection, track: &mut Track) -> Result<(), Fail
             &track.genre,
             track.year,
             track.duration_ms,
+            &track.waveform,
             &track.stored_name,
             track.size,
             &track.content_type,
@@ -452,6 +460,12 @@ pub async fn handle_upload(State(state): State<AppState>, req: Request) -> Respo
     } else {
         metadata::AudioMeta::default()
     };
+    // The waveform is decoded here so every client gets the same bars without downloading the
+    // song twice. The body is already in memory; a song the decoder does not know keeps an empty
+    // list and the player falls back to its neutral bars.
+    // shortcut: the decode runs on the request thread; uploads are rare. Upgrade: spawn_blocking
+    // if uploads ever become concurrent.
+    let waveform = metadata::read_waveform(&data);
 
     // The title is what the file names itself when its tags do, otherwise the name the client
     // sent.
@@ -492,6 +506,7 @@ pub async fn handle_upload(State(state): State<AppState>, req: Request) -> Respo
         genre: meta.genre,
         year: meta.year,
         duration_ms: meta.duration_ms,
+        waveform,
         stored_name: stored,
         size: data.len() as i64,
         content_type: media_type,

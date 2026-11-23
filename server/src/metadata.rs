@@ -1,6 +1,18 @@
 use std::collections::HashMap;
+use std::io::Cursor;
+
+use symphonia::core::codecs::audio::AudioDecoderOptions;
+use symphonia::core::errors::Error;
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, TrackType};
+use symphonia::core::io::MediaSourceStream;
+use symphonia::core::meta::MetadataOptions;
 
 use crate::{music, sanitize};
+
+/// How many bars the player draws for one song. It is fixed so the client does not have to
+/// rescale a list of varying length on every frame.
+pub const WAVEFORM_BARS: usize = 64;
 
 /// What an uploaded file says about itself: the title, artist, album, genre and year its tags
 /// name, and how long it plays. A file that does not say something stays empty or zero, so the
@@ -46,6 +58,89 @@ pub fn year_of(text: &str) -> Option<i64> {
         return None;
     }
     digits.parse().ok()
+}
+
+/// The shape of the song itself, as [`WAVEFORM_BARS`] peaks from 0 to 255. The client draws
+/// these behind the seek bar, so the line follows what the song is doing instead of a pattern.
+/// A format the decoder does not know, or a file that cannot be read, gives an empty list and
+/// the client keeps its neutral bars.
+pub fn read_waveform(data: &[u8]) -> Vec<u8> {
+    let source = MediaSourceStream::new(Box::new(Cursor::new(data)), Default::default());
+    let Ok(mut format) = symphonia::default::get_probe().probe(
+        &Hint::new(),
+        source,
+        FormatOptions::default(),
+        MetadataOptions::default(),
+    ) else {
+        return Vec::new();
+    };
+
+    let Some(track) = format.default_track(TrackType::Audio) else {
+        return Vec::new();
+    };
+    let Some(params) = track.codec_params.as_ref().and_then(|params| params.audio()) else {
+        return Vec::new();
+    };
+    let Ok(mut decoder) =
+        symphonia::default::get_codecs().make_audio_decoder(params, &AudioDecoderOptions::default())
+    else {
+        return Vec::new();
+    };
+    let track_id = track.id;
+
+    // One RMS value per block keeps memory flat for a long song: the whole file never has to
+    // be decoded into one buffer. An RMS follows loudness better than a single peak, which a
+    // drum hit in an otherwise quiet passage would push to the top.
+    let mut samples: Vec<f32> = Vec::new();
+    let mut blocks: Vec<f32> = Vec::new();
+    let mut sum_squares = 0.0f32;
+    let mut block_samples = 0usize;
+
+    while let Ok(Some(packet)) = format.next_packet() {
+        if packet.track_id != track_id {
+            continue;
+        }
+
+        match decoder.decode(&packet) {
+            Ok(buffer) => {
+                samples.resize(buffer.samples_interleaved(), 0.0);
+                buffer.copy_to_slice_interleaved(&mut samples);
+
+                for sample in &samples {
+                    sum_squares += sample * sample;
+                    block_samples += 1;
+                    if block_samples >= 1024 {
+                        blocks.push((sum_squares / block_samples as f32).sqrt());
+                        sum_squares = 0.0;
+                        block_samples = 0;
+                    }
+                }
+            }
+            Err(Error::DecodeError(_)) => continue,
+            Err(_) => break,
+        }
+    }
+    if block_samples > 0 {
+        blocks.push((sum_squares / block_samples as f32).sqrt());
+    }
+    if blocks.is_empty() {
+        return Vec::new();
+    }
+
+    let loudest = blocks.iter().copied().fold(0.0f32, f32::max);
+    if loudest <= f32::EPSILON {
+        return vec![0; WAVEFORM_BARS];
+    }
+
+    let mut bars = Vec::with_capacity(WAVEFORM_BARS);
+    for index in 0..WAVEFORM_BARS {
+        let start = index * blocks.len() / WAVEFORM_BARS;
+        let end = (((index + 1) * blocks.len()) / WAVEFORM_BARS).max(start + 1);
+        let level = blocks[start..end].iter().copied().fold(0.0f32, f32::max);
+        // A slight curve lifts quiet passages into view without flattening the loud ones.
+        bars.push(((level / loudest).powf(0.8) * 255.0).round().clamp(0.0, 255.0) as u8);
+    }
+    bars
 }
 
 /// Makes text that came out of a file safe to show. It is the same rule an uploaded name goes
