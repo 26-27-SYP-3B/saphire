@@ -140,6 +140,59 @@ fn read_audio_meta_reads_the_year_from_a_full_timestamp() {
     assert_eq!(metadata::year_of("abcd"), None);
 }
 
+/// A two-second mono WAV: a loud tone for the first half and silence for the second. The
+/// waveform reader has to show that difference, not a fixed pattern.
+fn wav_with_a_loud_half() -> Vec<u8> {
+    let sample_rate: u32 = 8000;
+    let count = sample_rate as usize * 2;
+    let mut data = Vec::with_capacity(count * 2);
+    for index in 0..count {
+        let value = if index < count / 2 {
+            ((index as f32 * 0.1).sin() * 20000.0) as i16
+        } else {
+            0
+        };
+        data.extend_from_slice(&value.to_le_bytes());
+    }
+
+    let mut file = Vec::new();
+    file.extend_from_slice(b"RIFF");
+    file.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
+    file.extend_from_slice(b"WAVEfmt ");
+    file.extend_from_slice(&16u32.to_le_bytes());
+    file.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    file.extend_from_slice(&1u16.to_le_bytes()); // mono
+    file.extend_from_slice(&sample_rate.to_le_bytes());
+    file.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+    file.extend_from_slice(&2u16.to_le_bytes());
+    file.extend_from_slice(&16u16.to_le_bytes());
+    file.extend_from_slice(b"data");
+    file.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    file.extend_from_slice(&data);
+    file
+}
+
+// The player's bars are the song's shape: the loud half has to stand above the silent half.
+#[test]
+fn read_waveform_follows_the_audio() {
+    let bars = metadata::read_waveform(&wav_with_a_loud_half());
+
+    assert_eq!(bars.len(), metadata::WAVEFORM_BARS, "the waveform is not a full bar list: {bars:?}");
+    let middle = bars.len() / 2;
+    assert!(bars[..middle].iter().any(|&bar| bar > 0), "the loud half is flat: {bars:?}");
+    assert!(bars[middle..].iter().all(|&bar| bar == 0), "the silent half is not silent: {bars:?}");
+
+    // A file the decoder cannot read must not panic or invent bars.
+    assert!(metadata::read_waveform(b"not audio").is_empty());
+
+    // MP3 is the format most uploads use; the decoder must not quietly fall back to [].
+    assert_eq!(
+        metadata::read_waveform(&audio_of(10)).len(),
+        metadata::WAVEFORM_BARS,
+        "an MP3 produced no waveform bars"
+    );
+}
+
 // ID3v2.4 may put several strings in one frame, separated by NUL. A field here holds one
 // value, so the first has to survive while the separator must not weld the values together.
 #[test]

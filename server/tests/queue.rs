@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::http::StatusCode;
-use saphire_server::{app, db, music, queue, ratelimit};
+use saphire_server::{app, db, metadata, music, queue, ratelimit};
 
 use common::Test;
 
@@ -107,8 +107,8 @@ async fn queue_is_only_songs_and_order() {
     assert_eq!(reply.status, StatusCode::OK, "fill from an empty playlist -> {} ({})", reply.status, reply.body);
     assert_eq!(reply.body.trim(), "[]", "an empty queue must answer as an empty array, not null: {}", reply.body);
 
-    // An entry has position, track_id, title and artist and nothing else. There is no field
-    // that could say what filled the queue, so any source produces the same shape.
+    // An entry has position, track_id, title, artist and duration and nothing else. There is
+    // no field that could say what filled the queue, so any source produces the same shape.
     let track = upload_track(&test, &token, "lied.wav").await;
     let track_id = track.id;
     // The upload of a WAV carries no tags, so give the row an artist the answer has to show.
@@ -130,7 +130,7 @@ async fn queue_is_only_songs_and_order() {
     keys.sort_unstable();
     assert_eq!(
         keys,
-        ["artist", "position", "title", "track_id"],
+        ["artist", "duration_ms", "position", "title", "track_id", "waveform"],
         "an entry carries {keys:?}, which would record where it came from"
     );
     assert_eq!(
@@ -259,6 +259,9 @@ async fn append_queue_entry() {
     assert_eq!(added.track_id, track_id, "append answered {added:?}, wanted the song it was asked for");
     assert_eq!(added.title, track.title, "append answered {added:?}, wanted the title from the library");
     assert_eq!(added.artist, "Kraftwerk", "append answered {added:?}, wanted the artist from the library");
+    assert_eq!(added.duration_ms, track.duration_ms, "append answered {added:?}, wanted the length from the library");
+    assert_eq!(added.waveform, track.waveform, "append answered {added:?}, wanted the waveform from the library");
+    assert_eq!(added.waveform.len(), metadata::WAVEFORM_BARS, "the queue entry has no full waveform: {added:?}");
 
     // The same song twice is allowed, because a queue is an order, not a set.
     let reply = common::post(&test, "/api/queue/songs", &format!(r#"{{"track_id": {track_id}}}"#), &token).await;

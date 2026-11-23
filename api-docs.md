@@ -222,7 +222,7 @@ curl -X POST localhost:8080/api/music/upload \
 
 | Status | When | Example body |
 |---|---|---|
-| `201 Created` | File saved in the library and the row inserted | `{"id": 4, "uploaded_by": "lukas", "title": "Neutrone (Remix)", "artist": "Kraftwerk", "album": "Trans Europa Express", "genre": "Elektronik", "year": 1977, "duration_ms": 261000, "stored_name": "18cfd7db41d243d98cc87c4ab33dded6.mp3", "size": 4237, "content_type": "audio/mpeg", "uploaded_at": 1793974311}` |
+| `201 Created` | File saved in the library and the row inserted | `{"id": 4, "uploaded_by": "lukas", "title": "Neutrone (Remix)", "artist": "Kraftwerk", "album": "Trans Europa Express", "genre": "Elektronik", "year": 1977, "duration_ms": 261000, "waveform": [0, 12, 34, 56, 78, 90, 120, 150, 180, 210, 240, 255, ...], "stored_name": "18cfd7db41d243d98cc87c4ab33dded6.mp3", "size": 4237, "content_type": "audio/mpeg", "uploaded_at": 1793974311}` |
 | `401 Unauthorized` | Missing `Authorization: Bearer` header | `{"error": "authorization header with a Bearer token is missing"}` |
 | `401 Unauthorized` | Unknown or expired token | `{"error": "session is not valid or expired"}` |
 | `400 Bad Request` | Not `multipart/form-data`, no file, the field is not named `file`, an empty file, a name with no usable characters, a file without an extension whose bytes say nothing (`{"error": "the uploaded file has no extension that says what it is"}`), or content that is not audio | `{"error": "the uploaded file is not audio, its content reads as application/zip"}` |
@@ -245,6 +245,11 @@ curl -X POST localhost:8080/api/music/upload \
   artist or length and offers a missing artist, album, genre or year under the filter value
   "Unbekannt" (for an untagged file name it may show the `interpret - titel` fallback the
   library already had).
+- `waveform` is the decoded song's shape, not a pattern: 64 peaks from 0 (quiet) to 255
+  (loudest), measured in 1024-sample blocks and normalized to the loudest one. The player
+  draws a bar for each peak. A format the decoder cannot read keeps `[]`, and the player
+  then falls back to its neutral bars. The list is stored once at upload, so every client
+  gets the same bars without downloading the song twice.
 - Database schema:
 
   ```sql
@@ -257,6 +262,7 @@ curl -X POST localhost:8080/api/music/upload \
       genre TEXT NOT NULL DEFAULT '',
       year INTEGER NOT NULL DEFAULT 0,
       duration_ms INTEGER NOT NULL DEFAULT 0,
+      waveform BLOB NOT NULL DEFAULT X'',
       stored_name TEXT NOT NULL UNIQUE,
       size INTEGER NOT NULL,
       content_type TEXT NOT NULL,
@@ -287,7 +293,7 @@ Authorization: Bearer <token>
 [
   {
     "id": 4, "uploaded_by": "lukas", "title": "lied.wav", "artist": "",
-    "album": "", "genre": "", "year": 0, "duration_ms": 0,
+    "album": "", "genre": "", "year": 0, "duration_ms": 0, "waveform": [],
     "stored_name": "18cfd7db41d243d98cc87c4ab33dded6.wav",
     "size": 32, "content_type": "audio/wav", "uploaded_at": 1793974311
   }
@@ -303,7 +309,7 @@ filters the four metadata fields as "Unbekannt".
 
 | Status | When | Example body |
 |---|---|---|
-| `200 OK` | Library listed, ordered by `id` | `[{ "id": 4, "uploaded_by": "lukas", "title": "lied.wav", "artist": "", "album": "", "genre": "", "year": 0, "duration_ms": 0, "stored_name": "18cfd7db…wav", "size": 32, "content_type": "audio/wav", "uploaded_at": 1793974311 }]` |
+| `200 OK` | Library listed, ordered by `id` | `[{ "id": 4, "uploaded_by": "lukas", "title": "lied.wav", "artist": "", "album": "", "genre": "", "year": 0, "duration_ms": 0, "waveform": [], "stored_name": "18cfd7db…wav", "size": 32, "content_type": "audio/wav", "uploaded_at": 1793974311 }]` |
 | `401 Unauthorized` | Missing `Authorization: Bearer` header | `{"error": "authorization header with a Bearer token is missing"}` |
 | `401 Unauthorized` | Unknown or expired token (the row is dropped), or the token's user no longer exists | `{"error": "session is not valid or expired"}` |
 | `429 Too Many Requests` | Rate limit reached (10 requests per IP, refilling 1 token every 12 s — its own bucket). Includes a `Retry-After` header. | `{"error": "too many requests from this address, try again later"}` |
@@ -588,8 +594,8 @@ Body: one JSON object with `source` (and `source_id` where the source needs it).
 
 ```json
 [
-  { "position": 1, "track_id": 8, "title": "Technogal.mp3", "artist": "Kraftwerk" },
-  { "position": 2, "track_id": 4, "title": "lied.wav", "artist": "" }
+  { "position": 1, "track_id": 8, "title": "Technogal.mp3", "artist": "Kraftwerk", "duration_ms": 174000, "waveform": [0, 12, 34, 56, 78, 90, 120, 150, 180, 210, 240, 255, ...] },
+  { "position": 2, "track_id": 4, "title": "lied.wav", "artist": "", "duration_ms": 0, "waveform": [] }
 ]
 ```
 
@@ -614,7 +620,7 @@ with the shape above; `401`, `429` and `500` as in `POST /api/queue`.
 #### `POST /api/queue/songs`
 
 Adds one song at the end without a source — the plain queue feature. `201 Created` with
-`{"position": 3, "track_id": 8, "title": "Technogal.mp3", "artist": "Kraftwerk"}`. `track_id` must be in the
+`{"position": 3, "track_id": 8, "title": "Technogal.mp3", "artist": "Kraftwerk", "duration_ms": 174000, "waveform": [0, 12, 34, 56, 78, 90, 120, 150, 180, 210, 240, 255, ...]}`. `track_id` must be in the
 library; the limit is a real limit, not a silent drop. Statuses as in
 `POST /api/playlists/{id}/songs`.
 

@@ -21,9 +21,15 @@ import '../../support/wiring.dart';
 // A queue answer as the server sends it: position, track_id, title and artist, and nothing that
 // says what filled it or what was played before.
 const queueAnswer = [
-  {'position': 1.0, 'track_id': 8.0, 'title': 'Technogal.mp3'},
-  {'position': 2.0, 'track_id': 4.0, 'title': 'lied.wav'},
-  {'position': 3.0, 'track_id': 7.0, 'title': 'solo.mp3'},
+  {
+    'position': 1.0,
+    'track_id': 8.0,
+    'title': 'Technogal.mp3',
+    'duration_ms': 174000.0,
+    'waveform': [0.0, 128.0, 255.0],
+  },
+  {'position': 2.0, 'track_id': 4.0, 'title': 'lied.wav', 'duration_ms': 0.0},
+  {'position': 3.0, 'track_id': 7.0, 'title': 'solo.mp3', 'duration_ms': 121000.0},
 ];
 
 // One playlist, so the menu has something it can add a song to.
@@ -125,6 +131,8 @@ void main() {
     expect(entries.map((entry) => entry.position), [1, 2, 3]);
     expect(entries.first.trackId, 8);
     expect(entries.first.title, 'Technogal.mp3');
+    expect(entries.first.durationMs, 174000);
+    expect(entries.first.waveform, [0, 128, 255]);
 
     // An empty queue answers [], never null.
     final empty = QueueRepository(Dio()..httpClientAdapter = StubAdapter(200, <Object>[]), loggedIn());
@@ -191,6 +199,20 @@ void main() {
     expect(fromOneSong.advance(), isNull);
 
     expect(fromPlaylist.entries.first.position, 1);
+  });
+
+  // The queue ended, so nothing is current. A song appended afterwards must not look like the
+  // song that is playing; the bar would show it without it ever being opened.
+  test('a song appended after the end is not current', () {
+    final queue = PlaybackQueue();
+    queue.fill([QueueEntry(position: 1, trackId: 8, title: 'a')]);
+
+    expect(queue.advance()?.trackId, 8);
+    expect(queue.advance(), isNull);
+    expect(queue.current, isNull);
+
+    queue.append(QueueEntry(position: 2, trackId: 4, title: 'b'));
+    expect(queue.current, isNull);
   });
 
   // The two sections of the panel are the difference between a song the person put there
@@ -1156,9 +1178,20 @@ void main() {
 
   // The artist belongs to the song, so a row that moves or becomes a hand-added row keeps it.
   test('a queue row keeps its artist when it moves or is marked manual', () {
-    const row = QueueEntry(position: 1, trackId: 8, title: 'Technogal.mp3', artist: 'Kraftwerk');
+    const row = QueueEntry(
+      position: 1,
+      trackId: 8,
+      title: 'Technogal.mp3',
+      artist: 'Kraftwerk',
+      durationMs: 174000,
+      waveform: [0, 128, 255],
+    );
 
     expect(row.withPosition(3).artist, 'Kraftwerk');
+    expect(row.withPosition(3).durationMs, 174000);
+    expect(row.withPosition(3).waveform, [0, 128, 255]);
     expect(row.asManual().artist, 'Kraftwerk');
+    expect(row.asManual().durationMs, 174000);
+    expect(row.asManual().waveform, [0, 128, 255]);
   });
 }

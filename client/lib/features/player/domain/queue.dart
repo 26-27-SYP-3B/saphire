@@ -10,6 +10,8 @@ class QueueEntry {
     required this.trackId,
     required this.title,
     this.artist = '',
+    this.durationMs = 0,
+    this.waveform = const [],
     this.manual = false,
     this.local,
   });
@@ -31,6 +33,13 @@ class QueueEntry {
   /// tags to read, so a local row keeps the empty default.
   final String artist;
 
+  /// How long the song plays in milliseconds, 0 when the server could not measure it. A row on
+  /// this device has no measured length, so it keeps 0.
+  final int durationMs;
+
+  /// The song's shape as 64 peaks from 0 to 255, empty when the server could not decode it.
+  final List<int> waveform;
+
   /// How the row got into the queue: the person put it there themselves, or a list did. The
   /// queue answer names no source, so this is what the mirror keeps, and it is the only thing
   /// a refresh can carry over.
@@ -44,14 +53,35 @@ class QueueEntry {
     trackId: (json['track_id'] as num).toInt(),
     title: json['title'] as String,
     artist: json['artist'] as String? ?? '',
+    durationMs: (json['duration_ms'] as num?)?.toInt() ?? 0,
+    waveform: [
+      for (final peak in json['waveform'] as List<dynamic>? ?? const []) (peak as num).toInt(),
+    ],
   );
 
   /// The same song at another slot. The mirror renumbers this way, so a page shows the
   /// numbers the next read from the server would return.
-  QueueEntry withPosition(int position) =>
-      QueueEntry(position: position, trackId: trackId, title: title, artist: artist, manual: manual, local: local);
+  QueueEntry withPosition(int position) => QueueEntry(
+    position: position,
+    trackId: trackId,
+    title: title,
+    artist: artist,
+    durationMs: durationMs,
+    waveform: waveform,
+    manual: manual,
+    local: local,
+  );
 
-  QueueEntry asManual() => QueueEntry(position: position, trackId: trackId, title: title, artist: artist, manual: true, local: local);
+  QueueEntry asManual() => QueueEntry(
+    position: position,
+    trackId: trackId,
+    title: title,
+    artist: artist,
+    durationMs: durationMs,
+    waveform: waveform,
+    manual: true,
+    local: local,
+  );
 }
 
 /// Where a queue gets its songs. These are the three sources api-docs.md lists. A queue
@@ -124,7 +154,13 @@ class PlaybackQueue {
     filledFrom = fromName ?? filledFrom;
   }
 
-  void append(QueueEntry entry) => _entries.add(entry);
+  void append(QueueEntry entry) {
+    // A queue that already ran to its end leaves the index one past the last row. A song
+    // added there would look like the one playing without ever being opened.
+    final finished = index >= _entries.length;
+    _entries.add(entry);
+    if (finished) index = -1;
+  }
 
   /// Records a song the player started, newest first. Only a song that was really opened
   /// belongs here — a row the player only pointed at is not something that was played.

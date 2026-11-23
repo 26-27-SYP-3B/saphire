@@ -24,6 +24,13 @@ pub struct QueueEntry {
     /// The artist the file's tags name, empty when it names none. The player bar shows it under
     /// the title, the same way the library row does.
     pub artist: String,
+    /// The playing time in milliseconds, 0 when the format cannot be measured. The player's
+    /// queue shows it next to the title, the same number the library row has.
+    pub duration_ms: i64,
+    /// The song's shape as [`crate::metadata::WAVEFORM_BARS`] peaks, empty when unknown. The
+    /// player draws it when this row is the one playing.
+    #[serde(default)]
+    pub waveform: Vec<u8>,
 }
 
 /// The JSON body of `POST /api/queue`: which source fills the queue. `source_id` is needed for
@@ -145,7 +152,7 @@ fn ids(conn: &rusqlite::Connection, query: &str, param: Option<i64>) -> Result<V
 pub fn entries(conn: &rusqlite::Connection, user_id: i64) -> Result<Vec<QueueEntry>, Failure> {
     let mut statement = conn
         .prepare(
-            "SELECT q.position, q.track_id, t.title, t.artist
+            "SELECT q.position, q.track_id, t.title, t.artist, t.duration_ms, t.waveform
             FROM queue_entry q JOIN track t ON t.id = q.track_id
             WHERE q.user_id = ?1 ORDER BY q.position",
         )
@@ -159,6 +166,8 @@ pub fn entries(conn: &rusqlite::Connection, user_id: i64) -> Result<Vec<QueueEnt
                 track_id: row.get(1)?,
                 title: row.get(2)?,
                 artist: row.get(3)?,
+                duration_ms: row.get(4)?,
+                waveform: row.get(5)?,
             })
         })
         .map_err(db::failure)?;
@@ -178,9 +187,14 @@ pub fn append(conn: &rusqlite::Connection, user_id: i64, track_id: i64) -> Resul
         return Err(Failure::QueueFull);
     }
 
-    let (title, artist) = match conn
-        .query_row("SELECT title, artist FROM track WHERE id = ?1", (track_id,), |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    let (title, artist, duration_ms, waveform) = match conn
+        .query_row("SELECT title, artist, duration_ms, waveform FROM track WHERE id = ?1", (track_id,), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, Vec<u8>>(3)?,
+            ))
         })
         .map_err(db::failure)
     {
@@ -197,6 +211,8 @@ pub fn append(conn: &rusqlite::Connection, user_id: i64, track_id: i64) -> Resul
         track_id,
         title,
         artist,
+        duration_ms,
+        waveform,
     })
 }
 

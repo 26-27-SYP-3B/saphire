@@ -165,8 +165,24 @@ pub fn decode<T: serde::de::DeserializeOwned>(body: &str) -> T {
 }
 
 /// The smallest recognizable audio file: a RIFF/WAVE header plus four samples.
+/// A valid one-millisecond mono WAV with two loud samples. The waveform reader needs a real
+/// format header; a RIFF tag alone is not a decodable file.
 pub fn tiny_wav() -> Vec<u8> {
-    b"RIFF$\x00\x00\x00WAVEfmt \x10\x00\x00\x00data\x04\x00\x00\x00\x00\x00\x00\x00".to_vec()
+    let mut file = Vec::new();
+    file.extend_from_slice(b"RIFF");
+    file.extend_from_slice(&40u32.to_le_bytes());
+    file.extend_from_slice(b"WAVEfmt ");
+    file.extend_from_slice(&16u32.to_le_bytes());
+    file.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    file.extend_from_slice(&1u16.to_le_bytes()); // mono
+    file.extend_from_slice(&8000u32.to_le_bytes());
+    file.extend_from_slice(&16000u32.to_le_bytes());
+    file.extend_from_slice(&2u16.to_le_bytes());
+    file.extend_from_slice(&16u16.to_le_bytes());
+    file.extend_from_slice(b"data");
+    file.extend_from_slice(&4u32.to_le_bytes());
+    file.extend_from_slice(&[0x00, 0x7f, 0x00, 0x80]);
+    file
 }
 
 /// Binary content that no audio format can claim.

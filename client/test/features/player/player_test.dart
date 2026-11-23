@@ -95,8 +95,9 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     expect(player.failure, contains('konnte nicht gespielt werden'));
-    // The queue did move; the failure is about opening, not about the order.
-    expect(queue.current?.trackId, 4);
+    // The row never opened, so it must not stay current and the audio stays stopped.
+    expect(queue.current, isNull);
+    expect(fake.playing, isFalse);
 
     // The next attempt that works clears it, so the page does not keep an old error.
     fake.openError = null;
@@ -184,6 +185,49 @@ void main() {
     expect(player.localTitle, isNull);
     expect(player.localQueue.map((track) => track.title), ['a.mp3', 'b.mp3']);
     expect(fake.stopped.length, 1);
+  });
+
+  // The queue panel mirrors a device list into the playback queue. A row there has no server
+  // id, so pressing play must open the file, not ask the streaming endpoint for /api/music/-1.
+  test('a local row in the mirror opens the file on this device', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final queue = PlaybackQueue();
+    final track = LocalTrack(title: 'a.mp3', bytes: Uint8List.fromList([0xFF, 0xFB]));
+    final player = QueuePlayer(queue: queue, player: fake, session: SessionStore());
+    addTearDown(player.dispose);
+
+    await player.playLocalQueue([track]);
+    // What the queue panel does when it opens: mirror the device list into the playback queue.
+    queue.fill([QueueEntry.fromLocal(1, track)]);
+    await player.playCurrent();
+
+    expect(player.localTitle, 'a.mp3');
+    expect(fake.opened.last, startsWith('data:audio/mpeg'));
+    expect(fake.opened, isNot(contains('/api/music/-1')));
+  });
+
+  // When the last file of a device list ends, the mirror must not keep a row current: the bar
+  // would name a song that is no longer playing.
+  test('a finished device list clears the mirror current', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final queue = PlaybackQueue();
+    final player = QueuePlayer(queue: queue, player: fake, session: SessionStore());
+    addTearDown(player.dispose);
+
+    final track = LocalTrack(title: 'a.mp3', bytes: Uint8List.fromList([0xFF, 0xFB]));
+    await player.playLocalQueue([track]);
+    // What the queue panel does when it opens: mirror the device list and point at the playing row.
+    queue.fill([QueueEntry.fromLocal(1, track)]);
+    queue.advance();
+    expect(queue.current, isNotNull);
+
+    fake.complete();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(player.localTitle, isNull);
+    expect(queue.current, isNull);
   });
 
   // The next button has to move a local list too, and say when it was the last song.
@@ -301,6 +345,32 @@ void main() {
 
     expect(player.localTitle, isNull);
     expect(fake.opened, isEmpty);
+  });
+
+  // A row picked in the queue is not current until its file really opened. A missing file
+  // must not leave the bar and the notification naming a song that never played.
+  test('a local queue row that cannot be opened does not become current', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final queue = PlaybackQueue();
+    final good = LocalTrack(title: 'a.mp3', bytes: Uint8List.fromList([0xFF, 0xFB]));
+    final broken = LocalTrack(title: 'gone.mp3');
+    final player = QueuePlayer(queue: queue, player: fake, session: SessionStore());
+    addTearDown(player.dispose);
+
+    await player.playLocalQueue([good, broken]);
+    queue.fill([QueueEntry.fromLocal(1, good), QueueEntry.fromLocal(2, broken)]);
+    queue.advance();
+    queue.advance();
+
+    await expectLater(
+      player.playAt(queue.current!),
+      throwsA(isA<PlaybackException>().having((error) => error.message, 'message', contains('nicht gefunden'))),
+    );
+
+    expect(player.localTitle, isNull);
+    expect(queue.current, isNull);
+    expect(fake.playing, isFalse);
   });
 
   // One file that cannot be read must not end the list: the player moves on to the next
@@ -656,6 +726,31 @@ void main() {
     fake.at(const Duration(seconds: 10));
     expect(await player.previous(), isFalse);
     expect(fake.sought, isEmpty);
+  });
+
+  // A random pick that cannot be opened must not stay current: the bar would name a song that
+  // never played, and the play button would retry the same broken file.
+  test('a shuffle that cannot open a song stops and reports it', () async {
+    final fake = FakePlayer();
+    addTearDown(fake.dispose);
+    final queue = PlaybackQueue();
+    queue.fill([
+      QueueEntry(position: 1, trackId: 8, title: 'a'),
+      QueueEntry(position: 2, trackId: 4, title: 'b'),
+    ]);
+    final player = QueuePlayer(queue: queue, player: fake, session: loggedIn());
+    addTearDown(player.dispose);
+
+    await player.playCurrent();
+    player.shuffle = true;
+    fake.openError = 'die Datei ist kaputt';
+
+    fake.complete();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(player.failure, contains('konnte nicht gespielt werden'));
+    expect(queue.current, isNull);
+    expect(fake.playing, isFalse);
   });
 
   // Shuffle picks another entry of the same queue, not the one that just ended.
