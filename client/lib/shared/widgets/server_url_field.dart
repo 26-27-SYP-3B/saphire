@@ -2,16 +2,16 @@ import 'package:flutter/material.dart';
 
 import '../../features/setup/data/server_check.dart';
 
-/// Das eine Feld, das Setup und Einstellungen zeigen: die Server-Adresse. Die
-/// Limits sind dieselben wie die Prüfung in server_check.dart, ein ungültiges
-/// Wort geht also nie auf die Reise.
+/// The one field that setup and settings show: the server address. The
+/// limits are the same as the check in server_check.dart, so an invalid
+/// word never starts the journey.
 class ServerUrlField extends StatelessWidget {
   const ServerUrlField({super.key, required this.controller, this.enabled = true});
 
   final TextEditingController controller;
 
-  /// Während die Prüfung läuft, bleibt der Text stehen: sonst könnte das Feld
-  /// eine andere Adresse zeigen als die, die gerade bestätigt wird.
+  /// While the check runs, the text stays put: otherwise the field could
+  /// show a different address than the one being confirmed right now.
   final bool enabled;
 
   @override

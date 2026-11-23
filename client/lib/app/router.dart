@@ -20,14 +20,14 @@ import '../features/setup/presentation/settings_screen.dart';
 import '../features/setup/presentation/setup_screen.dart';
 import '../features/upload/data/upload_repository.dart';
 
-/// Anmeldung und Registrierung: gleiche Felder, zwei Routen, beide Seiten
-/// verlinken sich gegenseitig. Nach einer erfolgreichen Anmeldung oder
-/// Registrierung geht es auf die Startseite – aber nur mit einer gültigen
-/// Session, ohne sie bleibt die app auf der Anmeldung. Im lokalen Modus gibt es
-/// kein Konto, dort ist die Startseite ohne Session offen.
+/// Login and registration: same fields, two routes, both pages link to each
+/// other. After a successful login or registration the app goes to the home
+/// page – but only with a valid session, without it the app stays on the
+/// login. In local mode there is no account, and the home page is open
+/// there without a session.
 ///
-/// Der geführte Start gehört vor die Anmeldung: ohne gespeicherten Server führt
-/// kein Weg am Setup vorbei, mit ihm öffnet sich die app direkt wie früher.
+/// The guided start belongs before the login: without a saved server no
+/// route can pass the setup, with it the app opens directly as before.
 ///
 /// The queue and the player are passed in, not created here: one queue and one player
 /// belong to the whole app, so the bar at the bottom of every page shows the same list a

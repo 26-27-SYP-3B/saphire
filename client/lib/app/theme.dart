@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-/// Farben der app: Marinblau ist die Hauptfarbe, die Fläche bleibt tiefes
-/// Marine-Blau-Schwarz. Akzente sind nur das aktive Feld und die Hauptaktion.
+/// App colors: marine blue is the main color, the surface stays a deep
+/// marine-blue-black. Accents are only the active field and the main action.
 const canvas = Color(0xFF0A1219);
 const fieldBackground = Color(0xFF141F2B);
 const hairline = Color(0xFF223140);
@@ -21,7 +21,7 @@ ThemeData buildTheme() {
     surface: canvas,
     onSurface: bodyText,
     onSurfaceVariant: mutedText,
-    // Karten und Felder auf der Startseite.
+    // Cards and fields on the home page.
     surfaceContainer: fieldBackground,
     outline: hairline,
     error: errorText,
@@ -34,10 +34,10 @@ ThemeData buildTheme() {
 
   return ThemeData(
     colorScheme: colorScheme,
-    // shortcut: keine eigene Schrift, es ist die Systemschrift. Upgrade: ein
-    // Font-Asset, wenn die app eine eigene Marke bekommen soll.
+    // shortcut: no own typeface, this is the system font. Upgrade: a font
+    // asset if the app should get its own brand.
     textTheme: (const TextTheme(
-      // Die Begrüßung auf der Startseite.
+      // The greeting on the home page.
       displayLarge: TextStyle(
         fontSize: 32,
         fontWeight: FontWeight.w700,

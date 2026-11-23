@@ -3,8 +3,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../shared/widgets/saphire_logo.dart';
 
-/// Gemeinsames Layout für Anmeldung und Registrierung: dunkle Fläche, schmale Spalte,
-/// Markenname oben, dann Überschrift, Felder, Knopf und der Link zur anderen Seite.
+/// Shared layout for login and registration: dark surface, narrow column,
+/// brand name on top, then heading, fields, button and the link to the other page.
 class AuthPage extends StatelessWidget {
   const AuthPage({
     super.key,
@@ -26,15 +26,15 @@ class AuthPage extends StatelessWidget {
   final String buttonLabel;
   final VoidCallback? onSubmitted;
 
-  /// Der Link zur anderen Seite. Alle drei null: die Seite zeigt keinen Link.
+  /// The link to the other page. All three null: the page shows no link.
   final String? linkQuestion;
   final String? linkLabel;
   final String? linkTo;
 
-  /// Was nach dem Knopf passiert ist: die Meldung des Servers.
+  /// What happened after the button: the server's message.
   final String? note;
 
-  /// Was unter dem Link zur anderen Seite steht: der Weg ohne Konto und ohne Server.
+  /// What stands under the link to the other page: the way without account and without server.
   final Widget? footer;
 
   @override
@@ -53,7 +53,7 @@ class AuthPage extends StatelessWidget {
               child: Center(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(24),
-                  // Ohne feste Breite hätten die Felder hier keinen begrenzten Platz.
+                  // Without a fixed width the fields here would have no bounded space.
                   child: LayoutBuilder(
                     builder: (context, constraints) {
                       final columnWidth =
