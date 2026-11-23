@@ -77,10 +77,11 @@ pub fn read_id3v2(data: &[u8]) -> (HashMap<String, String>, usize) {
         return (tags, end);
     }
 
-    if flags & 0x40 != 0 {
+    if flags & 0xC0 != 0 {
         // An extended header is rare, and its size field counts itself in ID3v2.4 but not in
-        // ID3v2.3, so a file with one is left unread rather than read from the wrong offset. The
-        // audio still starts after the whole tag.
+        // ID3v2.3. An unsynchronised tag inserts 0x00 after every 0xFF, which would shift the
+        // UTF-16 code units. Both are left unread rather than read as mojibake; the audio still
+        // starts after the whole tag.
         return (tags, end);
     }
 

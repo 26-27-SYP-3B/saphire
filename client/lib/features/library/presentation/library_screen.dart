@@ -560,6 +560,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     required void Function(String category, String value) onToggle,
     required VoidCallback onReset,
     VoidCallback? onApply,
+    bool showReset = true,
   }) {
     final theme = Theme.of(context);
 
@@ -611,10 +612,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
             spacing: 8,
             runSpacing: 4,
             children: [
-              TextButton(
-                onPressed: selected.isEmpty ? null : onReset,
-                child: const Text('Filter zurücksetzen'),
-              ),
+              if (showReset)
+                TextButton(
+                  onPressed: selected.isEmpty ? null : onReset,
+                  child: const Text('Filter zurücksetzen'),
+                ),
               if (onApply != null) FilledButton(onPressed: onApply, child: const Text('Anwenden')),
             ],
           ),
@@ -740,6 +742,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     selected: _filters,
                     onToggle: (category, value) => setState(() => _toggleFilter(_filters, category, value)),
                     onReset: _resetFilters,
+                    // The chip row right above the panel already resets all filters.
+                    showReset: false,
                   ),
               ],
             ),

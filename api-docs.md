@@ -266,7 +266,9 @@ curl -X POST localhost:8080/api/music/upload \
 
   A `saphire.db` created before these columns get them: `ensure_columns` in
   `server/src/music.rs` reads `PRAGMA table_info(track)` and adds the missing ones, so an
-  old row keeps reading as an untagged file instead of failing.
+  old row keeps reading as an untagged file instead of failing. The file is not read again
+  for old rows, so a song uploaded before this version stays under "Unbekannt" until it is
+  uploaded again; there is no backfill.
 
 ### `GET /api/music`
 

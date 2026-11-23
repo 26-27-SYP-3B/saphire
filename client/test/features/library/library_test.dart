@@ -1059,4 +1059,20 @@ void main() {
     expect(find.text('Interpret: Anna'), findsOneWidget);
     expect(find.text('1 von 3 Songs passen zu den Filtern'), findsOneWidget);
   });
+
+  // Closing the phone overlay without "Anwenden" must not apply the picks that were only a draft.
+  testWidgets('dismissing the phone filter without Apply keeps the library', (tester) async {
+    await openLibrary(tester, size: const Size(360, 740));
+    await openFilterPanel(tester);
+
+    await pickFilter(tester, 'Interpret', 'Anna');
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(BottomSheet), findsNothing);
+    expect(find.text('3 Songs'), findsOneWidget);
+    expect(find.text('Interpret: Anna'), findsNothing);
+    expect(find.text('Neutrone (Remix)'), findsOneWidget);
+    expect(find.text('Bohne'), findsOneWidget);
+  });
 }
