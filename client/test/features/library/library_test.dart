@@ -1020,6 +1020,16 @@ void main() {
     expect(find.widgetWithText(FilledButton, 'Anwenden'), findsOneWidget);
   });
 
+  // A window that clears the panel's own height can still be too short: the player bar and the
+  // header sit above it, and at 700 px the inline panel clipped its reset button. Such a window
+  // gets the overlay too.
+  testWidgets('a wide window without room for the inline panel gets the overlay', (tester) async {
+    await openLibrary(tester, size: const Size(760, 700));
+    await openFilterPanel(tester);
+
+    expect(find.byType(BottomSheet), findsOneWidget);
+  });
+
   // On a phone the filter is an overlay with an Apply button, because the list behind it is
   // not visible while the overlay is open.
   testWidgets('on a phone the filter is applied from an overlay', (tester) async {

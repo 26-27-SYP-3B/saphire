@@ -127,6 +127,15 @@ fn read_audio_meta_reads_the_year_from_a_full_timestamp() {
     assert_eq!(metadata::year_of("abcd"), None);
 }
 
+// ID3v2.4 may put several strings in one frame, separated by NUL. A field here holds one
+// value, so the first has to survive while the separator must not weld the values together.
+#[test]
+fn read_audio_meta_takes_the_first_of_several_values() {
+    let tag = build_id3_tag(4, true, &[("TCON", text_frame(3, "Pop\0Rock"))]);
+
+    assert_eq!(metadata::read_audio_meta(&tag).genre, "Pop", "the values were welded together");
+}
+
 #[test]
 fn read_audio_meta_without_tags_still_counts_the_frames() {
     let meta = metadata::read_audio_meta(&audio_of(10));
