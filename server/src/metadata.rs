@@ -129,7 +129,7 @@ pub fn decode_frame_text(payload: &[u8]) -> String {
     // ID3v2.4 allows one text frame to hold several strings separated by NUL. A field here
     // holds one value, so the first non-empty one is taken; joining them would invent a value
     // no tag names, and dropping the separator alone would weld them together.
-    decoded.split('\0').find(|text| !text.is_empty()).unwrap_or("").to_string()
+    decoded.split('\0').find(|text| !text.trim().is_empty()).unwrap_or("").to_string()
 }
 
 /// Reads code units. `assume_big_endian` is the ID3v2.4 encoding that has no mark; for the one

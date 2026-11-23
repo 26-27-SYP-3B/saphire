@@ -1030,6 +1030,17 @@ void main() {
     expect(find.byType(BottomSheet), findsOneWidget);
   });
 
+  // A large text scale makes the panel and the chip row taller, so the window needs the same
+  // room it would need at a larger size; otherwise the inline panel gets clipped.
+  testWidgets('a large text scale gets the filter overlay', (tester) async {
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await openLibrary(tester, size: const Size(760, 860));
+    await openFilterPanel(tester);
+
+    expect(find.byType(BottomSheet), findsOneWidget);
+  });
+
   // On a phone the filter is an overlay with an Apply button, because the list behind it is
   // not visible while the overlay is open.
   testWidgets('on a phone the filter is applied from an overlay', (tester) async {

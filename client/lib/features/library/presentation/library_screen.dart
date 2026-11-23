@@ -457,6 +457,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
     for (final entry in _filters.entries) entry.key: {...entry.value},
   };
 
+  /// Whether the window has room for the filter panel below the sort. A larger text scale
+  /// makes every row taller, so the window has to grow with it.
+  bool _inlineFilters(BuildContext context) {
+    final room = MediaQuery.sizeOf(context);
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    return room.width >= 700 && room.height >= filterPanelMinHeight * textScale;
+  }
+
   /// Opens the filter. A phone gets it as an overlay from below (with "Anwenden", because the
   /// list is behind it); a wide layout gets it inline below the sort and applies on every tap,
   /// so the list narrows while the filter is still open.
@@ -465,8 +473,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
     // The panel needs room below the list controls; a phone in landscape is wide but has no
     // height for it, so it gets the overlay too.
-    final room = MediaQuery.sizeOf(context);
-    if (room.width >= 700 && room.height >= filterPanelMinHeight) {
+    if (_inlineFilters(context)) {
       setState(() => _filtersOpen = !_filtersOpen);
       return;
     }
@@ -625,8 +632,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final filtering = _filters.isNotEmpty;
     final searching = _search.text.trim().isNotEmpty;
     final filterCount = _filters.values.fold<int>(0, (sum, values) => sum + values.length);
-    final room = MediaQuery.sizeOf(context);
-    final inlineFilters = room.width >= 700 && room.height >= filterPanelMinHeight;
+    final inlineFilters = _inlineFilters(context);
 
     return AppShell(
       selected: '/library',

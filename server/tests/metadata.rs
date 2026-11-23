@@ -132,8 +132,11 @@ fn read_audio_meta_reads_the_year_from_a_full_timestamp() {
 #[test]
 fn read_audio_meta_takes_the_first_of_several_values() {
     let tag = build_id3_tag(4, true, &[("TCON", text_frame(3, "Pop\0Rock"))]);
-
     assert_eq!(metadata::read_audio_meta(&tag).genre, "Pop", "the values were welded together");
+
+    // A blank first value is not a value; the next one is.
+    let tag = build_id3_tag(4, true, &[("TCON", text_frame(3, " \0Rock"))]);
+    assert_eq!(metadata::read_audio_meta(&tag).genre, "Rock", "a blank value hid the next one");
 }
 
 #[test]
