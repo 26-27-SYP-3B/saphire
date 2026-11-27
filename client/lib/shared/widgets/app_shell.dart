@@ -92,7 +92,8 @@ class _AppShellState extends State<AppShell> {
   void _togglePlay() {
     if (widget.player.playing) {
       widget.player.pause();
-    } else if (widget.player.queue.current != null || widget.player.localCurrent != null) {
+    } else if (widget.player.queue.current != null ||
+        widget.player.localCurrent != null) {
       widget.player.resume();
     } else if (!widget.player.queue.isEmpty) {
       widget.player.playCurrent();
@@ -137,7 +138,10 @@ class _AppShellState extends State<AppShell> {
 
           content = wide
               ? Row(
-                  children: [Expanded(child: content), SizedBox(width: AppShell.queueWidth, child: panel)],
+                  children: [
+                    Expanded(child: content),
+                    SizedBox(width: AppShell.queueWidth, child: panel),
+                  ],
                 )
               // A drop-up, not a page: it covers the lower part of what the person was looking
               // at, so the page stays where it was and closing it costs no navigation. The bar
@@ -148,14 +152,18 @@ class _AppShellState extends State<AppShell> {
                     Align(
                       alignment: Alignment.bottomCenter,
                       child: ConstrainedBox(
-                        constraints: BoxConstraints(maxHeight: constraints.maxHeight * 0.62),
+                        constraints: BoxConstraints(
+                          maxHeight: constraints.maxHeight * 0.62,
+                        ),
                         child: SizedBox(
                           width: double.infinity,
                           child: Material(
                             color: scheme.surface,
                             elevation: 8,
                             clipBehavior: Clip.antiAlias,
-                            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                            borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(20),
+                            ),
                             child: panel,
                           ),
                         ),
@@ -187,11 +195,18 @@ class _AppShellState extends State<AppShell> {
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
                                 Padding(
-                                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                                  padding: const EdgeInsets.fromLTRB(
+                                    16,
+                                    16,
+                                    16,
+                                    12,
+                                  ),
                                   child: SaphireLogo(size: 44),
                                 ),
                                 Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                  ),
                                   child: NavBar(selected: widget.selected),
                                 ),
                                 LibrarySidebar(
@@ -211,9 +226,13 @@ class _AppShellState extends State<AppShell> {
                           cursor: SystemMouseCursors.resizeColumn,
                           child: GestureDetector(
                             onHorizontalDragUpdate: (details) => setState(() {
-                              _sidebarWidth = (_sidebarWidth + details.delta.dx).clamp(200.0, 380.0);
+                              _sidebarWidth = (_sidebarWidth + details.delta.dx)
+                                  .clamp(200.0, 380.0);
                             }),
-                            child: Container(width: 6, color: Colors.transparent),
+                            child: Container(
+                              width: 6,
+                              color: Colors.transparent,
+                            ),
                           ),
                         ),
                         Expanded(child: content),
@@ -241,7 +260,8 @@ class _AppShellState extends State<AppShell> {
                       _queueOpen = false;
                     }),
                   ),
-                if (!wide && !fullscreen) NavBar(selected: widget.selected, vertical: false),
+                if (!wide && !fullscreen)
+                  NavBar(selected: widget.selected, vertical: false),
               ],
             ),
           ),

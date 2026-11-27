@@ -7,9 +7,15 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Every request the app makes is an HTTP call to the Saphire server. Release builds do
+         not get the debug manifest's INTERNET permission, so it has to be here too. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- The school server is served over plain HTTP on the LAN. Android 9+ blocks cleartext by
+         default, which would make every login and every song fail. -->
     <application
-        android:label="saphire_client"
         android:name="${applicationName}"
+        android:label="Saphire"
+        android:usesCleartextTraffic="true"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"

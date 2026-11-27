@@ -22,22 +22,23 @@ const playerAccent = accentBright;
 const playerBarMuted = Color(0xFF2A3E66);
 
 ThemeData buildTheme() {
-  final colorScheme = ColorScheme.fromSeed(
-    seedColor: accent,
-    brightness: Brightness.dark,
-  ).copyWith(
-    primary: accent,
-    onPrimary: Colors.white,
-    secondary: accentBright,
-    onSecondary: Colors.white,
-    surface: canvas,
-    onSurface: bodyText,
-    onSurfaceVariant: mutedText,
-    surfaceContainer: fieldBackground,
-    surfaceContainerHigh: elevated,
-    outline: hairline,
-    error: errorText,
-  );
+  final colorScheme =
+      ColorScheme.fromSeed(
+        seedColor: accent,
+        brightness: Brightness.dark,
+      ).copyWith(
+        primary: accent,
+        onPrimary: Colors.white,
+        secondary: accentBright,
+        onSecondary: Colors.white,
+        surface: canvas,
+        onSurface: bodyText,
+        onSurfaceVariant: mutedText,
+        surfaceContainer: fieldBackground,
+        surfaceContainerHigh: elevated,
+        outline: hairline,
+        error: errorText,
+      );
 
   final inputBorder = OutlineInputBorder(
     borderRadius: BorderRadius.circular(6),
@@ -68,16 +69,21 @@ ThemeData buildTheme() {
         letterSpacing: -0.4,
         height: 1.2,
       ),
-      titleLarge: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, height: 1.3),
-      titleMedium: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, height: 1.3),
+      titleLarge: TextStyle(
+        fontSize: 18,
+        fontWeight: FontWeight.w700,
+        height: 1.3,
+      ),
+      titleMedium: TextStyle(
+        fontSize: 15,
+        fontWeight: FontWeight.w600,
+        height: 1.3,
+      ),
       labelLarge: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
       bodyMedium: TextStyle(fontSize: 14, height: 1.5),
       bodySmall: TextStyle(fontSize: 12, height: 1.4),
       labelSmall: TextStyle(fontSize: 11, fontWeight: FontWeight.w500),
-    )).apply(
-      bodyColor: bodyText,
-      displayColor: bodyText,
-    ),
+    )).apply(bodyColor: bodyText, displayColor: bodyText),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: fieldBackground,
@@ -114,7 +120,10 @@ ThemeData buildTheme() {
       disabledColor: fieldBackground,
       side: const BorderSide(color: hairline),
       labelStyle: const TextStyle(color: bodyText, fontWeight: FontWeight.w600),
-      secondaryLabelStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+      secondaryLabelStyle: const TextStyle(
+        color: Colors.white,
+        fontWeight: FontWeight.w600,
+      ),
       shape: const StadiumBorder(),
     ),
     dividerTheme: const DividerThemeData(color: hairline, thickness: 1),

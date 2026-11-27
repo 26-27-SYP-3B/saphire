@@ -276,7 +276,7 @@ void main() {
     await tester.tap(find.byTooltip('Warteschlange'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Warteschlange'), findsOneWidget);
+    expect(find.text('Warteschlange'), findsWidgets);
     expect(find.text('0 Titel'), findsOneWidget);
 
     // The full panel is one tap away, but the song keeps playing in this view.

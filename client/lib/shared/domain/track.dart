@@ -85,7 +85,8 @@ class Track {
     year: (json['year'] as num?)?.toInt() ?? 0,
     durationMs: (json['duration_ms'] as num?)?.toInt() ?? 0,
     waveform: [
-      for (final peak in json['waveform'] as List<dynamic>? ?? const []) (peak as num).toInt(),
+      for (final peak in json['waveform'] as List<dynamic>? ?? const [])
+        (peak as num).toInt(),
     ],
     uploadedBy: json['uploaded_by'] as String? ?? '',
     storedName: json['stored_name'] as String? ?? '',

@@ -866,6 +866,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Widget _viewChip(String label, LibraryView view) {
     final selected = _view == view;
     return FilterChip(
+      key: ValueKey('view-${view.name}'),
       label: Text(label),
       selected: selected,
       onSelected: (_) => setState(() {
@@ -954,8 +955,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Widget _songRow(Track track) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final local = widget.player.localCurrent;
     final current = track.isLocal
-        ? identical(widget.player.localCurrent?.path, track.localPath)
+        ? local != null &&
+              local.path == track.localPath &&
+              local.title == track.title
         : widget.queue.current?.trackId == track.id;
     final artist = _artistOf(track);
 

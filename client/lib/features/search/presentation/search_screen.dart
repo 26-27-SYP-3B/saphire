@@ -93,9 +93,9 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   List<Track> get _all => [
-        ..._server,
-        for (final track in _local.tracks) track.toTrack(),
-      ];
+    ..._server,
+    for (final track in _local.tracks) track.toTrack(),
+  ];
 
   List<Track> _results() {
     final query = _search.text.trim().toLowerCase();
@@ -110,35 +110,48 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Future<void> _play(Track track) => _control(() async {
-        if (track.isLocal) {
-          await widget.player.playLocal(track.toLocalTrack());
-          return;
-        }
-        widget.queue.fill(await widget.queues.fill(QueueSource.track(track.id)));
-        await widget.player.playCurrent();
-      });
+    if (track.isLocal) {
+      await widget.player.playLocal(track.toLocalTrack());
+      return;
+    }
+    widget.queue.fill(await widget.queues.fill(QueueSource.track(track.id)));
+    await widget.player.playCurrent();
+  });
 
   Future<void> _addToQueue(Track track) => _control(() async {
-        if (track.isLocal) {
-          _local.addToQueue(track.toLocalTrack());
-          await widget.player.syncLocalQueue(_local.queue);
-          if (mounted) setState(() => _note = '${track.title} in die Warteschlange gelegt.');
-          return;
-        }
-        final entry = await widget.queues.append(track.id);
-        if (mounted) {
-          widget.queue.append(entry.asManual());
-          setState(() => _note = '${track.title} in die Warteschlange gelegt.');
-        }
-      });
+    if (track.isLocal) {
+      _local.addToQueue(track.toLocalTrack());
+      await widget.player.syncLocalQueue(_local.queue);
+      if (mounted) {
+        setState(() => _note = '${track.title} in die Warteschlange gelegt.');
+      }
+      return;
+    }
+    final entry = await widget.queues.append(track.id);
+    if (mounted) {
+      widget.queue.append(entry.asManual());
+      setState(() => _note = '${track.title} in die Warteschlange gelegt.');
+    }
+  });
 
-  Future<void> _addToPlaylist(Track track, int? playlistId, String? localName) async {
+  Future<void> _addToPlaylist(
+    Track track,
+    int? playlistId,
+    String? localName,
+  ) async {
     await _control(() async {
       if (track.isLocal) {
-        final match = _local.playlists.where((playlist) => playlist.name == localName);
+        final match = _local.playlists.where(
+          (playlist) => playlist.name == localName,
+        );
         if (match.isEmpty) return;
         _local.addToPlaylist(match.first, track.toLocalTrack());
-        if (mounted) setState(() => _note = 'Song zur Playlist „${match.first.name}“ hinzugefügt.');
+        if (mounted) {
+          setState(
+            () =>
+                _note = 'Song zur Playlist „${match.first.name}“ hinzugefügt.',
+          );
+        }
         return;
       }
 
@@ -150,7 +163,12 @@ class _SearchScreenState extends State<SearchScreen> {
         id = created.id;
       }
       final song = await widget.playlists.addSong(id, track.id);
-      if (mounted) setState(() => _note = 'Song an Position ${song.position} zur Playlist hinzugefügt.');
+      if (mounted) {
+        setState(
+          () => _note =
+              'Song an Position ${song.position} zur Playlist hinzugefügt.',
+        );
+      }
     });
   }
 
@@ -167,7 +185,9 @@ class _SearchScreenState extends State<SearchScreen> {
     } on PlaylistException catch (error) {
       if (mounted) setState(() => _note = error.message);
     } catch (error) {
-      if (mounted) setState(() => _note = 'Das Lied konnte nicht gespielt werden: $error');
+      if (mounted) {
+        setState(() => _note = 'Das Lied konnte nicht gespielt werden: $error');
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -218,12 +238,12 @@ class _SearchScreenState extends State<SearchScreen> {
             child: query.isEmpty
                 ? _start(theme)
                 : results.isEmpty
-                    ? _empty(theme)
-                    : ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 24, 24),
-                        itemCount: results.length,
-                        itemBuilder: (context, index) => _row(results[index]),
-                      ),
+                ? _empty(theme)
+                : ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 24, 24),
+                    itemCount: results.length,
+                    itemBuilder: (context, index) => _row(results[index]),
+                  ),
           ),
         ],
       ),
@@ -265,7 +285,8 @@ class _SearchScreenState extends State<SearchScreen> {
 
     return InkWell(
       onTap: _busy ? null : () => _play(track),
-      onSecondaryTapDown: (details) => _contextMenu(details.globalPosition, track),
+      onSecondaryTapDown: (details) =>
+          _contextMenu(details.globalPosition, track),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         child: Row(
@@ -285,8 +306,12 @@ class _SearchScreenState extends State<SearchScreen> {
                     overflow: TextOverflow.ellipsis,
                   ),
                   Text(
-                    track.artist.isEmpty ? (track.isLocal ? 'Lokal' : '–') : track.artist,
-                    style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                    track.artist.isEmpty
+                        ? (track.isLocal ? 'Lokal' : '–')
+                        : track.artist,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -309,19 +334,34 @@ class _SearchScreenState extends State<SearchScreen> {
                 }
               },
               itemBuilder: (context) => [
-                const PopupMenuItem(value: 'queue', child: Text('Zur Warteschlange hinzufügen')),
+                const PopupMenuItem(
+                  value: 'queue',
+                  child: Text('Zur Warteschlange hinzufügen'),
+                ),
                 if (track.isLocal) ...[
                   if (_local.playlists.isEmpty)
-                    const PopupMenuItem(enabled: false, child: Text('Keine lokale Playlist'))
+                    const PopupMenuItem(
+                      enabled: false,
+                      child: Text('Keine lokale Playlist'),
+                    )
                   else
                     for (final playlist in _local.playlists)
-                      PopupMenuItem(value: 'local:${playlist.name}', child: Text('Zu „${playlist.name}“')),
+                      PopupMenuItem(
+                        value: 'local:${playlist.name}',
+                        child: Text('Zu „${playlist.name}“'),
+                      ),
                 ] else ...[
                   if (_playlists.isEmpty)
-                    const PopupMenuItem(value: 'new', child: Text('Zur neuen Playlist „Meine Playlist“'))
+                    const PopupMenuItem(
+                      value: 'new',
+                      child: Text('Zur neuen Playlist „Meine Playlist“'),
+                    )
                   else
                     for (final playlist in _playlists)
-                      PopupMenuItem(value: '${playlist.id}', child: Text('Zu „${playlist.name}“')),
+                      PopupMenuItem(
+                        value: '${playlist.id}',
+                        child: Text('Zu „${playlist.name}“'),
+                      ),
                 ],
               ],
             ),
@@ -336,9 +376,15 @@ class _SearchScreenState extends State<SearchScreen> {
     if (overlay is! RenderBox) return;
     final value = await showMenu<String>(
       context: context,
-      position: RelativeRect.fromRect(position & const Size(1, 1), Offset.zero & overlay.size),
+      position: RelativeRect.fromRect(
+        position & const Size(1, 1),
+        Offset.zero & overlay.size,
+      ),
       items: const [
-        PopupMenuItem(value: 'queue', child: Text('Zur Warteschlange hinzufügen')),
+        PopupMenuItem(
+          value: 'queue',
+          child: Text('Zur Warteschlange hinzufügen'),
+        ),
       ],
     );
     if (value == 'queue') await _addToQueue(track);

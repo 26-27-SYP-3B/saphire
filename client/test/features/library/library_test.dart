@@ -69,6 +69,14 @@ const libraryAnswer = [
   },
 ];
 
+// One playlist for the Playlists chip and the sidebar.
+const playlistForLibrary = {
+  'id': 1.0,
+  'name': 'Favoriten',
+  'created_at': 1794180269.0,
+  'song_count': 2.0,
+};
+
 // What POST /api/queue answers for a fill from one song: that song at slot 1. A queue entry
 // is only a reference to a library song, so the title here is the title the library row has,
 // and a test that looks at the bar can only assert what this answer says — the page shows the
@@ -1012,6 +1020,64 @@ void main() {
     expect(find.text('Alle Songs'), findsOneWidget);
     expect(find.text('Interpret: Kraftwerk'), findsNothing);
     expect(find.text('3 Songs'), findsOneWidget);
+  });
+
+  // The chips are views, not another filter on the same page: Lokal keeps the device songs,
+  // and tapping it again brings the server songs back.
+  testWidgets('the Lokal chip shows only the songs on this device', (tester) async {
+    final local = LocalLibrary();
+    local.add(name: 'lokal.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
+
+    await openLibrary(tester, localLibrary: local);
+
+    // The sidebar has a Lokal chip too, so the page's chip is the last one.
+    await tester.tap(find.byKey(const ValueKey('view-local')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('lokal.mp3'), findsOneWidget);
+    expect(find.text('Neutrone (Remix)'), findsNothing);
+    expect(find.text('1 Songs'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('view-local')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('lokal.mp3'), findsOneWidget);
+    expect(find.text('Neutrone (Remix)'), findsOneWidget);
+  });
+
+  // Playlists is a chip of the library, not a separate page: it lists what the caller owns
+  // with its cover and count.
+  testWidgets('the Playlists chip lists the playlists', (tester) async {
+    await openLibrary(tester, playlists: StubAdapter(200, <Object>[playlistForLibrary]));
+
+    await tester.tap(find.byKey(const ValueKey('view-playlists')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Favoriten'), findsWidgets);
+    expect(find.text('Playlist · 2 Songs'), findsWidgets);
+    expect(find.text('1 Playlists'), findsOneWidget);
+    expect(find.text('Neutrone (Remix)'), findsNothing);
+  });
+
+  // The grid is the same rows with another shape, so a song is still playable there.
+  testWidgets('the grid shows the songs as cards', (tester) async {
+    final audio = FakePlayer();
+    addTearDown(audio.dispose);
+    await openLibrary(
+      tester,
+      audio: audio,
+      queues: StubAdapter(200, queueFor(9, 'Bohne')),
+    );
+
+    await tester.tap(find.byTooltip('Raster'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Neutrone (Remix)'), findsOneWidget);
+    expect(find.text('Bohne'), findsOneWidget);
+
+    await tester.tap(find.text('Bohne'));
+    await tester.pumpAndSettle();
+    expect(audio.played, isNotEmpty);
   });
 
   // A phone in landscape is wide enough for the inline panel by width, but not by height: the

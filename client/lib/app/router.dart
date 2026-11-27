@@ -77,18 +77,27 @@ GoRouter buildRouter({
       // Without a stored server there is nothing to log in to, so every other
       // address – a web reload of /login included – belongs in the setup. Local mode
       // has no server by design, so it is not sent there.
-      if (!settingsStore.localMode && settingsStore.serverBase == null && state.matchedLocation != '/setup') {
+      if (!settingsStore.localMode &&
+          settingsStore.serverBase == null &&
+          state.matchedLocation != '/setup') {
         return '/setup';
       }
       final loggedIn = session.isLoggedIn;
-      final atAuthPage = state.matchedLocation == '/login' || state.matchedLocation == '/register';
+      final atAuthPage =
+          state.matchedLocation == '/login' ||
+          state.matchedLocation == '/register';
       // A session restored from the last run skips the form; a browser that
       // reloads on the login page has no session left and stays there.
       // A link that landed on the form first sends the user back to what they asked for.
-      if (loggedIn && atAuthPage) return _safeFrom(state.uri.queryParameters['from']) ?? '/home';
+      if (loggedIn && atAuthPage) {
+        return _safeFrom(state.uri.queryParameters['from']) ?? '/home';
+      }
       // The setup is the page that finds the first server, so it stays reachable
       // without a session – and so does the home screen in local mode.
-      if (!loggedIn && !atAuthPage && state.matchedLocation != '/setup' && !settingsStore.localMode) {
+      if (!loggedIn &&
+          !atAuthPage &&
+          state.matchedLocation != '/setup' &&
+          !settingsStore.localMode) {
         return '/login?from=${Uri.encodeComponent(state.uri.toString())}';
       }
       return null;
@@ -96,11 +105,13 @@ GoRouter buildRouter({
     routes: [
       GoRoute(
         path: '/setup',
-        builder: (context, state) => SetupScreen(settings: settingsStore, repository: auth, dio: dio),
+        builder: (context, state) =>
+            SetupScreen(settings: settingsStore, repository: auth, dio: dio),
       ),
       GoRoute(
         path: '/settings',
-        builder: (context, state) => SettingsScreen(settings: settingsStore, repository: auth, dio: dio),
+        builder: (context, state) =>
+            SettingsScreen(settings: settingsStore, repository: auth, dio: dio),
       ),
       GoRoute(
         path: '/login',
@@ -181,7 +192,9 @@ GoRouter buildRouter({
           session: session,
           settings: settingsStore,
           localLibrary: localLibrary,
-          initialTrackId: int.tryParse(state.uri.queryParameters['track'] ?? ''),
+          initialTrackId: int.tryParse(
+            state.uri.queryParameters['track'] ?? '',
+          ),
           initialView: state.uri.queryParameters['view'],
         ),
       ),

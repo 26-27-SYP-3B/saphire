@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../app/theme.dart';
 import '../domain/player.dart';
@@ -108,7 +109,9 @@ class _PlayerViewState extends State<PlayerView> {
     unawaited(
       widget.player.setVolume(value).catchError((Object error) {
         if (mounted) {
-          setState(() => _note = 'Das Lied konnte nicht gespielt werden: $error');
+          setState(
+            () => _note = 'Das Lied konnte nicht gespielt werden: $error',
+          );
         }
       }),
     );
@@ -117,6 +120,69 @@ class _PlayerViewState extends State<PlayerView> {
   void _toggleMute() =>
       _setVolume(widget.player.volume > 0 ? 0 : widget.player.volumeBeforeMute);
 
+  /// A song on the server has a link the library page understands; a local file cannot leave
+  /// this device, so the button says that instead of copying something that would not play.
+  Future<void> _share() async {
+    final entry = widget.player.queue.current;
+    final local = widget.player.localCurrent;
+    if (entry == null && local == null) return;
+
+    if (local != null || entry == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Ein lokaler Song bleibt auf diesem Gerät.'),
+        ),
+      );
+      return;
+    }
+
+    await Clipboard.setData(
+      ClipboardData(text: 'saphire://library?track=${entry.trackId}'),
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Link in die Zwischenablage kopiert.')),
+    );
+  }
+
+  /// There is no device-selection endpoint yet (api-docs.md), so the sheet says what is true:
+  /// this device is the one that plays, and no other device is connected.
+  Future<void> _devices() => showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    builder: (context) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Wiedergabe auf',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ),
+          ),
+          const ListTile(
+            leading: Icon(Icons.phone_android),
+            title: Text('Dieses Gerät'),
+            subtitle: Text('Die Wiedergabe läuft hier.'),
+            trailing: Icon(Icons.check, color: accentBright),
+          ),
+          ListTile(
+            enabled: false,
+            leading: const Icon(Icons.devices_other),
+            title: const Text('Weitere Geräte'),
+            subtitle: const Text('Sind noch nicht angebunden.'),
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -124,7 +190,9 @@ class _PlayerViewState extends State<PlayerView> {
     final local = widget.player.localCurrent;
     final entry = widget.player.queue.current;
     final title = local?.title ?? entry?.title;
-    final waveform = local == null ? entry?.waveform ?? const <int>[] : const <int>[];
+    final waveform = local == null
+        ? entry?.waveform ?? const <int>[]
+        : const <int>[];
     final subtitle = _note ?? widget.player.statusNote;
     final failed = _note != null || widget.player.failure != null;
     final total = widget.player.duration;
@@ -141,10 +209,11 @@ class _PlayerViewState extends State<PlayerView> {
         final height = phone
             ? constraints.maxHeight - 24
             : math.min(constraints.maxHeight - 48, width * 1.6);
-        // The fixed parts below the cover are about 255 px tall. The cover takes the rest, and
-        // the card scrolls when the window is shorter than that, so a landscape phone keeps every
-        // control instead of clipping the bottom.
-        final coverHeight = math.max(100.0, height - 36 - 255);
+        // The fixed parts below the cover (title, seek line, transport, extra controls and the
+        // queue/share row) are about 315 px tall. The cover takes the rest, and the card scrolls
+        // when the window is shorter than that, so a landscape phone keeps every control instead
+        // of clipping the bottom.
+        final coverHeight = math.max(100.0, height - 36 - 315);
         // When the card fits, the vertical drag belongs to the swipe-down-to-close gesture.
         // Only a card that has to scroll uses the drag for scrolling.
         final scrolls = height < 400;
@@ -162,7 +231,12 @@ class _PlayerViewState extends State<PlayerView> {
               width: width,
               height: height,
               decoration: BoxDecoration(
-                color: playerCard,
+                gradient: const LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [fieldBackground, playerCard, canvas],
+                  stops: [0, 0.55, 1],
+                ),
                 border: Border.all(color: playerCardBorder),
                 borderRadius: BorderRadius.circular(36),
                 boxShadow: [
@@ -184,18 +258,35 @@ class _PlayerViewState extends State<PlayerView> {
                       child: _cover(context, title, sheetHeight),
                     ),
                     const SizedBox(height: 16),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        title ?? 'Nichts wird abgespielt',
-                        style: theme.textTheme.headlineMedium?.copyWith(
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.9,
-                          color: scheme.onSurface,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            title ?? 'Nichts wird abgespielt',
+                            style: theme.textTheme.headlineMedium?.copyWith(
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.9,
+                              color: scheme.onSurface,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                        IconButton(
+                          tooltip: 'Gefällt mir',
+                          onPressed: title == null
+                              ? null
+                              : () => setState(widget.player.toggleLike),
+                          icon: Icon(
+                            widget.player.isLiked
+                                ? Icons.favorite
+                                : Icons.favorite_border,
+                            color: widget.player.isLiked
+                                ? accentBright
+                                : scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 4),
                     Align(
@@ -217,6 +308,8 @@ class _PlayerViewState extends State<PlayerView> {
                     _controls(context, title, total, playing),
                     const SizedBox(height: 6),
                     _moreControls(context, title, total),
+                    const SizedBox(height: 6),
+                    _bottomRow(context, title),
                   ],
                 ),
               ),
@@ -255,6 +348,33 @@ class _PlayerViewState extends State<PlayerView> {
             ),
           ),
         ),
+        // The tags of a local file may carry a cover; a server song has none yet. The image
+        // is darkened towards the bottom so the controls that float over it stay readable.
+        if (widget.player.localCurrent?.cover != null)
+          Positioned.fill(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(28),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Image.memory(
+                    widget.player.localCurrent!.cover!,
+                    fit: BoxFit.cover,
+                  ),
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.transparent, canvas],
+                        stops: [0.45, 1],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         if (widget.onClose != null)
           Positioned(
             left: 8,
@@ -351,7 +471,10 @@ class _PlayerViewState extends State<PlayerView> {
               children: [
                 Positioned.fill(
                   child: CustomPaint(
-                    painter: _WaveformPainter(progress: progress, samples: waveform),
+                    painter: _WaveformPainter(
+                      progress: progress,
+                      samples: waveform,
+                    ),
                   ),
                 ),
                 Positioned.fill(
@@ -448,15 +571,6 @@ class _PlayerViewState extends State<PlayerView> {
               ),
             ],
           ),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: _squareButton(
-              tooltip: 'Warteschlange',
-              icon: Icons.queue_music,
-              active: _queueOpen,
-              onPressed: () => setState(() => _queueOpen = !_queueOpen),
-            ),
-          ),
         ],
       ),
     );
@@ -492,40 +606,43 @@ class _PlayerViewState extends State<PlayerView> {
     );
   }
 
-  Widget _squareButton({
-    required String tooltip,
-    required IconData icon,
-    required VoidCallback onPressed,
-    bool active = false,
-  }) {
-    final scheme = Theme.of(context).colorScheme;
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: active
-            ? playerAccent.withValues(alpha: 0.16)
-            : Colors.transparent,
-        borderRadius: BorderRadius.circular(14),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: onPressed,
-          child: Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              border: Border.all(
-                color: active ? playerAccent : playerCardBorder,
+  Widget _bottomRow(BuildContext context, String? title) {
+    final enabled = title != null && !_busy;
+
+    return Row(
+      children: [
+        Expanded(
+          child: Tooltip(
+            message: 'Warteschlange',
+            child: TextButton.icon(
+              // The queue is worth opening with nothing current too: it is where the songs
+              // that would play next are.
+              onPressed: _busy
+                  ? null
+                  : () => setState(() => _queueOpen = !_queueOpen),
+              icon: Icon(
+                Icons.queue_music,
+                size: 20,
+                color: _queueOpen ? accentBright : null,
               ),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(
-              icon,
-              size: 20,
-              color: active ? playerAccent : scheme.onSurfaceVariant,
+              label: Text(
+                'Warteschlange',
+                style: TextStyle(color: _queueOpen ? accentBright : null),
+              ),
             ),
           ),
         ),
-      ),
+        IconButton(
+          tooltip: 'Teilen',
+          onPressed: enabled ? _share : null,
+          icon: const Icon(Icons.share, size: 20),
+        ),
+        IconButton(
+          tooltip: 'Gerät',
+          onPressed: _devices,
+          icon: const Icon(Icons.devices, size: 20),
+        ),
+      ],
     );
   }
 
@@ -817,5 +934,6 @@ class _WaveformPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_WaveformPainter oldDelegate) =>
-      oldDelegate.progress != progress || !listEquals(oldDelegate.samples, samples);
+      oldDelegate.progress != progress ||
+      !listEquals(oldDelegate.samples, samples);
 }

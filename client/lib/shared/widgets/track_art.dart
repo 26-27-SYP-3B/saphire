@@ -37,7 +37,8 @@ class TrackArt extends StatelessWidget {
                 image,
                 fit: BoxFit.cover,
                 // A full photo is decoded at thumbnail size, not at its own.
-                cacheWidth: (size * MediaQuery.devicePixelRatioOf(context)).round(),
+                cacheWidth: (size * MediaQuery.devicePixelRatioOf(context))
+                    .round(),
                 // A stored cover that cannot be decoded shows the mark, not an exception.
                 errorBuilder: (context, error, stack) =>
                     Icon(icon, size: size * 0.42, color: mutedText),
@@ -61,15 +62,16 @@ class SourceBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: local ? scheme.primary.withValues(alpha: 0.18) : Colors.transparent,
+        color: local
+            ? scheme.primary.withValues(alpha: 0.18)
+            : Colors.transparent,
         border: Border.all(color: local ? scheme.primary : scheme.outline),
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(
         local ? 'Lokal' : 'Server',
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: local ? scheme.primary : scheme.onSurfaceVariant,
-            ),
+        style: Theme.of(context).textTheme.labelSmall
+            ?.copyWith(color: local ? scheme.primary : scheme.onSurfaceVariant),
       ),
     );
   }

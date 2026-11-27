@@ -13,6 +13,7 @@ import 'queue.dart';
 /// cannot be used there. See data/just_audio_player.dart for the implementation.
 abstract interface class SongPlayer {
   Future<void> open(String url, {Map<String, String> headers});
+
   /// Starts playback and returns once it has started — not when the song ends. just_audio's own
   /// play() future completes only at the end, and a caller that awaited it would keep its buttons
   /// off for the whole song.
@@ -58,8 +59,12 @@ class PlaybackException implements Exception {
 /// playlist and a queue filled from one song play exactly the same way — that is what
 /// makes the queue universal.
 class QueuePlayer {
-  QueuePlayer({required this.queue, required this.player, required this.session, Random? random})
-    : _random = random ?? Random() {
+  QueuePlayer({
+    required this.queue,
+    required this.player,
+    required this.session,
+    Random? random,
+  }) : _random = random ?? Random() {
     _subscriptions.add(player.completed.listen((_) => _onCompleted()));
   }
 
@@ -134,7 +139,9 @@ class QueuePlayer {
   List<LocalTrack> get localQueue => List.unmodifiable(_local);
 
   LocalTrack? get localCurrent =>
-      (_localIndex >= 0 && _localIndex < _local.length) ? _local[_localIndex] : null;
+      (_localIndex >= 0 && _localIndex < _local.length)
+      ? _local[_localIndex]
+      : null;
 
   String? get localTitle => localCurrent?.title;
 
@@ -148,7 +155,9 @@ class QueuePlayer {
   String urlFor(int trackId) {
     final url = '$apiBaseUrl/api/music/$trackId';
     final streamToken = session.streamToken;
-    return streamToken == null ? url : '$url?token=${Uri.encodeComponent(streamToken)}';
+    return streamToken == null
+        ? url
+        : '$url?token=${Uri.encodeComponent(streamToken)}';
   }
 
   /// Plays a file that is on the device: from its path when the pick gave one, from the
@@ -167,7 +176,11 @@ class QueuePlayer {
   /// Plays a list from the device in order, the way a playlist does. The list is copied,
   /// so later changes to the stored queue do not change what this player is playing.
   Future<void> playLocalQueue(List<LocalTrack> tracks) async {
-    if (tracks.isEmpty) throw PlaybackException('Die Warteschlange ist leer, es gibt nichts zu spielen.');
+    if (tracks.isEmpty) {
+      throw PlaybackException(
+        'Die Warteschlange ist leer, es gibt nichts zu spielen.',
+      );
+    }
 
     _leave(null);
     _local
@@ -191,7 +204,11 @@ class QueuePlayer {
 
   Future<void> _openLocal() async {
     final track = localCurrent;
-    if (track == null) throw PlaybackException('Die Warteschlange ist leer, es gibt nichts zu spielen.');
+    if (track == null) {
+      throw PlaybackException(
+        'Die Warteschlange ist leer, es gibt nichts zu spielen.',
+      );
+    }
 
     final path = track.path;
     final bytes = track.bytes;
@@ -206,7 +223,9 @@ class QueuePlayer {
 
     failure = null;
     await player.open(
-      path != null ? Uri.file(path).toString() : Uri.dataFromBytes(bytes!, mimeType: 'audio/mpeg').toString(),
+      path != null
+          ? Uri.file(path).toString()
+          : Uri.dataFromBytes(bytes!, mimeType: 'audio/mpeg').toString(),
     );
     _changes.add(null);
     await player.play();
@@ -340,7 +359,9 @@ class QueuePlayer {
   /// before, so the row it moves to is not recorded twice.
   void _leave(QueueEntry? next) {
     final local = localCurrent;
-    final left = queue.current ?? (local == null ? null : QueueEntry.fromLocal(_localIndex + 1, local));
+    final left =
+        queue.current ??
+        (local == null ? null : QueueEntry.fromLocal(_localIndex + 1, local));
     if (left == null) return;
     if (next != null && identical(next, left)) return;
 
@@ -446,7 +467,9 @@ class QueuePlayer {
   /// instead of stopping at the last second, because there is nothing left to hear here.
   Future<void> skip(Duration by) async {
     final total = player.duration;
-    if (by > Duration.zero && total > Duration.zero && player.position + by > total) {
+    if (by > Duration.zero &&
+        total > Duration.zero &&
+        player.position + by > total) {
       await next();
       return;
     }
@@ -472,7 +495,8 @@ class QueuePlayer {
     // A song that has been playing for a few seconds is restarted by "back"; only at its start
     // does the button mean the song before it. That is the order a listener expects, and it works
     // at the first row too, where there is no song before it.
-    if ((localCurrent != null || queue.current != null) && player.position > restartAfter) {
+    if ((localCurrent != null || queue.current != null) &&
+        player.position > restartAfter) {
       await seek(Duration.zero);
       return true;
     }
@@ -544,10 +568,14 @@ class QueuePlayer {
     if (local != null) return 'Lokal · dieses Gerät';
 
     final entry = queue.current;
-    if (entry == null) return 'Suche ein Lied und öffne es, oder fülle die Warteschlange.';
+    if (entry == null) {
+      return 'Suche ein Lied und öffne es, oder fülle die Warteschlange.';
+    }
     // What the file says about its artist is more useful than the slot it sits in; a file with
     // no tags keeps the slot, which is still true.
-    return entry.artist.isNotEmpty ? entry.artist : 'Warteschlange · Slot ${entry.position}';
+    return entry.artist.isNotEmpty
+        ? entry.artist
+        : 'Warteschlange · Slot ${entry.position}';
   }
 
   Future<void> _onCompleted() async {
@@ -592,7 +620,8 @@ class QueuePlayer {
         final current = _localIndex;
         final candidates = [
           for (var index = 0; index < _local.length; index++)
-            if (index != current && !identical(_local[index], _local[current])) index,
+            if (index != current && !identical(_local[index], _local[current]))
+              index,
         ];
         String? skipped;
         while (candidates.isNotEmpty) {
@@ -639,7 +668,9 @@ class QueuePlayer {
         final currentTitle = queue.current?.trackId;
         final candidates = [
           for (var index = 0; index < queue.length; index++)
-            if (index != current && queue.entries[index].trackId != currentTitle) index,
+            if (index != current &&
+                queue.entries[index].trackId != currentTitle)
+              index,
         ];
         if (candidates.isEmpty) {
           try {

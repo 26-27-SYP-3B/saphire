@@ -31,7 +31,11 @@ class NavBar extends StatelessWidget {
       final row = Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 22, color: isCurrent ? scheme.onSurface : scheme.onSurfaceVariant),
+          Icon(
+            icon,
+            size: 22,
+            color: isCurrent ? scheme.onSurface : scheme.onSurfaceVariant,
+          ),
           const SizedBox(width: 12),
           Flexible(
             child: Text(
@@ -65,7 +69,10 @@ class NavBar extends StatelessWidget {
     return vertical
         ? Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [for (final item in navItems) entry(item.label, item.icon, item.to)],
+            children: [
+              for (final item in navItems)
+                entry(item.label, item.icon, item.to),
+            ],
           )
         : Row(
             children: [
