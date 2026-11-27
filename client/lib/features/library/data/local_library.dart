@@ -4,12 +4,18 @@ import 'dart:typed_data';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../../core/utils/audio_format.dart';
+import '../../../core/utils/local_metadata.dart';
 import '../domain/local_playlist.dart';
 import '../domain/local_track.dart';
 
 const _key = 'local_library';
 const _playlistsKey = 'local_playlists';
 const _queueKey = 'local_queue';
+
+/// A cover is stored with the song, in the same keychain entry as the library. It is cut off
+/// at this size so a folder of photos cannot fill the secure storage; the tags still name the
+/// title, artist and album of such a song.
+const _maxStoredCoverBytes = 128 * 1024;
 
 /// The songs the user added from their own device, plus the playlists and the queue made
 /// from them. Only title and path are stored; the file stays where it is, the app never
@@ -78,9 +84,25 @@ class LocalLibrary {
       return 'ist schon in der Bibliothek';
     }
 
+    // The tags are what the file says about itself. A file with none keeps its name as the
+    // title and the empty values, which the pages show as a dash.
+    final tags = path == null ? emptyLocalMetadata : readLocalMetadata(path);
+    final nameOnly = name.split(RegExp(r'[/\\]')).last;
+    final tagged = tags.title?.trim();
+
     // shortcut: the bytes of a browser pick stay in memory for the session. Upgrade:
     // store the file with the app's data, so a browser library survives a restart too.
-    tracks.add(LocalTrack(title: name.split(RegExp(r'[/\\]')).last, path: path, bytes: bytes));
+    tracks.add(LocalTrack(
+      title: tagged == null || tagged.isEmpty ? nameOnly : tagged,
+      path: path,
+      bytes: bytes,
+      artist: tags.artist,
+      album: tags.album,
+      genre: tags.genre,
+      year: tags.year,
+      durationMs: tags.durationMs,
+      cover: tags.cover,
+    ));
     _write();
     return null;
   }
@@ -182,9 +204,20 @@ class LocalLibrary {
 
   /// Only a path survives a restart. The bytes of a browser pick live in memory for one
   /// session, so storing its title alone would restore a song that can never be opened.
-  static List<Map<String, String?>> _json(List<LocalTrack> tracks) => [
+  static List<Map<String, Object?>> _json(List<LocalTrack> tracks) => [
         for (final track in tracks)
-          if (track.path != null) {'title': track.title, 'path': track.path},
+          if (track.path != null)
+            {
+              'title': track.title,
+              'path': track.path,
+              'artist': track.artist,
+              'album': track.album,
+              'genre': track.genre,
+              'year': track.year,
+              'duration_ms': track.durationMs,
+              if (track.cover != null && track.cover!.length <= _maxStoredCoverBytes)
+                'cover': base64Encode(track.cover!),
+            },
       ];
 
   /// The stored value of a list, decoded. A missing list is an empty one.
@@ -200,7 +233,17 @@ class LocalLibrary {
       // A browser pick never survives a restart: an older version stored its title without
       // bytes, so such a row must not come back as a song that can never be opened.
       if (path == null || path.isEmpty) continue;
-      tracks.add(LocalTrack(title: row['title'] as String, path: path));
+      final cover = row['cover'] as String?;
+      tracks.add(LocalTrack(
+        title: row['title'] as String,
+        path: path,
+        artist: row['artist'] as String? ?? '',
+        album: row['album'] as String? ?? '',
+        genre: row['genre'] as String? ?? '',
+        year: (row['year'] as num?)?.toInt() ?? 0,
+        durationMs: (row['duration_ms'] as num?)?.toInt() ?? 0,
+        cover: cover == null ? null : base64Decode(cover),
+      ));
     }
     return tracks;
   }

@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../app/theme.dart';
+
 import '../../../core/storage/session_store.dart';
 import '../../library/data/library_repository.dart';
 import '../../library/data/local_library.dart';
@@ -847,7 +849,7 @@ class _QueuePanelState extends State<QueuePanel> {
     );
   }
 
-  Widget _feedback() => const Icon(Icons.drag_handle, color: Colors.white);
+  Widget _feedback() => const Icon(Icons.drag_handle, color: bodyText);
 
   Widget _menu(QueueEntry entry) {
     // The value is the place in the list of the caller's playlists — the same shape in both

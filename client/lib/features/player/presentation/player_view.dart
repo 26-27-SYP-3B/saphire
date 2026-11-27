@@ -4,15 +4,9 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../../../app/theme.dart';
 import '../domain/player.dart';
 import '../domain/queue.dart';
-
-/// The colours the player adds to the app's palette: a card a little lighter than the canvas,
-/// the blue an active title uses, and the muted bars of the seek line.
-const playerCard = Color(0xFF171C26);
-const playerCardBorder = Color(0xFF242B3A);
-const playerAccent = Color(0xFF6D8DFF);
-const playerBarMuted = Color(0xFF39445C);
 
 /// The player as a phone shows it: one song filling the screen, with the controls a thumb can
 /// reach. It plays nothing itself — it moves the same player the bar at the bottom moves, so a
@@ -248,11 +242,7 @@ class _PlayerViewState extends State<PlayerView> {
               gradient: const LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [
-                  Color(0xFF0B1220),
-                  Color(0xFF161A24),
-                  Color(0xFF38251C),
-                ],
+                colors: [canvas, fieldBackground, elevated],
                 stops: [0, 0.55, 1],
               ),
             ),
@@ -260,7 +250,7 @@ class _PlayerViewState extends State<PlayerView> {
               child: Icon(
                 Icons.music_note,
                 size: 72,
-                color: Colors.white.withValues(alpha: 0.06),
+                color: bodyText.withValues(alpha: 0.06),
               ),
             ),
           ),
@@ -273,7 +263,7 @@ class _PlayerViewState extends State<PlayerView> {
               tooltip: 'Player schließen',
               onPressed: widget.onClose,
               icon: const Icon(Icons.keyboard_arrow_down),
-              color: Colors.white.withValues(alpha: 0.72),
+              color: bodyText.withValues(alpha: 0.72),
             ),
           ),
         if (title == null)
@@ -284,7 +274,7 @@ class _PlayerViewState extends State<PlayerView> {
             child: Text(
               'Kein Lied geöffnet',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white38, fontSize: 12),
+              style: TextStyle(color: mutedText, fontSize: 12),
             ),
           ),
         if (_queueOpen)
@@ -372,9 +362,9 @@ class _PlayerViewState extends State<PlayerView> {
                       inactiveTrackColor: Colors.transparent,
                       disabledActiveTrackColor: Colors.transparent,
                       disabledInactiveTrackColor: Colors.transparent,
-                      thumbColor: Colors.white,
+                      thumbColor: bodyText,
                       disabledThumbColor: playerBarMuted,
-                      overlayColor: Colors.white.withValues(alpha: 0.12),
+                      overlayColor: bodyText.withValues(alpha: 0.12),
                       thumbShape: const RoundSliderThumbShape(
                         enabledThumbRadius: 10,
                       ),
@@ -492,9 +482,9 @@ class _PlayerViewState extends State<PlayerView> {
         icon: Icon(playing ? Icons.pause : Icons.play_arrow),
         iconSize: 34,
         style: IconButton.styleFrom(
-          backgroundColor: Colors.white,
-          foregroundColor: const Color(0xFF0E1420),
-          disabledBackgroundColor: Colors.white24,
+          backgroundColor: bodyText,
+          foregroundColor: canvas,
+          disabledBackgroundColor: hairline,
           minimumSize: const Size(64, 64),
           shape: const CircleBorder(),
         ),
@@ -654,7 +644,7 @@ class _PlayerViewState extends State<PlayerView> {
         ],
       ),
       child: Material(
-        color: const Color(0xFF202633),
+        color: elevated,
         elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
