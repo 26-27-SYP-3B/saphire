@@ -82,19 +82,39 @@ class LibrarySidebar extends StatelessWidget {
     ];
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 4, 8, 16),
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(Icons.library_books, size: 22, color: mutedText),
-              const SizedBox(width: 12),
+              // The heading is the way into the library on a desktop, where the navigation has
+              // no Bibliothek tab.
               Expanded(
-                child: Text(
-                  'Deine Bibliothek',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    color: scheme.onSurfaceVariant,
+                child: InkWell(
+                  key: const ValueKey('open-library'),
+                  onTap: () => _go(context, '/library'),
+                  borderRadius: BorderRadius.circular(6),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.library_books,
+                          size: 22,
+                          color: mutedText,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'Deine Bibliothek',
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),

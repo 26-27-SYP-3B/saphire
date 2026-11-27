@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/storage/session_store.dart';
 import '../../../core/storage/settings_store.dart';
 import '../../../core/utils/pick_audio.dart';
+import '../../../shared/utils/track_display.dart';
 import '../../../shared/widgets/app_shell.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/domain/user.dart';
@@ -269,15 +270,16 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
+    // The tags are read in one background isolate for the whole pick, so the frame keeps
+    // moving while a folder of songs is parsed. The message names the file, so with a batch it
+    // is clear which one was refused.
+    final files = picked;
+    final answers = await _local.addAllAsync(files);
+    if (!mounted) return;
     setState(() {
-      for (final file in picked!) {
-        final refused = _local.add(
-          name: file.name,
-          path: file.path,
-          bytes: file.bytes,
-        );
-        // The message names the file, so with a batch it is clear which one was refused.
-        if (refused != null) _note = '${file.name}: $refused';
+      for (var index = 0; index < files.length; index++) {
+        final refused = answers[index];
+        if (refused != null) _note = '${files[index].name}: $refused';
       }
     });
   }
@@ -730,7 +732,11 @@ class _HomeScreenState extends State<HomeScreen> {
     return InkWell(
       onTap: _busy ? null : () => _playLocal(track),
       onLongPress: _busy ? null : () => _queueLocal(track),
-      child: _card((title: track.title, meta: 'Lokal', icon: Icons.audiotrack)),
+      child: _card((
+        title: track.title,
+        meta: '${displayArtist(track.toTrack())} · Lokal',
+        icon: Icons.audiotrack,
+      )),
     );
   }
 

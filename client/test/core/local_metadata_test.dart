@@ -64,7 +64,7 @@ void main() {
     final bytes = _taggedMp3();
     final file = File('${directory.path}/tagged.mp3')..writeAsBytesSync(bytes);
     final library = LocalLibrary();
-    final refused = library.add(name: 'tagged.mp3', path: file.path, bytes: bytes);
+    final refused = await library.addAsync(name: 'tagged.mp3', path: file.path, bytes: bytes);
 
     expect(refused, isNull);
     expect(library.tracks.single.title, 'Tag Title');

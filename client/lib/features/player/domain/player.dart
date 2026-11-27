@@ -4,6 +4,7 @@ import 'dart:math';
 import '../../../core/config/api_config.dart';
 import '../../../core/storage/file_exists.dart';
 import '../../../core/storage/session_store.dart';
+import '../../../shared/utils/track_display.dart';
 import '../../library/domain/local_track.dart';
 import 'queue.dart';
 
@@ -565,17 +566,16 @@ class QueuePlayer {
     if (failure != null) return failure!;
 
     final local = localCurrent;
-    if (local != null) return 'Lokal · dieses Gerät';
+    if (local != null) {
+      return local.artist.trim().isEmpty ? unknownArtist : local.artist.trim();
+    }
 
     final entry = queue.current;
     if (entry == null) {
       return 'Suche ein Lied und öffne es, oder fülle die Warteschlange.';
     }
-    // What the file says about its artist is more useful than the slot it sits in; a file with
-    // no tags keeps the slot, which is still true.
-    return entry.artist.isNotEmpty
-        ? entry.artist
-        : 'Warteschlange · Slot ${entry.position}';
+    // The tag, or the placeholder. The slot a row sits in is not what the song is.
+    return entry.artist.trim().isEmpty ? unknownArtist : entry.artist.trim();
   }
 
   Future<void> _onCompleted() async {

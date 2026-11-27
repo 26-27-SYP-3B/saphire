@@ -6,6 +6,7 @@ import '../../../app/theme.dart';
 import '../../../core/storage/session_store.dart';
 import '../../../core/storage/settings_store.dart';
 import '../../../shared/domain/track.dart';
+import '../../../shared/utils/track_display.dart';
 import '../../../shared/widgets/app_shell.dart';
 import '../../../shared/widgets/track_art.dart';
 import '../../library/data/library_repository.dart';
@@ -306,9 +307,7 @@ class _SearchScreenState extends State<SearchScreen> {
                     overflow: TextOverflow.ellipsis,
                   ),
                   Text(
-                    track.artist.isEmpty
-                        ? (track.isLocal ? 'Lokal' : '–')
-                        : track.artist,
+                    displayMeta(track),
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: scheme.onSurfaceVariant,
                     ),

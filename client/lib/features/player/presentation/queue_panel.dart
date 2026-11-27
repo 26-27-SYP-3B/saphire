@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import '../../../app/theme.dart';
 
 import '../../../core/storage/session_store.dart';
+import '../../../shared/utils/track_display.dart';
+import '../../../shared/widgets/track_art.dart';
 import '../../library/data/library_repository.dart';
 import '../../library/data/local_library.dart';
 import '../../playlists/data/playlist_repository.dart';
@@ -977,7 +979,7 @@ class _QueuePanelState extends State<QueuePanel> {
         padding: const EdgeInsets.fromLTRB(20, 8, 12, 8),
         child: Row(
           children: [
-            _cover(),
+            TrackArt(cover: entry.cover, size: 44),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -986,6 +988,16 @@ class _QueuePanelState extends State<QueuePanel> {
                   Text(
                     entry.title,
                     style: theme.textTheme.labelLarge,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    entry.artist.trim().isEmpty
+                        ? unknownArtist
+                        : entry.artist.trim(),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -1008,6 +1020,13 @@ class _QueuePanelState extends State<QueuePanel> {
                 ],
               ),
             ),
+            Text(
+              formatDurationMs(entry.durationMs),
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(width: 6),
             // The grip is the handle: hold it and move the row. On a phone that is the long
             // press, on a desktop a press with the mouse. A song from the history is not part
             // of the order, so it has no handle.
@@ -1078,21 +1097,4 @@ class _QueuePanelState extends State<QueuePanel> {
 
   /// The placeholder a cover would be: the app draws covers this way on the start page, because
   /// the library answer has no picture.
-  Widget _cover() {
-    final scheme = Theme.of(context).colorScheme;
-
-    return Container(
-      width: 44,
-      height: 44,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [scheme.primary.withValues(alpha: 0.35), scheme.surface],
-        ),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Icon(Icons.audio_file, size: 18, color: scheme.onSurfaceVariant),
-    );
-  }
 }

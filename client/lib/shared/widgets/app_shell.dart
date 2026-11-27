@@ -13,6 +13,7 @@ import '../../features/playlists/data/playlist_repository.dart';
 import '../../features/playlists/domain/playlist.dart';
 import 'library_sidebar.dart';
 import 'nav_bar.dart';
+import 'now_playing_header.dart';
 import 'player_bar.dart';
 import 'saphire_logo.dart';
 
@@ -111,7 +112,9 @@ class _AppShellState extends State<AppShell> {
         final wide = constraints.maxWidth >= AppShell.wideAt;
 
         Widget content = widget.child;
-        if (_playerOpen) {
+        // The full-screen player is a phone view. A desktop has the right column instead, so a
+        // window that grew wide while the player was open simply shows the page again.
+        if (_playerOpen && !wide) {
           content = PlayerView(
             player: widget.player,
             onQueueOpen: () => setState(() {
@@ -140,7 +143,15 @@ class _AppShellState extends State<AppShell> {
               ? Row(
                   children: [
                     Expanded(child: content),
-                    SizedBox(width: AppShell.queueWidth, child: panel),
+                    SizedBox(
+                      width: AppShell.queueWidth,
+                      child: Column(
+                        children: [
+                          NowPlayingHeader(player: widget.player),
+                          Expanded(child: panel),
+                        ],
+                      ),
+                    ),
                   ],
                 )
               // A drop-up, not a page: it covers the lower part of what the person was looking
@@ -254,10 +265,17 @@ class _AppShellState extends State<AppShell> {
                       _queueOpen = !_queueOpen;
                     }),
                     onPlayerOpen: () => setState(() {
-                      _playerOpen = true;
-                      // The full player is the whole page on a phone; a queue sheet floating over
-                      // it would cover the controls it was opened for.
-                      _queueOpen = false;
+                      if (wide) {
+                        // Spotify's desktop has no full-screen card; the full-screen button
+                        // opens the "Gerade läuft" column on the right.
+                        _queueOpen = true;
+                        _playerOpen = false;
+                      } else {
+                        _playerOpen = true;
+                        // The full player is the whole page on a phone; a queue sheet floating
+                        // over it would cover the controls it was opened for.
+                        _queueOpen = false;
+                      }
                     }),
                   ),
                 if (!wide && !fullscreen)

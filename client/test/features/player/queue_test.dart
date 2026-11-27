@@ -29,16 +29,27 @@ const queueAnswer = [
     'waveform': [0.0, 128.0, 255.0],
   },
   {'position': 2.0, 'track_id': 4.0, 'title': 'lied.wav', 'duration_ms': 0.0},
-  {'position': 3.0, 'track_id': 7.0, 'title': 'solo.mp3', 'duration_ms': 121000.0},
+  {
+    'position': 3.0,
+    'track_id': 7.0,
+    'title': 'solo.mp3',
+    'duration_ms': 121000.0,
+  },
 ];
 
 // One playlist, so the menu has something it can add a song to.
-const playlistAnswer = {'id': 1.0, 'name': 'Favoriten', 'created_at': 1794180269.0, 'song_count': 0.0};
+const playlistAnswer = {
+  'id': 1.0,
+  'name': 'Favoriten',
+  'created_at': 1794180269.0,
+  'song_count': 0.0,
+};
 
 /// The same songs as the panel gets them from the server, so a test can say what the app knew
 /// before the panel opened.
-List<QueueEntry> mirror(List<Map<String, Object>> answer) =>
-    answer.map((entry) => QueueEntry.fromJson(entry.cast<String, dynamic>())).toList();
+List<QueueEntry> mirror(List<Map<String, Object>> answer) => answer
+    .map((entry) => QueueEntry.fromJson(entry.cast<String, dynamic>()))
+    .toList();
 
 /// Pumps the panel the way AppShell does, with a valid session. The panel is what these tests are
 /// about, so it is pumped on its own; the shape is passed in as the parent passes it, and the
@@ -62,7 +73,9 @@ Future<Wiring> openQueue(
   Future<void> Function(Wiring wiring)? prep,
 }) async {
   // The panel needs room for the tabs and the rows; the small window is what a phone is.
-  tester.view..physicalSize = phone ? const Size(420, 900) : const Size(1200, 900)..devicePixelRatio = 1.0;
+  tester.view
+    ..physicalSize = phone ? const Size(420, 900) : const Size(1200, 900)
+    ..devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
 
@@ -107,16 +120,25 @@ Future<Wiring> openQueue(
 }
 
 /// A row of the panel, by the title it shows.
-Finder row(WidgetTester tester, String title) => find.ancestor(of: find.text(title), matching: find.byType(InkWell));
+Finder row(WidgetTester tester, String title) =>
+    find.ancestor(of: find.text(title), matching: find.byType(InkWell));
 
 /// The three-dot menu of a row.
-Finder menu(WidgetTester tester, String title) =>
-    find.descendant(of: row(tester, title), matching: find.byType(PopupMenuButton<String>));
+Finder menu(WidgetTester tester, String title) => find.descendant(
+  of: row(tester, title),
+  matching: find.byType(PopupMenuButton<String>),
+);
 
 /// Press and hold a row's handle, move it onto another row and let go.
-Future<void> dragFromHandle(WidgetTester tester, Finder handle, Finder target) async {
+Future<void> dragFromHandle(
+  WidgetTester tester,
+  Finder handle,
+  Finder target,
+) async {
   final gesture = await tester.startGesture(tester.getCenter(handle));
-  await tester.pump(const Duration(milliseconds: 600)); // the hold that starts a long-press drag
+  await tester.pump(
+    const Duration(milliseconds: 600),
+  ); // the hold that starts a long-press drag
   await gesture.moveTo(tester.getCenter(target));
   await tester.pump();
   await gesture.up();
@@ -125,7 +147,10 @@ Future<void> dragFromHandle(WidgetTester tester, Finder handle, Finder target) a
 
 void main() {
   test('reads a queue answer', () async {
-    final repository = QueueRepository(Dio()..httpClientAdapter = StubAdapter(200, queueAnswer), loggedIn());
+    final repository = QueueRepository(
+      Dio()..httpClientAdapter = StubAdapter(200, queueAnswer),
+      loggedIn(),
+    );
 
     final entries = await repository.read();
     expect(entries.map((entry) => entry.position), [1, 2, 3]);
@@ -135,13 +160,19 @@ void main() {
     expect(entries.first.waveform, [0, 128, 255]);
 
     // An empty queue answers [], never null.
-    final empty = QueueRepository(Dio()..httpClientAdapter = StubAdapter(200, <Object>[]), loggedIn());
+    final empty = QueueRepository(
+      Dio()..httpClientAdapter = StubAdapter(200, <Object>[]),
+      loggedIn(),
+    );
     expect(await empty.read(), isEmpty);
   });
 
   test('the body only carries source_id where the source needs it', () async {
     final adapter = StubAdapter(200, queueAnswer);
-    final repository = QueueRepository(Dio()..httpClientAdapter = adapter, loggedIn());
+    final repository = QueueRepository(
+      Dio()..httpClientAdapter = adapter,
+      loggedIn(),
+    );
 
     await repository.fill(QueueSource.playlist(3));
     expect(adapter.lastOptions?.data, {'source': 'playlist', 'source_id': 3});
@@ -187,7 +218,9 @@ void main() {
       QueueEntry(position: 1, trackId: 8, title: 'Technogal.mp3'),
       QueueEntry(position: 2, trackId: 4, title: 'lied.wav'),
     ]);
-    fromOneSong.fill([QueueEntry(position: 1, trackId: 8, title: 'Technogal.mp3')]);
+    fromOneSong.fill([
+      QueueEntry(position: 1, trackId: 8, title: 'Technogal.mp3'),
+    ]);
 
     // The same steps on both: the first song, then what follows it. Nothing here can
     // report a source, so there is no field a test could check.
@@ -222,7 +255,9 @@ void main() {
     final queue = PlaybackQueue();
 
     // A playlist names itself, so its rows are the list being played.
-    queue.fill([QueueEntry(position: 1, trackId: 8, title: 'a')], fromName: 'Favoriten');
+    queue.fill([
+      QueueEntry(position: 1, trackId: 8, title: 'a'),
+    ], fromName: 'Favoriten');
     expect(queue.filledFrom, 'Favoriten');
     expect(queue.entries.first.manual, isFalse);
 
@@ -237,31 +272,34 @@ void main() {
 
   // The order a person drags into has to be the order the player goes through, and the song that
   // is audible must stay the current one. Positions are 1-based, as the server numbers them.
-  test('moving a row renumbers the slots and leaves the current song alone', () {
-    final queue = PlaybackQueue();
-    queue.fill([
-      QueueEntry(position: 1, trackId: 8, title: 'a'),
-      QueueEntry(position: 2, trackId: 4, title: 'b'),
-      QueueEntry(position: 3, trackId: 7, title: 'c'),
-    ]);
-    queue.advance();
+  test(
+    'moving a row renumbers the slots and leaves the current song alone',
+    () {
+      final queue = PlaybackQueue();
+      queue.fill([
+        QueueEntry(position: 1, trackId: 8, title: 'a'),
+        QueueEntry(position: 2, trackId: 4, title: 'b'),
+        QueueEntry(position: 3, trackId: 7, title: 'c'),
+      ]);
+      queue.advance();
 
-    // A row behind the current one moves in front of it: the numbers are the ones the next read
-    // would answer with, and the current song is still the current song.
-    expect(queue.move(3, 1), isTrue);
-    expect(queue.entries.map((entry) => entry.trackId), [7, 8, 4]);
-    expect(queue.entries.map((entry) => entry.position), [1, 2, 3]);
-    expect(queue.current?.trackId, 8);
+      // A row behind the current one moves in front of it: the numbers are the ones the next read
+      // would answer with, and the current song is still the current song.
+      expect(queue.move(3, 1), isTrue);
+      expect(queue.entries.map((entry) => entry.trackId), [7, 8, 4]);
+      expect(queue.entries.map((entry) => entry.position), [1, 2, 3]);
+      expect(queue.current?.trackId, 8);
 
-    // Moving the row that is current keeps it current.
-    expect(queue.move(2, 3), isTrue);
-    expect(queue.entries.map((entry) => entry.trackId), [7, 4, 8]);
-    expect(queue.current?.trackId, 8);
+      // Moving the row that is current keeps it current.
+      expect(queue.move(2, 3), isTrue);
+      expect(queue.entries.map((entry) => entry.trackId), [7, 4, 8]);
+      expect(queue.current?.trackId, 8);
 
-    // A slot the mirror does not have is not a move, and a row dropped on itself is neither.
-    expect(queue.move(0, 3), isFalse);
-    expect(queue.move(3, 3), isFalse);
-  });
+      // A slot the mirror does not have is not a move, and a row dropped on itself is neither.
+      expect(queue.move(0, 3), isFalse);
+      expect(queue.move(3, 3), isFalse);
+    },
+  );
 
   // "Zuletzt gespielt" is the list of songs this device played, newest first. A row that was
   // never played cannot be in it.
@@ -367,52 +405,69 @@ void main() {
 
   test('the message of the server is passed on', () async {
     final repository = QueueRepository(
-      Dio()..httpClientAdapter = StubAdapter(400, {'error': 'source must be "playlist", "library" or "track"'}),
+      Dio()
+        ..httpClientAdapter = StubAdapter(400, {
+          'error': 'source must be "playlist", "library" or "track"',
+        }),
       SessionStore(),
     );
 
     expect(
       () => repository.fill(QueueSource.playlist(1)),
-      throwsA(isA<QueueException>().having(
-        (error) => error.message,
-        'message',
-        'source must be "playlist", "library" or "track"',
-      )),
+      throwsA(
+        isA<QueueException>().having(
+          (error) => error.message,
+          'message',
+          'source must be "playlist", "library" or "track"',
+        ),
+      ),
     );
   });
 
   // Without a session the header is not built at all. A "Bearer null" would be answered as
   // an unknown session, and the page would show a message about a token the app never sent.
   test('a call without a session sends no authorization header', () async {
-    final adapter = StubAdapter(401, {'error': 'authorization header with a Bearer token is missing'});
-    final repository = QueueRepository(Dio()..httpClientAdapter = adapter, SessionStore());
+    final adapter = StubAdapter(401, {
+      'error': 'authorization header with a Bearer token is missing',
+    });
+    final repository = QueueRepository(
+      Dio()..httpClientAdapter = adapter,
+      SessionStore(),
+    );
 
     await expectLater(repository.read(), throwsA(isA<QueueException>()));
     expect(adapter.lastOptions?.headers['Authorization'], isNull);
   });
 
-  testWidgets('the panel shows the queue as the server has it, with the queue tab open', (tester) async {
-    final adapter = StubAdapter(200, queueAnswer);
-    await openQueue(tester, queues: adapter);
+  testWidgets(
+    'the panel shows the queue as the server has it, with the queue tab open',
+    (tester) async {
+      final adapter = StubAdapter(200, queueAnswer);
+      await openQueue(tester, queues: adapter);
 
-    // The two tabs are what the panel is: the order and what was played.
-    expect(find.byTooltip('Zuletzt gespielt'), findsOneWidget);
-    expect(find.text('Technogal.mp3'), findsOneWidget);
-    expect(find.text('solo.mp3'), findsOneWidget);
+      // The two tabs are what the panel is: the order and what was played.
+      expect(find.byTooltip('Zuletzt gespielt'), findsOneWidget);
+      expect(find.text('Technogal.mp3'), findsOneWidget);
+      expect(find.text('solo.mp3'), findsOneWidget);
 
-    // Nothing is current until the player starts one: the server keeps the order, the device
-    // decides what it plays. So there is no "Wird gerade gespielt" section yet.
-    expect(find.text('Wird gerade gespielt'), findsNothing);
+      // Nothing is current until the player starts one: the server keeps the order, the device
+      // decides what it plays. So there is no "Wird gerade gespielt" section yet.
+      expect(find.text('Wird gerade gespielt'), findsNothing);
 
-    // The panel only reads: opening it is the documented GET /api/queue.
-    expect(adapter.requests.first.uri.path, '/api/queue');
-  });
+      // The panel only reads: opening it is the documented GET /api/queue.
+      expect(adapter.requests.first.uri.path, '/api/queue');
+    },
+  );
 
   // The panel is opened from the bar, so it must not stop what is playing: it only reads.
   testWidgets('opening the panel does not touch the player', (tester) async {
     final audio = FakePlayer();
     addTearDown(audio.dispose);
-    await openQueue(tester, queues: StubAdapter(200, queueAnswer), audio: audio);
+    await openQueue(
+      tester,
+      queues: StubAdapter(200, queueAnswer),
+      audio: audio,
+    );
 
     expect(audio.opened, isEmpty);
     expect(audio.played, isEmpty);
@@ -421,10 +476,16 @@ void main() {
 
   // Clicking a row is not hearing one song once: the queue goes on after it, which is what a
   // row in a queue means.
-  testWidgets('clicking a row plays it and the queue goes on from there', (tester) async {
+  testWidgets('clicking a row plays it and the queue goes on from there', (
+    tester,
+  ) async {
     final audio = FakePlayer();
     addTearDown(audio.dispose);
-    final wiring = await openQueue(tester, queues: StubAdapter(200, queueAnswer), audio: audio);
+    final wiring = await openQueue(
+      tester,
+      queues: StubAdapter(200, queueAnswer),
+      audio: audio,
+    );
 
     await tester.tap(row(tester, 'lied.wav'));
     await tester.pumpAndSettle();
@@ -436,13 +497,18 @@ void main() {
     audio.complete();
     await tester.pumpAndSettle();
 
-    expect(audio.opened, ['$apiBaseUrl/api/music/4', '$apiBaseUrl/api/music/7']);
+    expect(audio.opened, [
+      '$apiBaseUrl/api/music/4',
+      '$apiBaseUrl/api/music/7',
+    ]);
     expect(wiring.queue.current?.trackId, 7);
   });
 
   // Songs the person put in the queue themselves and songs of the list being played are shown
   // apart. The server answer cannot say which is which, so the panel shows what it was told.
-  testWidgets('songs added by hand are shown apart from the songs of a list', (tester) async {
+  testWidgets('songs added by hand are shown apart from the songs of a list', (
+    tester,
+  ) async {
     final adapter = StubAdapter(200, queueAnswer);
 
     await openQueue(
@@ -451,8 +517,13 @@ void main() {
       prep: (wiring) async {
         // What the Playlists page would have done: fill from a playlist, then add one song of
         // its own.
-        wiring.queue.fill(mirror([queueAnswer.first, queueAnswer.last]), fromName: 'Favoriten');
-        wiring.queue.append(QueueEntry(position: 3, trackId: 7, title: 'solo.mp3', manual: true));
+        wiring.queue.fill(
+          mirror([queueAnswer.first, queueAnswer.last]),
+          fromName: 'Favoriten',
+        );
+        wiring.queue.append(
+          QueueEntry(position: 3, trackId: 7, title: 'solo.mp3', manual: true),
+        );
       },
     );
 
@@ -460,11 +531,25 @@ void main() {
     expect(find.text('Als Nächstes aus: Favoriten'), findsOneWidget);
 
     // The read cannot know origins, so it keeps what the panel already knew.
-    expect(find.descendant(of: row(tester, 'solo.mp3'), matching: find.text('deine Warteschlange')), findsOneWidget);
-    expect(find.descendant(of: row(tester, 'Technogal.mp3'), matching: find.text('Favoriten')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: row(tester, 'solo.mp3'),
+        matching: find.text('deine Warteschlange'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: row(tester, 'Technogal.mp3'),
+        matching: find.text('Favoriten'),
+      ),
+      findsOneWidget,
+    );
   });
 
-  testWidgets('the three-dot menu takes a row out of the queue', (tester) async {
+  testWidgets('the three-dot menu takes a row out of the queue', (
+    tester,
+  ) async {
     final adapter = StubAdapter(200, queueAnswer);
     await openQueue(tester, queues: adapter);
 
@@ -487,10 +572,16 @@ void main() {
   // "Als Nächstes abspielen" does not start the song; it moves the row. What the panel moves is
   // the row onto the slot the playing row has (queue_panel.dart passes `current + 1`, the playing
   // row's own position), so the order here is what the code produces, not what the label says.
-  testWidgets('the menu puts a row behind the song that is playing', (tester) async {
+  testWidgets('the menu puts a row behind the song that is playing', (
+    tester,
+  ) async {
     final audio = FakePlayer();
     addTearDown(audio.dispose);
-    final wiring = await openQueue(tester, queues: StubAdapter(200, queueAnswer), audio: audio);
+    final wiring = await openQueue(
+      tester,
+      queues: StubAdapter(200, queueAnswer),
+      audio: audio,
+    );
 
     await tester.tap(row(tester, 'Technogal.mp3'));
     await tester.pumpAndSettle();
@@ -510,21 +601,28 @@ void main() {
 
   // The row that is playing cannot be put behind itself, so the menu does not claim a move it
   // did not do.
-  testWidgets('the menu does not report a move for the row that is already next', (tester) async {
-    final audio = FakePlayer();
-    addTearDown(audio.dispose);
-    await openQueue(tester, queues: StubAdapter(200, [queueAnswer.first]), audio: audio);
+  testWidgets(
+    'the menu does not report a move for the row that is already next',
+    (tester) async {
+      final audio = FakePlayer();
+      addTearDown(audio.dispose);
+      await openQueue(
+        tester,
+        queues: StubAdapter(200, [queueAnswer.first]),
+        audio: audio,
+      );
 
-    await tester.tap(row(tester, 'Technogal.mp3'));
-    await tester.pumpAndSettle();
+      await tester.tap(row(tester, 'Technogal.mp3'));
+      await tester.pumpAndSettle();
 
-    await tester.tap(menu(tester, 'Technogal.mp3'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Als Nächstes abspielen'));
-    await tester.pumpAndSettle();
+      await tester.tap(menu(tester, 'Technogal.mp3'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Als Nächstes abspielen'));
+      await tester.pumpAndSettle();
 
-    expect(find.text('Das Lied wird als nächstes gespielt.'), findsNothing);
-  });
+      expect(find.text('Das Lied wird als nächstes gespielt.'), findsNothing);
+    },
+  );
 
   testWidgets('the menu adds the song to a playlist', (tester) async {
     // Answers in the order the panel calls them: the queue, the playlists, then the add.
@@ -547,50 +645,72 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(playlists.lastOptions?.uri.path, '/api/playlists/1/songs');
-    expect(find.text('Song an Position 1 zur Playlist hinzugefügt.'), findsOneWidget);
+    expect(
+      find.text('Song an Position 1 zur Playlist hinzugefügt.'),
+      findsOneWidget,
+    );
   });
 
   // The handle is what changes the order, and the song that is playing must not be the one that
   // moves.
-  testWidgets('dragging a row by its handle changes the order and the song keeps playing', (tester) async {
-    final audio = FakePlayer();
-    addTearDown(audio.dispose);
-    final wiring = await openQueue(tester, queues: StubAdapter(200, queueAnswer), audio: audio);
+  testWidgets(
+    'dragging a row by its handle changes the order and the song keeps playing',
+    (tester) async {
+      final audio = FakePlayer();
+      addTearDown(audio.dispose);
+      final wiring = await openQueue(
+        tester,
+        queues: StubAdapter(200, queueAnswer),
+        audio: audio,
+      );
 
-    await tester.tap(row(tester, 'Technogal.mp3'));
-    await tester.pumpAndSettle();
+      await tester.tap(row(tester, 'Technogal.mp3'));
+      await tester.pumpAndSettle();
 
-    await dragFromHandle(
-      tester,
-      find.descendant(of: row(tester, 'solo.mp3'), matching: find.byIcon(Icons.drag_handle)),
-      row(tester, 'lied.wav'),
-    );
+      await dragFromHandle(
+        tester,
+        find.descendant(
+          of: row(tester, 'solo.mp3'),
+          matching: find.byIcon(Icons.drag_handle),
+        ),
+        row(tester, 'lied.wav'),
+      );
 
-    expect(find.text('Das Lied ist jetzt an Position 2.'), findsOneWidget);
-    expect(wiring.queue.entries.map((entry) => entry.trackId), [8, 7, 4]);
+      expect(find.text('Das Lied ist jetzt an Position 2.'), findsOneWidget);
+      expect(wiring.queue.entries.map((entry) => entry.trackId), [8, 7, 4]);
 
-    // Nothing was played or stopped: a move is an order, not a new song.
-    expect(audio.opened, ['$apiBaseUrl/api/music/8']);
-    expect(audio.stopped, isEmpty);
-    expect(wiring.queue.current?.trackId, 8);
-  });
+      // Nothing was played or stopped: a move is an order, not a new song.
+      expect(audio.opened, ['$apiBaseUrl/api/music/8']);
+      expect(audio.stopped, isEmpty);
+      expect(wiring.queue.current?.trackId, 8);
+    },
+  );
 
   // In the narrow shape a row is taken out by swiping it left; in the wide one it is the menu.
-  testWidgets('swiping a row left in the phone shape takes it out of the queue', (tester) async {
-    final adapter = StubAdapter(200, queueAnswer);
-    final wiring = await openQueue(tester, queues: adapter, phone: true);
+  testWidgets(
+    'swiping a row left in the phone shape takes it out of the queue',
+    (tester) async {
+      final adapter = StubAdapter(200, queueAnswer);
+      final wiring = await openQueue(tester, queues: adapter, phone: true);
 
-    await tester.fling(find.byType(Dismissible).first, const Offset(-300, 0), 300);
-    await tester.pumpAndSettle();
+      await tester.fling(
+        find.byType(Dismissible).first,
+        const Offset(-300, 0),
+        300,
+      );
+      await tester.pumpAndSettle();
 
-    expect(adapter.lastOptions?.method, 'DELETE');
-    expect(adapter.lastOptions?.uri.path, '/api/queue/1');
-    expect(wiring.queue.entries.map((entry) => entry.trackId), [4, 7]);
-  });
+      expect(adapter.lastOptions?.method, 'DELETE');
+      expect(adapter.lastOptions?.uri.path, '/api/queue/1');
+      expect(wiring.queue.entries.map((entry) => entry.trackId), [4, 7]);
+    },
+  );
 
   // "Warteschlange leeren" takes out only what the person put there themselves: the song being
   // listened to stays, and the list being played stays.
-  testWidgets('clearing takes out only the songs added by hand', (tester) async {
+  testWidgets('clearing takes out only the songs added by hand', (
+    tester,
+  ) async {
     final audio = FakePlayer();
     addTearDown(audio.dispose);
 
@@ -610,7 +730,14 @@ void main() {
         // What the app knew before the panel opened: the list that filled it, which row is the
         // person's own, and which song this device plays.
         wiring.queue.fill(mirror(ownAnswer), fromName: 'Favoriten');
-        wiring.queue.append(QueueEntry(position: 4, trackId: 9, title: 'eigenes.mp3', manual: true));
+        wiring.queue.append(
+          QueueEntry(
+            position: 4,
+            trackId: 9,
+            title: 'eigenes.mp3',
+            manual: true,
+          ),
+        );
         await wiring.player.playCurrent();
       },
     );
@@ -630,84 +757,100 @@ void main() {
 
   // The same song can be in the queue twice, and the two rows are only different by their number.
   // A menu belongs to the row it was opened on, so the copy that was clicked is the one taken out.
-  testWidgets('a menu acts on the row it was opened on, not on the first copy of a song', (tester) async {
-    // What the app knew before the panel opened: the same song twice, and this device is at the
-    // second copy. The read answers with those four rows, so the row that is playing can only be
-    // found by the number it has.
-    const twice = [
-      ...queueAnswer,
-      {'position': 4.0, 'track_id': 4.0, 'title': 'lied.wav'},
-    ];
-    final adapter = StubAdapter(204, const {})..queue.add((200, twice));
+  testWidgets(
+    'a menu acts on the row it was opened on, not on the first copy of a song',
+    (tester) async {
+      // What the app knew before the panel opened: the same song twice, and this device is at the
+      // second copy. The read answers with those four rows, so the row that is playing can only be
+      // found by the number it has.
+      const twice = [
+        ...queueAnswer,
+        {'position': 4.0, 'track_id': 4.0, 'title': 'lied.wav'},
+      ];
+      final adapter = StubAdapter(204, const {})..queue.add((200, twice));
 
-    final wiring = await openQueue(
-      tester,
-      queues: adapter,
-      prep: (wiring) async {
-        wiring.queue.fill(mirror(twice));
-        wiring.queue.index = 3;
-      },
-    );
+      final wiring = await openQueue(
+        tester,
+        queues: adapter,
+        prep: (wiring) async {
+          wiring.queue.fill(mirror(twice));
+          wiring.queue.index = 3;
+        },
+      );
 
-    await tester.tap(find.descendant(of: row(tester, 'Wird gerade gespielt · Position 4'), matching: find.byType(PopupMenuButton<String>)));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Aus Warteschlange entfernen'));
-    await tester.pumpAndSettle();
+      await tester.tap(
+        find.descendant(
+          of: row(tester, 'Wird gerade gespielt · Position 4'),
+          matching: find.byType(PopupMenuButton<String>),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Aus Warteschlange entfernen'));
+      await tester.pumpAndSettle();
 
-    // The second copy, not the first one with the same title.
-    expect(adapter.lastOptions?.uri.path, '/api/queue/4');
-    expect(find.text('Position 4 entfernt.'), findsOneWidget);
-    expect(wiring.queue.entries.map((entry) => entry.trackId), [8, 4, 7]);
-  });
+      // The second copy, not the first one with the same title.
+      expect(adapter.lastOptions?.uri.path, '/api/queue/4');
+      expect(find.text('Position 4 entfernt.'), findsOneWidget);
+      expect(wiring.queue.entries.map((entry) => entry.trackId), [8, 4, 7]);
+    },
+  );
 
   // The same song can be in the queue more than once. Opening the panel must keep the copy
   // this device is at, not jump to the last copy of the same track.
-  testWidgets('a read keeps the row this device is at, not the last copy of the same song', (tester) async {
-    const twice = [
-      ...queueAnswer,
-      {'position': 4.0, 'track_id': 8.0, 'title': 'Technogal.mp3'},
-    ];
+  testWidgets(
+    'a read keeps the row this device is at, not the last copy of the same song',
+    (tester) async {
+      const twice = [
+        ...queueAnswer,
+        {'position': 4.0, 'track_id': 8.0, 'title': 'Technogal.mp3'},
+      ];
 
-    final wiring = await openQueue(
-      tester,
-      queues: StubAdapter(200, twice),
-      prep: (wiring) async {
-        wiring.queue.fill(mirror(twice));
-        wiring.queue.index = 0;
-      },
-    );
+      final wiring = await openQueue(
+        tester,
+        queues: StubAdapter(200, twice),
+        prep: (wiring) async {
+          wiring.queue.fill(mirror(twice));
+          wiring.queue.index = 0;
+        },
+      );
 
-    expect(wiring.queue.current?.position, 1);
-  });
+      expect(wiring.queue.current?.position, 1);
+    },
+  );
 
   // "Als Nächstes abspielen" moves a row to the slot directly behind the playing one. A row
   // that is in front of it must land there too, not one slot later.
-  testWidgets('a row in front of the current song is moved directly behind it', (tester) async {
-    final audio = FakePlayer();
-    addTearDown(audio.dispose);
+  testWidgets(
+    'a row in front of the current song is moved directly behind it',
+    (tester) async {
+      final audio = FakePlayer();
+      addTearDown(audio.dispose);
 
-    final wiring = await openQueue(
-      tester,
-      queues: StubAdapter(200, queueAnswer),
-      audio: audio,
-      prep: (wiring) async {
-        wiring.queue.fill(mirror(queueAnswer));
-        wiring.queue.index = 1;
-        await wiring.player.playCurrent();
-      },
-    );
+      final wiring = await openQueue(
+        tester,
+        queues: StubAdapter(200, queueAnswer),
+        audio: audio,
+        prep: (wiring) async {
+          wiring.queue.fill(mirror(queueAnswer));
+          wiring.queue.index = 1;
+          await wiring.player.playCurrent();
+        },
+      );
 
-    await tester.tap(menu(tester, 'Technogal.mp3'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Als Nächstes abspielen'));
-    await tester.pumpAndSettle();
+      await tester.tap(menu(tester, 'Technogal.mp3'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Als Nächstes abspielen'));
+      await tester.pumpAndSettle();
 
-    expect(wiring.queue.entries.map((entry) => entry.trackId), [4, 8, 7]);
-  });
+      expect(wiring.queue.entries.map((entry) => entry.trackId), [4, 8, 7]);
+    },
+  );
 
   // A paused row is still the row the player has open. Removing it must stop that audio,
   // not leave a song loaded that the next play would resume under a different title.
-  testWidgets('removing the paused current song stops the audio', (tester) async {
+  testWidgets('removing the paused current song stops the audio', (
+    tester,
+  ) async {
     final audio = FakePlayer();
     addTearDown(audio.dispose);
 
@@ -750,10 +893,16 @@ void main() {
 
   // "Zuletzt gespielt" is what this device played, newest first. Nothing was played before the
   // first row was opened, so a row only appears there once the player moved on from it.
-  testWidgets('the history tab shows the row the player moved on from', (tester) async {
+  testWidgets('the history tab shows the row the player moved on from', (
+    tester,
+  ) async {
     final audio = FakePlayer();
     addTearDown(audio.dispose);
-    final wiring = await openQueue(tester, queues: StubAdapter(200, queueAnswer), audio: audio);
+    final wiring = await openQueue(
+      tester,
+      queues: StubAdapter(200, queueAnswer),
+      audio: audio,
+    );
 
     await tester.tap(find.byTooltip('Zuletzt gespielt'));
     await tester.pumpAndSettle();
@@ -781,32 +930,41 @@ void main() {
   // A song from this device can be in the history while the queue the page shows is the server's,
   // because the bar plays the device list when nothing on the server is open. Replaying it must not
   // ask the server for a song id, because a file on this device does not have one.
-  testWidgets('a device song in the history is played from the device, not from the server', (tester) async {
-    final audio = FakePlayer();
-    addTearDown(audio.dispose);
+  testWidgets(
+    'a device song in the history is played from the device, not from the server',
+    (tester) async {
+      final audio = FakePlayer();
+      addTearDown(audio.dispose);
 
-    final local = LocalLibrary()..add(name: 'a.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
-    final adapter = StubAdapter(200, <Object>[]);
+      final local = LocalLibrary()
+        ..add(name: 'a.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
+      final adapter = StubAdapter(200, <Object>[]);
 
-    final wiring = await openQueue(tester, queues: adapter, audio: audio, localLibrary: local);
+      final wiring = await openQueue(
+        tester,
+        queues: adapter,
+        audio: audio,
+        localLibrary: local,
+      );
 
-    await wiring.player.playLocal(local.tracks.first);
-    audio.complete();
-    await tester.pumpAndSettle();
+      await wiring.player.playLocal(local.tracks.first);
+      audio.complete();
+      await tester.pumpAndSettle();
 
-    expect(wiring.queue.history.map((entry) => entry.title), ['a.mp3']);
+      expect(wiring.queue.history.map((entry) => entry.title), ['a.mp3']);
 
-    await tester.tap(find.byTooltip('Zuletzt gespielt'));
-    await tester.pumpAndSettle();
-    await tester.tap(row(tester, 'a.mp3'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Zuletzt gespielt'));
+      await tester.pumpAndSettle();
+      await tester.tap(row(tester, 'a.mp3'));
+      await tester.pumpAndSettle();
 
-    // The bytes on this device again. The only request is the read the panel does when it opens;
-    // there is no POST with a -1 as the song id.
-    expect(audio.opened.last, startsWith('data:audio/mpeg'));
-    expect(adapter.requests.length, 1);
-    expect(adapter.lastOptions?.uri.path, '/api/queue');
-  });
+      // The bytes on this device again. The only request is the read the panel does when it opens;
+      // there is no POST with a -1 as the song id.
+      expect(audio.opened.last, startsWith('data:audio/mpeg'));
+      expect(adapter.requests.length, 1);
+      expect(adapter.lastOptions?.uri.path, '/api/queue');
+    },
+  );
 
   // A row that is only in the history has no slot, so it has no handle and the row says what it
   // is; the row that is still in the list keeps both.
@@ -814,82 +972,109 @@ void main() {
   // A row is the song, not the object the mirror held at the time: a removal renumbers the rows
   // after it, so a history entry that is still in the list is the same row and must not be
   // added a second time.
-  testWidgets('a history row that is still in the list is played from that row', (tester) async {
-    final audio = FakePlayer();
-    addTearDown(audio.dispose);
-    final adapter = StubAdapter(204, const {})..queue.add((200, queueAnswer));
+  testWidgets(
+    'a history row that is still in the list is played from that row',
+    (tester) async {
+      final audio = FakePlayer();
+      addTearDown(audio.dispose);
+      final adapter = StubAdapter(204, const {})..queue.add((200, queueAnswer));
 
-    final wiring = await openQueue(tester, queues: adapter, audio: audio);
+      final wiring = await openQueue(tester, queues: adapter, audio: audio);
 
-    // The last row is played, then ends on its own: it stays in the list and goes to the history.
-    await tester.tap(row(tester, 'solo.mp3'));
-    await tester.pumpAndSettle();
-    audio.complete();
-    await tester.pumpAndSettle();
+      // The last row is played, then ends on its own: it stays in the list and goes to the history.
+      await tester.tap(row(tester, 'solo.mp3'));
+      await tester.pumpAndSettle();
+      audio.complete();
+      await tester.pumpAndSettle();
 
-    // A removal in front of it renumbers the row, so the history entry is no longer the same
-    // object as the row in the list.
-    await tester.tap(menu(tester, 'Technogal.mp3'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Aus Warteschlange entfernen'));
-    await tester.pumpAndSettle();
+      // A removal in front of it renumbers the row, so the history entry is no longer the same
+      // object as the row in the list.
+      await tester.tap(menu(tester, 'Technogal.mp3'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Aus Warteschlange entfernen'));
+      await tester.pumpAndSettle();
 
-    expect(adapter.requests.length, 2); // the read and the delete, nothing added
+      expect(
+        adapter.requests.length,
+        2,
+      ); // the read and the delete, nothing added
 
-    await tester.tap(find.byTooltip('Zuletzt gespielt'));
-    await tester.pumpAndSettle();
-    await tester.tap(row(tester, 'solo.mp3'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Zuletzt gespielt'));
+      await tester.pumpAndSettle();
+      await tester.tap(row(tester, 'solo.mp3'));
+      await tester.pumpAndSettle();
 
-    expect(adapter.requests.length, 2);
-    expect(wiring.queue.current?.trackId, 7);
-    expect(audio.opened, ['$apiBaseUrl/api/music/7', '$apiBaseUrl/api/music/7']);
-  });
+      expect(adapter.requests.length, 2);
+      expect(wiring.queue.current?.trackId, 7);
+      expect(audio.opened, [
+        '$apiBaseUrl/api/music/7',
+        '$apiBaseUrl/api/music/7',
+      ]);
+    },
+  );
 
   // A song that is no longer in the list cannot be played from the queue, so it is added back the
   // way the plain queue feature does.
-  testWidgets('a history row that is not in the list is added back before it plays', (tester) async {
-    final audio = FakePlayer();
-    addTearDown(audio.dispose);
+  testWidgets(
+    'a history row that is not in the list is added back before it plays',
+    (tester) async {
+      final audio = FakePlayer();
+      addTearDown(audio.dispose);
 
-    final adapter = StubAdapter(200, [queueAnswer.first]);
-    adapter.queue.addAll([
-      (200, [queueAnswer.first]),
-      (204, {}),
-      (201, {'position': 1.0, 'track_id': 8.0, 'title': 'Technogal.mp3'}),
-    ]);
+      final adapter = StubAdapter(200, [queueAnswer.first]);
+      adapter.queue.addAll([
+        (200, [queueAnswer.first]),
+        (204, {}),
+        (201, {'position': 1.0, 'track_id': 8.0, 'title': 'Technogal.mp3'}),
+      ]);
 
-    final wiring = await openQueue(tester, queues: adapter, audio: audio);
+      final wiring = await openQueue(tester, queues: adapter, audio: audio);
 
-    await tester.tap(row(tester, 'Technogal.mp3'));
-    await tester.pumpAndSettle();
+      await tester.tap(row(tester, 'Technogal.mp3'));
+      await tester.pumpAndSettle();
 
-    // The song ends on its own, which is what puts it in "Zuletzt gespielt".
-    audio.complete();
-    await tester.pumpAndSettle();
+      // The song ends on its own, which is what puts it in "Zuletzt gespielt".
+      audio.complete();
+      await tester.pumpAndSettle();
 
-    // Then the row is taken out of the list, so only the history still has this song.
-    await tester.tap(menu(tester, 'Technogal.mp3'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Aus Warteschlange entfernen'));
-    await tester.pumpAndSettle();
+      // Then the row is taken out of the list, so only the history still has this song.
+      await tester.tap(menu(tester, 'Technogal.mp3'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Aus Warteschlange entfernen'));
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Zuletzt gespielt'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Zuletzt gespielt'));
+      await tester.pumpAndSettle();
 
-    // A row that is only in the history has no slot, so it has no handle, and the row says what
-    // it is.
-    expect(find.descendant(of: row(tester, 'Technogal.mp3'), matching: find.byIcon(Icons.drag_handle)), findsNothing);
-    expect(find.descendant(of: row(tester, 'Technogal.mp3'), matching: find.text('Zuletzt gespielt')), findsOneWidget);
+      // A row that is only in the history has no slot, so it has no handle, and the row says what
+      // it is.
+      expect(
+        find.descendant(
+          of: row(tester, 'Technogal.mp3'),
+          matching: find.byIcon(Icons.drag_handle),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: row(tester, 'Technogal.mp3'),
+          matching: find.text('Zuletzt gespielt'),
+        ),
+        findsOneWidget,
+      );
 
-    await tester.tap(row(tester, 'Technogal.mp3'));
-    await tester.pumpAndSettle();
+      await tester.tap(row(tester, 'Technogal.mp3'));
+      await tester.pumpAndSettle();
 
-    expect(adapter.lastOptions?.method, 'POST');
-    expect(adapter.lastOptions?.uri.path, '/api/queue/songs');
-    expect(audio.opened, ['$apiBaseUrl/api/music/8', '$apiBaseUrl/api/music/8']);
-    expect(wiring.queue.current?.trackId, 8);
-  });
+      expect(adapter.lastOptions?.method, 'POST');
+      expect(adapter.lastOptions?.uri.path, '/api/queue/songs');
+      expect(audio.opened, [
+        '$apiBaseUrl/api/music/8',
+        '$apiBaseUrl/api/music/8',
+      ]);
+      expect(wiring.queue.current?.trackId, 8);
+    },
+  );
 
   // Pausing does not lose the row this device is at, so a read keeps it.
   testWidgets('a read keeps the row a paused player is at', (tester) async {
@@ -913,12 +1098,18 @@ void main() {
 
   // What a device is playing is its own, the server does not know it. A read may not lose it: the
   // panel keeps pointing at the same song where the server now has it.
-  testWidgets('a read keeps pointing at the song this device is playing', (tester) async {
+  testWidgets('a read keeps pointing at the song this device is playing', (
+    tester,
+  ) async {
     final audio = FakePlayer();
     addTearDown(audio.dispose);
 
     // Another device put the same songs at other slots.
-    final adapter = StubAdapter(200, [queueAnswer.last, queueAnswer.first, queueAnswer[1]]);
+    final adapter = StubAdapter(200, [
+      queueAnswer.last,
+      queueAnswer.first,
+      queueAnswer[1],
+    ]);
 
     final wiring = await openQueue(
       tester,
@@ -938,25 +1129,28 @@ void main() {
 
   // A song that is no longer in the list cannot be the current row. Then the audio stops with it,
   // so the panel and the audio say the same thing.
-  testWidgets('a read stops the audio when the playing song is gone from the list', (tester) async {
-    final audio = FakePlayer();
-    addTearDown(audio.dispose);
+  testWidgets(
+    'a read stops the audio when the playing song is gone from the list',
+    (tester) async {
+      final audio = FakePlayer();
+      addTearDown(audio.dispose);
 
-    final adapter = StubAdapter(200, [queueAnswer.last]);
+      final adapter = StubAdapter(200, [queueAnswer.last]);
 
-    final wiring = await openQueue(
-      tester,
-      queues: adapter,
-      audio: audio,
-      prep: (wiring) async {
-        wiring.queue.fill(mirror(queueAnswer));
-        await wiring.player.playCurrent();
-      },
-    );
+      final wiring = await openQueue(
+        tester,
+        queues: adapter,
+        audio: audio,
+        prep: (wiring) async {
+          wiring.queue.fill(mirror(queueAnswer));
+          await wiring.player.playCurrent();
+        },
+      );
 
-    expect(wiring.queue.current, isNull);
-    expect(audio.stopped, ['$apiBaseUrl/api/music/8']);
-  });
+      expect(wiring.queue.current, isNull);
+      expect(audio.stopped, ['$apiBaseUrl/api/music/8']);
+    },
+  );
 
   // A panel that keeps its busy flag after an error leaves every button disabled for the rest of
   // its life. After a refused call it has to be usable again.
@@ -994,95 +1188,133 @@ void main() {
 
   // Closing takes the panel out of the frame it was drawn in; the audio runs on, because opening
   // the queue never touched it.
-  testWidgets('closing the panel gives the frame back and the song keeps playing', (tester) async {
-    final audio = FakePlayer();
-    addTearDown(audio.dispose);
+  testWidgets(
+    'closing the panel gives the frame back and the song keeps playing',
+    (tester) async {
+      final audio = FakePlayer();
+      addTearDown(audio.dispose);
 
-    var closed = false;
-    final wiring = await openQueue(
-      tester,
-      queues: StubAdapter(200, queueAnswer),
-      audio: audio,
-      onClose: () => closed = true,
-    );
+      var closed = false;
+      final wiring = await openQueue(
+        tester,
+        queues: StubAdapter(200, queueAnswer),
+        audio: audio,
+        onClose: () => closed = true,
+      );
 
-    await tester.tap(row(tester, 'Technogal.mp3'));
-    await tester.pumpAndSettle();
-    expect(audio.played, ['$apiBaseUrl/api/music/8']);
+      await tester.tap(row(tester, 'Technogal.mp3'));
+      await tester.pumpAndSettle();
+      expect(audio.played, ['$apiBaseUrl/api/music/8']);
 
-    await tester.tap(find.byTooltip('Warteschlange schließen'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Warteschlange schließen'));
+      await tester.pumpAndSettle();
 
-    expect(closed, isTrue);
-    expect(audio.stopped, isEmpty);
-    expect(wiring.queue.current?.trackId, 8);
-  });
+      expect(closed, isTrue);
+      expect(audio.stopped, isEmpty);
+      expect(wiring.queue.current?.trackId, 8);
+    },
+  );
 
   // Without a server the rows are the songs on this device, and the order that is changed is the
   // order stored here. Nothing goes to the network.
-  testWidgets('local mode shows the device queue and moves a row in the stored order', (tester) async {
-    final local = LocalLibrary();
-    local.add(name: 'a.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
-    local.add(name: 'b.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
-    local.add(name: 'c.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
+  testWidgets(
+    'local mode shows the device queue and moves a row in the stored order',
+    (tester) async {
+      final local = LocalLibrary();
+      local.add(name: 'a.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
+      local.add(name: 'b.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
+      local.add(name: 'c.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
 
-    // A fill comes from one list, so nothing in it was put there by hand; the third song is.
-    local.setQueue(local.tracks.sublist(0, 2), fromName: 'Favoriten');
-    local.addToQueue(local.tracks.last);
+      // A fill comes from one list, so nothing in it was put there by hand; the third song is.
+      local.setQueue(local.tracks.sublist(0, 2), fromName: 'Favoriten');
+      local.addToQueue(local.tracks.last);
 
-    final queueAdapter = StubAdapter(200, <Object>[]);
-    final wiring = await openQueue(tester, queues: queueAdapter, localMode: true, localLibrary: local);
+      final queueAdapter = StubAdapter(200, <Object>[]);
+      final wiring = await openQueue(
+        tester,
+        queues: queueAdapter,
+        localMode: true,
+        localLibrary: local,
+      );
 
-    // There is nothing to fetch for a device queue: the rows are built from what is stored here.
-    expect(queueAdapter.requests, isEmpty);
-    expect(find.text('Als Nächstes in der Warteschlange'), findsOneWidget);
-    expect(find.text('Als Nächstes aus: Favoriten'), findsOneWidget);
+      // There is nothing to fetch for a device queue: the rows are built from what is stored here.
+      expect(queueAdapter.requests, isEmpty);
+      expect(find.text('Als Nächstes in der Warteschlange'), findsOneWidget);
+      expect(find.text('Als Nächstes aus: Favoriten'), findsOneWidget);
 
-    await dragFromHandle(
-      tester,
-      find.descendant(of: row(tester, 'c.mp3'), matching: find.byIcon(Icons.drag_handle)),
-      row(tester, 'b.mp3'),
-    );
+      await dragFromHandle(
+        tester,
+        find.descendant(
+          of: row(tester, 'c.mp3'),
+          matching: find.byIcon(Icons.drag_handle),
+        ),
+        row(tester, 'b.mp3'),
+      );
 
-    // The stored order is what changes, so it stays after a restart.
-    expect(local.queue.map((track) => track.title), ['a.mp3', 'c.mp3', 'b.mp3']);
-    expect(wiring.queue.entries.map((entry) => entry.title), ['a.mp3', 'c.mp3', 'b.mp3']);
-    expect(find.text('Das Lied ist jetzt an Position 2.'), findsOneWidget);
-  });
+      // The stored order is what changes, so it stays after a restart.
+      expect(local.queue.map((track) => track.title), [
+        'a.mp3',
+        'c.mp3',
+        'b.mp3',
+      ]);
+      expect(wiring.queue.entries.map((entry) => entry.title), [
+        'a.mp3',
+        'c.mp3',
+        'b.mp3',
+      ]);
+      expect(find.text('Das Lied ist jetzt an Position 2.'), findsOneWidget);
+    },
+  );
 
   // Clearing on a device writes only the store, so the rows must be built from it again; otherwise
   // the page keeps showing songs the store no longer has.
-  testWidgets('clearing on a device shows what is left, not the rows it removed', (tester) async {
-    final local = LocalLibrary();
-    local.add(name: 'a.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
-    local.add(name: 'b.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
-    local.add(name: 'c.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
+  testWidgets(
+    'clearing on a device shows what is left, not the rows it removed',
+    (tester) async {
+      final local = LocalLibrary();
+      local.add(name: 'a.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
+      local.add(name: 'b.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
+      local.add(name: 'c.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
 
-    // Two songs from a playlist, which stay, and one the person put there themselves, which goes.
-    local.setQueue(local.tracks.sublist(0, 2), fromName: 'Favoriten');
-    local.addToQueue(local.tracks.last);
+      // Two songs from a playlist, which stay, and one the person put there themselves, which goes.
+      local.setQueue(local.tracks.sublist(0, 2), fromName: 'Favoriten');
+      local.addToQueue(local.tracks.last);
 
-    final wiring = await openQueue(tester, localMode: true, localLibrary: local);
+      final wiring = await openQueue(
+        tester,
+        localMode: true,
+        localLibrary: local,
+      );
 
-    await tester.tap(find.byTooltip('Warteschlange leeren'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Warteschlange leeren'));
+      await tester.pumpAndSettle();
 
-    expect(row(tester, 'c.mp3'), findsNothing);
-    expect(row(tester, 'a.mp3'), findsOneWidget);
-    expect(local.queue.map((track) => track.title), ['a.mp3', 'b.mp3']);
-    expect(wiring.queue.entries.map((entry) => entry.title), ['a.mp3', 'b.mp3']);
-    expect(find.text('Eigene Songs entfernt.'), findsOneWidget);
-  });
+      expect(row(tester, 'c.mp3'), findsNothing);
+      expect(row(tester, 'a.mp3'), findsOneWidget);
+      expect(local.queue.map((track) => track.title), ['a.mp3', 'b.mp3']);
+      expect(wiring.queue.entries.map((entry) => entry.title), [
+        'a.mp3',
+        'b.mp3',
+      ]);
+      expect(find.text('Eigene Songs entfernt.'), findsOneWidget);
+    },
+  );
 
   // The same rows in both modes: a row on the device opens the file, not the streaming endpoint.
   testWidgets('a local row plays the file on this device', (tester) async {
     final audio = FakePlayer();
     addTearDown(audio.dispose);
 
-    final local = LocalLibrary()..add(name: 'a.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
+    final local = LocalLibrary()
+      ..add(name: 'a.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
     local.setQueue(local.tracks);
 
-    final wiring = await openQueue(tester, audio: audio, localMode: true, localLibrary: local);
+    final wiring = await openQueue(
+      tester,
+      audio: audio,
+      localMode: true,
+      localLibrary: local,
+    );
 
     await tester.tap(row(tester, 'a.mp3'));
     await tester.pumpAndSettle();
@@ -1094,7 +1326,9 @@ void main() {
   });
 
   // Only a 401 says the token is gone; a rate limit is not a lost login.
-  testWidgets('a session the server rejects is dropped from the store', (tester) async {
+  testWidgets('a session the server rejects is dropped from the store', (
+    tester,
+  ) async {
     final wiring = await openQueue(
       tester,
       queues: StubAdapter(401, {'error': 'session is not valid or expired'}),
@@ -1105,10 +1339,14 @@ void main() {
     expect(wiring.session.isLoggedIn, isFalse);
   });
 
-  testWidgets('a rate limit shows the message without signing the user out', (tester) async {
+  testWidgets('a rate limit shows the message without signing the user out', (
+    tester,
+  ) async {
     final wiring = await openQueue(
       tester,
-      queues: StubAdapter(429, {'error': 'too many requests from this address, try again later'}),
+      queues: StubAdapter(429, {
+        'error': 'too many requests from this address, try again later',
+      }),
       session: loggedIn(),
     );
 
@@ -1174,7 +1412,9 @@ void main() {
 
   // The list that is playing is what a suggestion should come from, so the field does not offer
   // songs of another playlist or of the whole library while one is playing.
-  testWidgets('a playing playlist is what the field suggests from', (tester) async {
+  testWidgets('a playing playlist is what the field suggests from', (
+    tester,
+  ) async {
     final playlists = StubAdapter(204, const {});
     playlists.queue.addAll([
       (200, <Object>[playlistAnswer]),
@@ -1199,7 +1439,8 @@ void main() {
       library: StubAdapter(200, const [
         {'id': 99.0, 'title': 'nicht.wav'},
       ]),
-      prep: (wiring) async => wiring.queue.fill(mirror(queueAnswer), fromName: 'Favoriten'),
+      prep: (wiring) async =>
+          wiring.queue.fill(mirror(queueAnswer), fromName: 'Favoriten'),
     );
 
     // The song of the playlist is offered and is also a row of the queue.
@@ -1208,52 +1449,70 @@ void main() {
     expect(find.text('nicht.wav'), findsNothing);
   });
 
-  // On a phone the queue is a drop-up over the page, not the page: the bar stays reachable below
-  // it, with the controls of the song that is playing, and the button that opened it closes it.
-  testWidgets('a phone shows the queue as a drop-up above the bar', (tester) async {
-    tester.view..physicalSize = const Size(420, 900)..devicePixelRatio = 1.0;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
+  // On a phone the queue is opened from the full player; from there the drop-up keeps the bar
+  // below it, because the queue and the bar name the same song.
+  testWidgets(
+    'a phone opens the queue from the full player as a drop-up above the bar',
+    (tester) async {
+      tester.view
+        ..physicalSize = const Size(420, 900)
+        ..devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
 
-    final wiring = Wiring(
-      loggedIn(),
-      queueAdapter: StubAdapter(200, queueAnswer),
-      playlistAdapter: StubAdapter(200, <Object>[]),
-    );
-    addTearDown(wiring.dispose);
+      final wiring = Wiring(
+        loggedIn(),
+        queueAdapter: StubAdapter(200, queueAnswer),
+        playlistAdapter: StubAdapter(200, <Object>[]),
+      );
+      addTearDown(wiring.dispose);
+      // What a page would have filled before the player opened.
+      wiring.queue.fill(mirror(queueAnswer));
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: AppShell(
-          selected: '/home',
-          player: wiring.player,
-          queues: wiring.queues,
-          playlists: wiring.playlists,
-          library: wiring.library,
-          session: wiring.session,
-          child: const SizedBox.expand(),
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AppShell(
+            selected: '/home',
+            player: wiring.player,
+            queues: wiring.queues,
+            playlists: wiring.playlists,
+            library: wiring.library,
+            session: wiring.session,
+            child: const SizedBox.expand(),
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
 
-    final button = find.descendant(of: find.byType(PlayerBar), matching: find.byTooltip('Warteschlange'));
-    await tester.tap(button);
-    await tester.pumpAndSettle();
+      // The mini player has no queue button; tapping it opens the full player, where the queue is.
+      await tester.tap(
+        find.ancestor(
+          of: find.text('Nichts wird abgespielt'),
+          matching: find.byType(InkWell),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Warteschlange'));
+      await tester.pumpAndSettle();
+      expect(find.text('3 Titel'), findsOneWidget);
 
-    expect(find.byType(QueuePanel), findsOneWidget);
-    expect(find.text('Technogal.mp3'), findsOneWidget);
+      await tester.tap(find.byTooltip('Warteschlange bearbeiten'));
+      await tester.pumpAndSettle();
 
-    final panel = tester.getRect(find.byType(QueuePanel));
-    final bar = tester.getRect(find.byType(PlayerBar));
-    expect(panel.bottom, closeTo(bar.top, 1));
-    expect(panel.height, lessThanOrEqualTo(900 * 0.62));
-    expect(tester.takeException(), isNull);
+      expect(find.byType(QueuePanel), findsOneWidget);
+      expect(find.text('Technogal.mp3'), findsOneWidget);
 
-    await tester.tap(button);
-    await tester.pumpAndSettle();
-    expect(find.byType(QueuePanel), findsNothing);
-  });
+      final panel = tester.getRect(find.byType(QueuePanel));
+      final bar = tester.getRect(find.byType(PlayerBar));
+      expect(panel.bottom, closeTo(bar.top, 1));
+      expect(panel.height, lessThanOrEqualTo(900 * 0.62));
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.byTooltip('Warteschlange schließen'));
+      await tester.pumpAndSettle();
+      expect(find.byType(QueuePanel), findsNothing);
+    },
+  );
 
   // The artist belongs to the song, so a row that moves or becomes a hand-added row keeps it.
   test('a queue row keeps its artist when it moves or is marked manual', () {

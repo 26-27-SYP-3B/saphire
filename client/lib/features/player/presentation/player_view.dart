@@ -3,9 +3,9 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../../app/theme.dart';
+import '../../../shared/utils/cover_color.dart';
 import '../domain/player.dart';
 import '../domain/queue.dart';
 
@@ -62,8 +62,10 @@ class _PlayerViewState extends State<PlayerView> {
     // A song that ends on its own has no tap behind it, so without a listener this view would keep
     // showing the song that just finished.
     _at = widget.player.position;
+    _refreshCoverColor();
     _changes = widget.player.changes.listen((_) {
       if (mounted) {
+        _refreshCoverColor();
         setState(() {
           // A different song starts at its own position, not at the one the last song ended on.
           _at = widget.player.position;
@@ -100,88 +102,23 @@ class _PlayerViewState extends State<PlayerView> {
     }
   }
 
-  // The volume belongs to the player, not this page: the page is recreated while the audio keeps
-  // playing, and a slider that started at its default would show a volume that is not set.
-  void _setVolume(double value) {
-    setState(() {});
-    // A slider sends many values while the finger moves; the busy gate would drop all but the
-    // first. The last one has to win, so the call is not queued behind _busy.
-    unawaited(
-      widget.player.setVolume(value).catchError((Object error) {
-        if (mounted) {
-          setState(
-            () => _note = 'Das Lied konnte nicht gespielt werden: $error',
-          );
-        }
-      }),
-    );
+  /// Reads one colour from the local cover for the background gradient. A cover that is
+  /// already the one in memory is not decoded again.
+  Uint8List? _colorCover;
+  Color? _coverColor;
+
+  void _refreshCoverColor() {
+    final cover = widget.player.localCurrent?.cover;
+    if (identical(cover, _colorCover)) return;
+    _colorCover = cover;
+    _coverColor = null;
+    if (cover == null) return;
+    coverColor(cover).then((color) {
+      if (mounted && identical(_colorCover, cover)) {
+        setState(() => _coverColor = color);
+      }
+    });
   }
-
-  void _toggleMute() =>
-      _setVolume(widget.player.volume > 0 ? 0 : widget.player.volumeBeforeMute);
-
-  /// A song on the server has a link the library page understands; a local file cannot leave
-  /// this device, so the button says that instead of copying something that would not play.
-  Future<void> _share() async {
-    final entry = widget.player.queue.current;
-    final local = widget.player.localCurrent;
-    if (entry == null && local == null) return;
-
-    if (local != null || entry == null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Ein lokaler Song bleibt auf diesem Gerät.'),
-        ),
-      );
-      return;
-    }
-
-    await Clipboard.setData(
-      ClipboardData(text: 'saphire://library?track=${entry.trackId}'),
-    );
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Link in die Zwischenablage kopiert.')),
-    );
-  }
-
-  /// There is no device-selection endpoint yet (api-docs.md), so the sheet says what is true:
-  /// this device is the one that plays, and no other device is connected.
-  Future<void> _devices() => showModalBottomSheet<void>(
-    context: context,
-    showDragHandle: true,
-    builder: (context) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Wiedergabe auf',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-            ),
-          ),
-          const ListTile(
-            leading: Icon(Icons.phone_android),
-            title: Text('Dieses Gerät'),
-            subtitle: Text('Die Wiedergabe läuft hier.'),
-            trailing: Icon(Icons.check, color: accentBright),
-          ),
-          ListTile(
-            enabled: false,
-            leading: const Icon(Icons.devices_other),
-            title: const Text('Weitere Geräte'),
-            subtitle: const Text('Sind noch nicht angebunden.'),
-          ),
-          const SizedBox(height: 8),
-        ],
-      ),
-    ),
-  );
 
   @override
   Widget build(BuildContext context) {
@@ -190,9 +127,6 @@ class _PlayerViewState extends State<PlayerView> {
     final local = widget.player.localCurrent;
     final entry = widget.player.queue.current;
     final title = local?.title ?? entry?.title;
-    final waveform = local == null
-        ? entry?.waveform ?? const <int>[]
-        : const <int>[];
     final subtitle = _note ?? widget.player.statusNote;
     final failed = _note != null || widget.player.failure != null;
     final total = widget.player.duration;
@@ -231,11 +165,17 @@ class _PlayerViewState extends State<PlayerView> {
               width: width,
               height: height,
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
+                gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [fieldBackground, playerCard, canvas],
-                  stops: [0, 0.55, 1],
+                  colors: [
+                    _coverColor == null
+                        ? fieldBackground
+                        : Color.lerp(_coverColor, fieldBackground, 0.45)!,
+                    playerCard,
+                    canvas,
+                  ],
+                  stops: const [0, 0.55, 1],
                 ),
                 border: Border.all(color: playerCardBorder),
                 borderRadius: BorderRadius.circular(36),
@@ -303,13 +243,11 @@ class _PlayerViewState extends State<PlayerView> {
                       ),
                     ),
                     const SizedBox(height: 14),
-                    _progress(context, total, waveform),
+                    _progress(context, total),
                     const SizedBox(height: 12),
-                    _controls(context, title, total, playing),
+                    _controls(context, title, playing),
                     const SizedBox(height: 6),
-                    _moreControls(context, title, total),
-                    const SizedBox(height: 6),
-                    _bottomRow(context, title),
+                    _bottomRow(context),
                   ],
                 ),
               ),
@@ -433,7 +371,9 @@ class _PlayerViewState extends State<PlayerView> {
     return widget.player.queue.current;
   }
 
-  Widget _progress(BuildContext context, Duration total, List<int> waveform) {
+  /// The seek line is one plain line with a dot, not the song's waveform. It is the same
+  /// control in both layouts; only the desktop bar and this phone view place it differently.
+  Widget _progress(BuildContext context, Duration total) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     // A stopped player keeps the length of the song it last had. With no current song the bar
@@ -446,12 +386,9 @@ class _PlayerViewState extends State<PlayerView> {
       0.0,
       totalMs > 0 ? totalMs.toDouble() : 1.0,
     );
-    final progress = totalMs > 0 ? positionMs / totalMs : 0.0;
 
     return Row(
       children: [
-        // While a finger is on the bar the label follows the thumb, so the target time is
-        // readable before the release that seeks.
         Text(
           hasSong
               ? _clock(
@@ -465,60 +402,41 @@ class _PlayerViewState extends State<PlayerView> {
         const SizedBox(width: 10),
         Expanded(
           child: SizedBox(
-            height: 44,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                Positioned.fill(
-                  child: CustomPaint(
-                    painter: _WaveformPainter(
-                      progress: progress,
-                      samples: waveform,
-                    ),
-                  ),
-                ),
-                Positioned.fill(
-                  child: SliderTheme(
-                    data: SliderTheme.of(context).copyWith(
-                      trackHeight: 2,
-                      activeTrackColor: Colors.transparent,
-                      inactiveTrackColor: Colors.transparent,
-                      disabledActiveTrackColor: Colors.transparent,
-                      disabledInactiveTrackColor: Colors.transparent,
-                      thumbColor: bodyText,
-                      disabledThumbColor: playerBarMuted,
-                      overlayColor: bodyText.withValues(alpha: 0.12),
-                      thumbShape: const RoundSliderThumbShape(
-                        enabledThumbRadius: 10,
-                      ),
-                      overlayShape: const RoundSliderOverlayShape(
-                        overlayRadius: 20,
-                      ),
-                    ),
-                    child: Slider(
-                      // A song whose length the player does not know cannot be seeked to a tenth of
-                      // it, so the bar stays where it is.
-                      max: totalMs > 0 ? totalMs.toDouble() : 1,
-                      value: totalMs > 0 ? positionMs : 0,
-                      onChanged: totalMs > 0
-                          ? (value) => setState(() => _drag = value)
-                          : null,
-                      // Only the release seeks: one seek per drag frame fights the position stream
-                      // and most of the jumps would be thrown away.
-                      onChangeEnd: totalMs > 0
-                          ? (value) {
-                              final to = Duration(milliseconds: value.round());
-                              setState(() {
-                                _drag = null;
-                                _at = to;
-                              });
-                              _run(() => widget.player.seek(to));
-                            }
-                          : null,
-                    ),
-                  ),
-                ),
-              ],
+            height: 32,
+            child: SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                trackHeight: 4,
+                activeTrackColor: bodyText,
+                inactiveTrackColor: playerBarMuted,
+                disabledActiveTrackColor: hairline,
+                disabledInactiveTrackColor: playerBarMuted,
+                thumbColor: bodyText,
+                disabledThumbColor: mutedText,
+                overlayColor: bodyText.withValues(alpha: 0.12),
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+              ),
+              child: Slider(
+                // A song whose length the player does not know cannot be seeked, so the line
+                // stays where it is.
+                max: totalMs > 0 ? totalMs.toDouble() : 1,
+                value: totalMs > 0 ? positionMs : 0,
+                onChanged: totalMs > 0
+                    ? (value) => setState(() => _drag = value)
+                    : null,
+                // Only the release seeks: one seek per drag frame fights the position stream
+                // and most of the jumps would be thrown away.
+                onChangeEnd: totalMs > 0
+                    ? (value) {
+                        final to = Duration(milliseconds: value.round());
+                        setState(() {
+                          _drag = null;
+                          _at = to;
+                        });
+                        _run(() => widget.player.seek(to));
+                      }
+                    : null,
+              ),
             ),
           ),
         ),
@@ -533,43 +451,65 @@ class _PlayerViewState extends State<PlayerView> {
     );
   }
 
-  Widget _controls(
-    BuildContext context,
-    String? title,
-    Duration total,
-    bool playing,
-  ) {
+  Widget _controls(BuildContext context, String? title, bool playing) {
+    final scheme = Theme.of(context).colorScheme;
     final disabled = title == null || _busy;
 
     return SizedBox(
       height: 64,
-      child: Stack(
-        alignment: Alignment.center,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // The transport is centred on the card, not in the space left by the queue button.
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              IconButton(
-                tooltip: 'Vorheriges Lied',
-                iconSize: 30,
-                onPressed: disabled
-                    ? null
-                    : () => _run(() => widget.player.previous()),
-                icon: const Icon(Icons.skip_previous),
-              ),
-              const SizedBox(width: 10),
-              _playButton(playing, disabled),
-              const SizedBox(width: 10),
-              IconButton(
-                tooltip: 'Nächstes Lied',
-                iconSize: 30,
-                onPressed: disabled
-                    ? null
-                    : () => _run(() => widget.player.next()),
-                icon: const Icon(Icons.skip_next),
-              ),
-            ],
+          IconButton(
+            tooltip: 'Zufällige Wiedergabe',
+            visualDensity: VisualDensity.compact,
+            onPressed: disabled
+                ? null
+                : () => setState(
+                    () => widget.player.shuffle = !widget.player.shuffle,
+                  ),
+            icon: Icon(
+              Icons.shuffle,
+              size: 22,
+              color: widget.player.shuffle
+                  ? playerAccent
+                  : scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: 4),
+          IconButton(
+            tooltip: 'Vorheriges Lied',
+            iconSize: 30,
+            onPressed: disabled
+                ? null
+                : () => _run(() => widget.player.previous()),
+            icon: const Icon(Icons.skip_previous),
+          ),
+          const SizedBox(width: 6),
+          _playButton(playing, disabled),
+          const SizedBox(width: 6),
+          IconButton(
+            tooltip: 'Nächstes Lied',
+            iconSize: 30,
+            onPressed: disabled ? null : () => _run(() => widget.player.next()),
+            icon: const Icon(Icons.skip_next),
+          ),
+          const SizedBox(width: 4),
+          IconButton(
+            tooltip: 'Wiederholen',
+            visualDensity: VisualDensity.compact,
+            onPressed: disabled
+                ? null
+                : () => setState(
+                    () => widget.player.repeatOne = !widget.player.repeatOne,
+                  ),
+            icon: Icon(
+              Icons.repeat_one,
+              size: 22,
+              color: widget.player.repeatOne
+                  ? playerAccent
+                  : scheme.onSurfaceVariant,
+            ),
           ),
         ],
       ),
@@ -599,142 +539,34 @@ class _PlayerViewState extends State<PlayerView> {
           backgroundColor: bodyText,
           foregroundColor: canvas,
           disabledBackgroundColor: hairline,
-          minimumSize: const Size(64, 64),
+          minimumSize: const Size(56, 56),
           shape: const CircleBorder(),
         ),
       ),
     );
   }
 
-  Widget _bottomRow(BuildContext context, String? title) {
-    final enabled = title != null && !_busy;
-
-    return Row(
-      children: [
-        Expanded(
-          child: Tooltip(
-            message: 'Warteschlange',
-            child: TextButton.icon(
-              // The queue is worth opening with nothing current too: it is where the songs
-              // that would play next are.
-              onPressed: _busy
-                  ? null
-                  : () => setState(() => _queueOpen = !_queueOpen),
-              icon: Icon(
-                Icons.queue_music,
-                size: 20,
-                color: _queueOpen ? accentBright : null,
-              ),
-              label: Text(
-                'Warteschlange',
-                style: TextStyle(color: _queueOpen ? accentBright : null),
-              ),
-            ),
+  /// The bottom of the phone player: one way into the queue, no volume and no sharing. The
+  /// volume belongs to the desktop bar; a phone is usually listened to with its own buttons.
+  Widget _bottomRow(BuildContext context) {
+    return Center(
+      child: Tooltip(
+        message: 'Warteschlange',
+        child: TextButton.icon(
+          onPressed: _busy
+              ? null
+              : () => setState(() => _queueOpen = !_queueOpen),
+          icon: Icon(
+            Icons.queue_music,
+            size: 20,
+            color: _queueOpen ? accentBright : null,
+          ),
+          label: Text(
+            'Warteschlange',
+            style: TextStyle(color: _queueOpen ? accentBright : null),
           ),
         ),
-        IconButton(
-          tooltip: 'Teilen',
-          onPressed: enabled ? _share : null,
-          icon: const Icon(Icons.share, size: 20),
-        ),
-        IconButton(
-          tooltip: 'Gerät',
-          onPressed: _devices,
-          icon: const Icon(Icons.devices, size: 20),
-        ),
-      ],
-    );
-  }
-
-  Widget _moreControls(BuildContext context, String? title, Duration total) {
-    final scheme = Theme.of(context).colorScheme;
-    final disabled = title == null || _busy;
-    final jumpDisabled = disabled || total == Duration.zero;
-
-    return Row(
-      children: [
-        _smallButton(
-          tooltip: 'Zufällige Wiedergabe',
-          icon: Icons.shuffle,
-          color: widget.player.shuffle ? playerAccent : scheme.onSurfaceVariant,
-          onPressed: disabled
-              ? null
-              : () => setState(
-                  () => widget.player.shuffle = !widget.player.shuffle,
-                ),
-        ),
-        _smallButton(
-          tooltip: '10 Sekunden zurück',
-          icon: Icons.replay_10,
-          onPressed: jumpDisabled
-              ? null
-              : () => _run(
-                  () => widget.player.skip(const Duration(seconds: -10)),
-                ),
-        ),
-        _smallButton(
-          tooltip: '10 Sekunden vor',
-          icon: Icons.forward_10,
-          onPressed: jumpDisabled
-              ? null
-              : () =>
-                    _run(() => widget.player.skip(const Duration(seconds: 10))),
-        ),
-        _smallButton(
-          tooltip: 'Wiederholen',
-          icon: Icons.repeat_one,
-          color: widget.player.repeatOne
-              ? playerAccent
-              : scheme.onSurfaceVariant,
-          onPressed: disabled
-              ? null
-              : () => setState(
-                  () => widget.player.repeatOne = !widget.player.repeatOne,
-                ),
-        ),
-        _smallButton(
-          tooltip: widget.player.volume == 0 ? 'Ton an' : 'Stumm',
-          icon: widget.player.volume == 0 ? Icons.volume_off : Icons.volume_up,
-          onPressed: _busy ? null : _toggleMute,
-        ),
-        Expanded(
-          child: SliderTheme(
-            data: SliderTheme.of(context).copyWith(
-              trackHeight: 2,
-              activeTrackColor: playerAccent,
-              inactiveTrackColor: playerBarMuted,
-              thumbColor: scheme.onSurface,
-              overlayColor: playerAccent.withValues(alpha: 0.12),
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
-              overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
-            ),
-            child: Slider(
-              max: 1,
-              value: widget.player.volume,
-              onChanged: _busy ? null : _setVolume,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _smallButton({
-    required String tooltip,
-    required IconData icon,
-    required VoidCallback? onPressed,
-    Color? color,
-  }) {
-    return IconButton(
-      tooltip: tooltip,
-      iconSize: 20,
-      onPressed: onPressed,
-      style: IconButton.styleFrom(
-        minimumSize: const Size(48, 48),
-        padding: EdgeInsets.zero,
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
-      icon: Icon(icon, color: color),
     );
   }
 
@@ -895,45 +727,4 @@ class _PlayerViewState extends State<PlayerView> {
 
   static String _clock(Duration at) =>
       '${at.inMinutes}:${(at.inSeconds % 60).toString().padLeft(2, '0')}';
-}
-
-/// The seek line's bars. The server sends the peaks it decoded from the song, so the line is the
-/// song's shape; only the colour follows the position. A song without peaks falls back to a fixed
-/// pattern, which is still stable between rebuilds.
-class _WaveformPainter extends CustomPainter {
-  const _WaveformPainter({required this.progress, required this.samples});
-
-  final double progress;
-  final List<int> samples;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final count = samples.isEmpty ? 52 : samples.length;
-    final barWidth = (size.width / count * 0.55).clamp(1.0, 3.0);
-    final gap = (size.width - count * barWidth) / math.max(1, count - 1);
-    final paint = Paint()
-      ..strokeCap = StrokeCap.round
-      ..strokeWidth = barWidth;
-
-    for (var index = 0; index < count; index++) {
-      final at = index / math.max(1, count - 1);
-      final level = samples.isEmpty
-          ? (math.sin(index * 1.31) * 0.5 + 0.5) *
-                (math.sin(index * 0.43 + 0.8) * 0.35 + 0.65)
-          : samples[index].clamp(0, 255) / 255;
-      final height = (5 + (size.height - 10) * level).clamp(5.0, size.height);
-      paint.color = at <= progress ? playerAccent : playerBarMuted;
-      final x = index * (barWidth + gap) + barWidth / 2;
-      canvas.drawLine(
-        Offset(x, size.height / 2 + height / 2),
-        Offset(x, size.height / 2 - height / 2),
-        paint,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(_WaveformPainter oldDelegate) =>
-      oldDelegate.progress != progress ||
-      !listEquals(oldDelegate.samples, samples);
 }

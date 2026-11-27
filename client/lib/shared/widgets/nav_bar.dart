@@ -70,8 +70,11 @@ class NavBar extends StatelessWidget {
         ? Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // A desktop reaches the library through "Deine Bibliothek" below, the way
+              // Spotify's sidebar does; only the phone has a Bibliothek tab.
               for (final item in navItems)
-                entry(item.label, item.icon, item.to),
+                if (item.to != '/library')
+                  entry(item.label, item.icon, item.to),
             ],
           )
         : Row(

@@ -7,9 +7,9 @@ import 'package:go_router/go_router.dart';
 import '../../../app/theme.dart';
 import '../../../core/storage/session_store.dart';
 import '../../../core/storage/settings_store.dart';
-import '../../../core/utils/audio_format.dart';
 import '../../../core/utils/pick_audio.dart';
 import '../../../shared/domain/track.dart';
+import '../../../shared/utils/track_display.dart';
 import '../../../shared/widgets/app_shell.dart';
 import '../../../shared/widgets/track_art.dart';
 import '../../playlists/data/playlist_repository.dart';
@@ -40,45 +40,16 @@ const unknownFilter = 'Unbekannt';
 /// clears the panel's own height would clip its footer.
 const filterPanelMinHeight = 860.0;
 
-/// The artist shown for a row: what the file's tags name (api-docs.md, the artist field).
-/// Only a title that is still the name the client sent can be read as "interpret - titel",
-/// because that pattern is a naming habit, not something a tag says. A title that came from
-/// a tag is not a name, so nothing is guessed from it and the row shows a dash.
-String artistOf(Track track) => track.artist.isNotEmpty
-    ? track.artist
-    : (looksLikeFileName(track.title) ? artistFromName(track.title) : '');
+/// The artist a row shows. Nothing is guessed from the file name: a file without an artist
+/// tag says [unknownArtist]. Kept as a function because the tests and the filter read it.
+String artistOf(Track track) => displayArtist(track);
 
-/// The extensions a song can have (see `audioExtensions`), so a title ending in one of them is
-/// the name it was stored under rather than a tagged title.
-final fileExtensions = [
-  for (final extension in audioExtensions) extension.substring(1),
-];
-
-bool looksLikeFileName(String title) {
-  final dot = title.lastIndexOf('.');
-  return dot > 0 &&
-      fileExtensions.contains(title.substring(dot + 1).toLowerCase());
-}
-
-/// The naming habit of an untagged file: "interpret - titel.mp3".
-String artistFromName(String title) {
-  final split = title.indexOf(' - ');
-  return split < 1 ? '' : title.substring(0, split);
-}
-
-/// What a row shows where nothing is known: no artist, no length. A dash is honest where a
-/// guess would not be.
-const unknownValue = '–';
+/// What a row shows where nothing is known: the artist placeholder and an unknown length.
+const unknownValue = unknownDuration;
 
 /// A row shows the length as mm:ss. A file the server could not measure shows the dash,
 /// because the server can only know it for MPEG Layer III (see server/metadata.rs).
-String durationOf(Track track) {
-  if (track.durationMs <= 0) return unknownValue;
-
-  final seconds = track.durationMs ~/ 1000;
-  final minutes = seconds ~/ 60;
-  return '$minutes:${(seconds % 60).toString().padLeft(2, '0')}';
-}
+String durationOf(Track track) => displayDuration(track);
 
 /// A view of the library that is not the plain song list. The four chips Spotify puts above
 /// "Deine Bibliothek" are the same four here; the song list is what no chip selected shows.
@@ -370,14 +341,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
       return;
     }
 
+    final files = picked;
+    final answers = await _local.addAllAsync(files);
+    if (!mounted) return;
     setState(() {
-      for (final file in picked!) {
-        final refused = _local.add(
-          name: file.name,
-          path: file.path,
-          bytes: file.bytes,
-        );
-        if (refused != null) _note = '${file.name}: $refused';
+      for (var index = 0; index < files.length; index++) {
+        final refused = answers[index];
+        if (refused != null) _note = '${files[index].name}: $refused';
       }
     });
   }
@@ -477,11 +447,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
       _local.tracks[index].toTrack(id: -index - 1),
   ];
 
-  String _artistOf(Track track) =>
-      track.isLocal ? track.artist : artistOf(track);
+  String _artistOf(Track track) => displayArtist(track);
 
   String _filterValue(Track track, String category) => switch (category) {
-    'Interpret' => _artistOf(track).isEmpty ? unknownFilter : _artistOf(track),
+    'Interpret' =>
+      track.artist.trim().isEmpty ? unknownFilter : track.artist.trim(),
     'Album' => track.album.isEmpty ? unknownFilter : track.album,
     'Genre' => track.genre.isEmpty ? unknownFilter : track.genre,
     _ => track.year == 0 ? unknownFilter : '${track.year}',
@@ -641,7 +611,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
           if (_artistOf(track).isNotEmpty) _artistOf(track),
       };
       group.subtitle = view == LibraryView.albums
-          ? (artists.isEmpty ? unknownValue : artists.join(', '))
+          ? (artists.isEmpty ? unknownArtist : artists.join(', '))
           : '${group.tracks.length} ${group.tracks.length == 1 ? 'Song' : 'Songs'}';
     }
     return groups.values.toList()
@@ -693,188 +663,252 @@ class _LibraryScreenState extends State<LibraryScreen> {
       localMode: _settings.localMode,
       localLibrary: _local,
       sidebarPlaylists: _playlists,
-      // The whole page scrolls as one list, the way Spotify's library does. The header is the
-      // first child instead of a fixed block, so a phone with a filter applied does not run out
-      // of room above the songs.
-      child: ListView(
-        padding: EdgeInsets.zero,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-            child: Row(
+      // The whole page scrolls as one view, the way Spotify's library does. The header is a
+      // sliver instead of a fixed block, so a phone with a filter applied does not run out of
+      // room above the songs, and the rows are built lazily — a folder of 245 songs must not
+      // decode 245 covers before the first frame.
+      child: CustomScrollView(
+        slivers: [
+          SliverToBoxAdapter(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+                  child: Row(
                     children: [
-                      Text('Bibliothek', style: theme.textTheme.displaySmall),
-                      const SizedBox(height: 4),
-                      if (!_loading && shownTotal > 0)
-                        Text(
-                          songsView
-                              ? (!filtering && !searching
-                                    ? '$shownTotal Songs'
-                                    : '${rows.length} von $shownTotal Songs passen '
-                                          '${filtering && searching
-                                              ? 'zu Suche und Filter'
-                                              : filtering
-                                              ? 'zu den Filtern'
-                                              : 'zur Suche'}')
-                              : _view == LibraryView.playlists
-                              ? '${_playlists.length + _local.playlists.length} Playlists'
-                              : '${_groups(_view).length} ${_view == LibraryView.albums ? 'Alben' : 'Künstler*innen'}',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: scheme.onSurfaceVariant,
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Bibliothek',
+                              style: theme.textTheme.displaySmall,
+                            ),
+                            const SizedBox(height: 4),
+                            if (!_loading && shownTotal > 0)
+                              Text(
+                                songsView
+                                    ? (!filtering && !searching
+                                          ? '$shownTotal Songs'
+                                          : '${rows.length} von $shownTotal Songs passen '
+                                                '${filtering && searching
+                                                    ? 'zu Suche und Filter'
+                                                    : filtering
+                                                    ? 'zu den Filtern'
+                                                    : 'zur Suche'}')
+                                    : _view == LibraryView.playlists
+                                    ? '${_playlists.length + _local.playlists.length} Playlists'
+                                    : '${_groups(_view).length} ${_view == LibraryView.albums ? 'Alben' : 'Künstler*innen'}',
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      if (!_settings.localMode &&
+                          MediaQuery.sizeOf(context).width >= 600)
+                        FilledButton.tonal(
+                          onPressed: _loading || _picking || _uploading
+                              ? null
+                              : _upload,
+                          child: Text(
+                            _uploading ? 'Wird hochgeladen…' : 'Song hochladen',
                           ),
                         ),
-                    ],
-                  ),
-                ),
-                if (!_settings.localMode &&
-                    MediaQuery.sizeOf(context).width >= 600)
-                  FilledButton.tonal(
-                    onPressed: _loading || _picking || _uploading
-                        ? null
-                        : _upload,
-                    child: Text(
-                      _uploading ? 'Wird hochgeladen…' : 'Song hochladen',
-                    ),
-                  ),
-                const SizedBox(width: 8),
-                IconButton.filled(
-                  tooltip: 'Hinzufügen',
-                  onPressed: _showAddSheet,
-                  icon: const Icon(Icons.add),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _search,
-                    onChanged: (_) => setState(() {}),
-                    decoration: const InputDecoration(
-                      hintText: 'Songs suchen',
-                      prefixIcon: Icon(Icons.search, size: 18),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                // The filter stays beside the search, where it is reachable without scrolling
-                // even in a short landscape window; the sort chips can scroll with the page.
-                TextButton(
-                  onPressed: _openFilters,
-                  child: Text(
-                    filterCount == 0 ? 'Filter' : 'Filter ($filterCount)',
-                  ),
-                ),
-                if (phone)
-                  PopupMenuButton<String>(
-                    tooltip: 'Sortieren',
-                    icon: const Icon(Icons.sort, size: 20),
-                    onSelected: (key) => setState(() => _sort = key),
-                    itemBuilder: (context) => [
-                      for (final key in sortKeys)
-                        CheckedPopupMenuItem(
-                          value: key,
-                          checked: key == _sort,
-                          child: Text(key),
-                        ),
-                    ],
-                  ),
-                const SizedBox(width: 4),
-                IconButton(
-                  tooltip: _grid ? 'Liste' : 'Raster',
-                  onPressed: () => setState(() => _grid = !_grid),
-                  icon: Icon(_grid ? Icons.view_list : Icons.grid_view),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                _viewChip('Playlists', LibraryView.playlists),
-                _viewChip('Alben', LibraryView.albums),
-                _viewChip('Künstler*innen', LibraryView.artists),
-                _viewChip('Lokal', LibraryView.local),
-                if (songsView && !phone)
-                  for (final key in sortKeys) _sortChip(key),
-              ],
-            ),
-          ),
-          if (songsView && _filters.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 10, 24, 0),
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  for (final category in filterKeys)
-                    for (final value in _filters[category] ?? const <String>{})
-                      InputChip(
-                        label: Text('$category: $value'),
-                        onDeleted: () =>
-                            setState(() => _removeFilter(category, value)),
-                        deleteButtonTooltipMessage:
-                            'Filter $category: $value entfernen',
+                      const SizedBox(width: 8),
+                      IconButton.filled(
+                        tooltip: 'Hinzufügen',
+                        onPressed: _showAddSheet,
+                        icon: const Icon(Icons.add),
                       ),
-                  TextButton(
-                    onPressed: _resetFilters,
-                    child: const Text('Filter zurücksetzen'),
+                    ],
                   ),
-                ],
-              ),
-            ),
-          if (songsView && _filtersOpen && inlineFilters)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
-              child: _filterPanel(
-                options: _filterOptions(),
-                selected: _filters,
-                onToggle: (category, value) =>
-                    setState(() => _toggleFilter(_filters, category, value)),
-                onReset: _resetFilters,
-                showReset: false,
-              ),
-            ),
-          if (_note != null && !_loading)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(_note!, style: TextStyle(color: scheme.error)),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _search,
+                          onChanged: (_) => setState(() {}),
+                          decoration: const InputDecoration(
+                            hintText: 'Songs suchen',
+                            prefixIcon: Icon(Icons.search, size: 18),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      // The filter stays beside the search, where it is reachable without scrolling
+                      // even in a short landscape window; the sort chips can scroll with the page.
+                      TextButton(
+                        onPressed: _openFilters,
+                        child: Text(
+                          filterCount == 0 ? 'Filter' : 'Filter ($filterCount)',
+                        ),
+                      ),
+                      if (phone)
+                        PopupMenuButton<String>(
+                          tooltip: 'Sortieren',
+                          icon: const Icon(Icons.sort, size: 20),
+                          onSelected: (key) => setState(() => _sort = key),
+                          itemBuilder: (context) => [
+                            for (final key in sortKeys)
+                              CheckedPopupMenuItem(
+                                value: key,
+                                checked: key == _sort,
+                                child: Text(key),
+                              ),
+                          ],
+                        ),
+                      const SizedBox(width: 4),
+                      IconButton(
+                        tooltip: _grid ? 'Liste' : 'Raster',
+                        onPressed: () => setState(() => _grid = !_grid),
+                        icon: Icon(_grid ? Icons.view_list : Icons.grid_view),
+                      ),
+                    ],
                   ),
-                  if (_noteIsReadError)
-                    TextButton(
-                      onPressed: _load,
-                      child: const Text('Erneut versuchen'),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      _viewChip('Playlists', LibraryView.playlists),
+                      _viewChip('Alben', LibraryView.albums),
+                      _viewChip('Künstler*innen', LibraryView.artists),
+                      _viewChip('Lokal', LibraryView.local),
+                      if (songsView && !phone)
+                        for (final key in sortKeys) _sortChip(key),
+                    ],
+                  ),
+                ),
+                if (songsView && _filters.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 10, 24, 0),
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        for (final category in filterKeys)
+                          for (final value
+                              in _filters[category] ?? const <String>{})
+                            InputChip(
+                              label: Text('$category: $value'),
+                              onDeleted: () => setState(
+                                () => _removeFilter(category, value),
+                              ),
+                              deleteButtonTooltipMessage:
+                                  'Filter $category: $value entfernen',
+                            ),
+                        TextButton(
+                          onPressed: _resetFilters,
+                          child: const Text('Filter zurücksetzen'),
+                        ),
+                      ],
                     ),
-                ],
-              ),
+                  ),
+                if (songsView && _filtersOpen && inlineFilters)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+                    child: _filterPanel(
+                      options: _filterOptions(),
+                      selected: _filters,
+                      onToggle: (category, value) => setState(
+                        () => _toggleFilter(_filters, category, value),
+                      ),
+                      onReset: _resetFilters,
+                      showReset: false,
+                    ),
+                  ),
+                if (_note != null && !_loading)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _note!,
+                            style: TextStyle(color: scheme.error),
+                          ),
+                        ),
+                        if (_noteIsReadError)
+                          TextButton(
+                            onPressed: _load,
+                            child: const Text('Erneut versuchen'),
+                          ),
+                      ],
+                    ),
+                  ),
+                const SizedBox(height: 8),
+              ],
             ),
-          const SizedBox(height: 8),
+          ),
           if (_loading)
-            _loadingState()
+            SliverToBoxAdapter(child: _loadingState())
           else if (_view == LibraryView.playlists)
-            ..._playlistChildren()
+            SliverList(delegate: SliverChildListDelegate(_playlistChildren()))
           else if (_view == LibraryView.albums || _view == LibraryView.artists)
-            ..._groupChildren(_view)
+            SliverList(delegate: SliverChildListDelegate(_groupChildren(_view)))
           else
-            ..._songChildren(rows, searching, filtering),
+            ..._songSlivers(rows, searching, filtering),
         ],
       ),
     );
+  }
+
+  /// The song view as lazy slivers. The list and the grid both build only the rows on screen,
+  /// so a cover is decoded when its row becomes visible, not when the page opens.
+  List<Widget> _songSlivers(List<Track> rows, bool searching, bool filtering) {
+    if (rows.isEmpty) {
+      return [SliverToBoxAdapter(child: _empty(searching, filtering))];
+    }
+
+    if (_grid) {
+      return [
+        SliverLayoutBuilder(
+          builder: (context, constraints) {
+            final width = constraints.crossAxisExtent;
+            final count = width >= 1200
+                ? 5
+                : width >= 900
+                ? 4
+                : width >= 600
+                ? 3
+                : 2;
+            return SliverPadding(
+              padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
+              sliver: SliverGrid.builder(
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: count,
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 12,
+                  childAspectRatio: 0.75,
+                ),
+                itemCount: rows.length,
+                itemBuilder: (context, index) => _songCard(rows[index]),
+              ),
+            );
+          },
+        ),
+      ];
+    }
+
+    return [
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+        sliver: SliverList.builder(
+          itemCount: rows.length,
+          itemBuilder: (context, index) => _songRow(rows[index]),
+        ),
+      ),
+    ];
   }
 
   Widget _viewChip(String label, LibraryView view) {
@@ -917,21 +951,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ),
       ),
     );
-  }
-
-  /// The children of the page list for the song view: the rows, or the cards when the grid
-  /// was picked, or the sentence that says why there is nothing.
-  List<Widget> _songChildren(List<Track> rows, bool searching, bool filtering) {
-    if (rows.isEmpty) return [_empty(searching, filtering)];
-    if (_grid) {
-      return [
-        _gridWrap([for (final track in rows) _songCard(track)]),
-      ];
-    }
-    return [
-      for (final track in rows) _songRow(track),
-      const SizedBox(height: 24),
-    ];
   }
 
   /// Cards in the same flow as the list: a Wrap keeps them part of the page list, so the header
@@ -1024,9 +1043,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     ],
                   ),
                   Text(
-                    track.isLocal
-                        ? (artist.isEmpty ? 'Auf diesem Gerät' : artist)
-                        : (artist.isEmpty ? unknownValue : artist),
+                    artist,
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: scheme.onSurfaceVariant,
                     ),

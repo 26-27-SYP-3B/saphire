@@ -6,6 +6,7 @@ import '../../../core/config/api_config.dart';
 import '../../../core/storage/session_store.dart';
 import '../../../core/storage/settings_store.dart';
 import '../../../core/utils/pick_image.dart';
+import '../../../shared/utils/track_display.dart';
 import '../../../shared/widgets/app_shell.dart';
 import '../../../shared/widgets/track_art.dart';
 import '../../library/data/library_repository.dart';
@@ -1005,6 +1006,24 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
     );
   }
 
+  /// The library row behind one playlist entry. A server playlist stores references, so the
+  /// artist and length come from the library the page read; a local playlist holds the whole
+  /// song, so its tags are already there.
+  Track? _trackFor(
+    ({int position, String title, int trackId}) song,
+    int index,
+  ) {
+    if (_isLocal) {
+      final playlist = _selectedLocal;
+      if (playlist == null || index >= playlist.songs.length) return null;
+      return playlist.songs[index].toTrack();
+    }
+    for (final track in _library) {
+      if (track.id == song.trackId) return track;
+    }
+    return null;
+  }
+
   Widget _detail(ThemeData theme) {
     final name = _selectedName;
     if (name == null) {
@@ -1145,38 +1164,62 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
             ),
           )
         else
-          for (final song in songs)
-            ListTile(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-              leading: Text('${song.position}'),
-              title: Text(
-                song.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              trailing: PopupMenuButton<String>(
-                tooltip: 'Aktionen für ${song.title}',
-                onSelected: (value) {
-                  if (value == 'queue') {
-                    _queueSong(song);
-                  } else if (value == 'copy') {
-                    _copySongTo(song);
-                  } else {
-                    _removeSong(song.position);
-                  }
-                },
-                itemBuilder: (context) => const [
-                  PopupMenuItem(
-                    value: 'queue',
-                    child: Text('Zur Warteschlange hinzufügen'),
+          for (var index = 0; index < songs.length; index++)
+            Builder(
+              builder: (context) {
+                final song = songs[index];
+                final track = _trackFor(song, index);
+                return ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                  leading: SizedBox(
+                    width: 66,
+                    child: Row(
+                      children: [
+                        SizedBox(width: 18, child: Text('${song.position}')),
+                        TrackArt(cover: track?.cover, size: 40),
+                      ],
+                    ),
                   ),
-                  PopupMenuItem(
-                    value: 'copy',
-                    child: Text('Zu Playlist hinzufügen'),
+                  title: Text(
+                    song.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  PopupMenuItem(value: 'remove', child: Text('Entfernen')),
-                ],
-              ),
+                  subtitle: track == null
+                      ? null
+                      : Text(
+                          displayMeta(track),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                  trailing: PopupMenuButton<String>(
+                    tooltip: 'Aktionen für ${song.title}',
+                    onSelected: (value) {
+                      if (value == 'queue') {
+                        _queueSong(song);
+                      } else if (value == 'copy') {
+                        _copySongTo(song);
+                      } else {
+                        _removeSong(song.position);
+                      }
+                    },
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(
+                        value: 'queue',
+                        child: Text('Zur Warteschlange hinzufügen'),
+                      ),
+                      PopupMenuItem(
+                        value: 'copy',
+                        child: Text('Zu Playlist hinzufügen'),
+                      ),
+                      PopupMenuItem(value: 'remove', child: Text('Entfernen')),
+                    ],
+                  ),
+                );
+              },
             ),
         const SizedBox(height: 24),
       ],

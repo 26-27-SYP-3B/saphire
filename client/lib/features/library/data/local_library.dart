@@ -68,7 +68,33 @@ class LocalLibrary {
 
   /// Takes one picked file. Returns null when it was taken, the message when it was
   /// refused, so the page can show the answer on that file and not add it.
-  String? add({required String name, String? path, Uint8List? bytes}) {
+  ///
+  /// [metadata] is what the caller read from the file. The insertion itself stays synchronous;
+  /// the app reads the tags with [addAsync] so a file on disk never blocks the frame.
+  String? add({
+    required String name,
+    String? path,
+    Uint8List? bytes,
+    LocalAudioMetadata metadata = emptyLocalMetadata,
+  }) {
+    final refusal = _insert(
+      name: name,
+      path: path,
+      bytes: bytes,
+      metadata: metadata,
+    );
+    if (refusal == null) _write();
+    return refusal;
+  }
+
+  /// The validation and the row insertion without the storage write, so a whole folder can be
+  /// inserted first and written once instead of once per song.
+  String? _insert({
+    required String name,
+    String? path,
+    Uint8List? bytes,
+    LocalAudioMetadata metadata = emptyLocalMetadata,
+  }) {
     if (!isAudioFile(name)) {
       return 'nur Audiodateien werden übernommen';
     }
@@ -89,8 +115,8 @@ class LocalLibrary {
     }
 
     // The tags are what the file says about itself. A file with none keeps its name as the
-    // title and the empty values, which the pages show as a dash.
-    final tags = path == null ? emptyLocalMetadata : readLocalMetadata(path);
+    // title and the empty values; the pages show "Unbekannter Künstler" and a placeholder cover.
+    final tags = metadata;
     final nameOnly = name.split(RegExp(r'[/\\]')).last;
     final tagged = tags.title?.trim();
 
@@ -109,8 +135,46 @@ class LocalLibrary {
         cover: tags.cover,
       ),
     );
-    _write();
     return null;
+  }
+
+  /// Reads one file's tags off the UI isolate and then adds it. The UI uses this for a single
+  /// pick; [addAllAsync] is the folder path and reads the whole batch in one isolate.
+  Future<String?> addAsync({
+    required String name,
+    String? path,
+    Uint8List? bytes,
+  }) async {
+    final tags = path == null
+        ? emptyLocalMetadata
+        : await readLocalMetadataAsync(path);
+    return add(name: name, path: path, bytes: bytes, metadata: tags);
+  }
+
+  /// Adds a whole pick in one go. The tags of every path are read in one background isolate
+  /// and then inserted in the picked order; the returned list has one answer per file.
+  Future<List<String?>> addAllAsync(
+    List<({String name, String? path, Uint8List? bytes})> files,
+  ) async {
+    final paths = [
+      for (final file in files)
+        if (file.path != null) file.path!,
+    ];
+    final tags = paths.isEmpty
+        ? const <LocalAudioMetadata>[]
+        : await readLocalMetadataBatch(paths);
+    var tagIndex = 0;
+    final answers = [
+      for (final file in files)
+        _insert(
+          name: file.name,
+          path: file.path,
+          bytes: file.bytes,
+          metadata: file.path == null ? emptyLocalMetadata : tags[tagIndex++],
+        ),
+    ];
+    if (answers.any((answer) => answer == null)) _write();
+    return answers;
   }
 
   /// An MP3 starts with an ID3 tag or with a frame header: eleven set bits.

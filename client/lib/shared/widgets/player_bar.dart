@@ -187,11 +187,6 @@ class _PlayerBarState extends State<PlayerBar> {
                           ),
                         ),
                         IconButton(
-                          tooltip: 'Warteschlange',
-                          onPressed: widget.onQueueOpen,
-                          icon: const Icon(Icons.queue_music),
-                        ),
-                        IconButton(
                           tooltip: playing ? 'Pause' : 'Abspielen',
                           onPressed: _togglePlay,
                           icon: Icon(playing ? Icons.pause : Icons.play_arrow),
@@ -213,7 +208,7 @@ class _PlayerBarState extends State<PlayerBar> {
           );
         }
 
-        final desktop = constraints.maxWidth >= 1200;
+        final roomy = constraints.maxWidth >= 1100;
 
         return Material(
           color: fieldBackground,
@@ -228,12 +223,12 @@ class _PlayerBarState extends State<PlayerBar> {
                 children: [
                   // The song on the left, in the order Spotify's desktop bar has it.
                   SizedBox(
-                    width: desktop ? 300 : 220,
+                    width: roomy ? 300 : 220,
                     child: Row(
                       children: [
                         TrackArt(
                           cover: cover,
-                          size: desktop ? 56 : 48,
+                          size: roomy ? 56 : 48,
                           radius: 4,
                         ),
                         const SizedBox(width: 12),
@@ -383,50 +378,48 @@ class _PlayerBarState extends State<PlayerBar> {
                   ),
                   // Volume, queue and the way to the full player on the right.
                   SizedBox(
-                    width: desktop ? 300 : 96,
+                    width: roomy ? 300 : 220,
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
-                        if (desktop) ...[
-                          IconButton(
-                            tooltip: widget.player.volume == 0
-                                ? 'Ton an'
-                                : 'Stumm',
-                            onPressed: () => widget.player.setVolume(
-                              widget.player.volume == 0
-                                  ? widget.player.volumeBeforeMute
-                                  : 0,
-                            ),
-                            icon: Icon(
-                              widget.player.volume == 0
-                                  ? Icons.volume_off
-                                  : Icons.volume_up,
-                              size: 20,
-                            ),
+                        IconButton(
+                          tooltip: widget.player.volume == 0
+                              ? 'Ton an'
+                              : 'Stumm',
+                          onPressed: () => widget.player.setVolume(
+                            widget.player.volume == 0
+                                ? widget.player.volumeBeforeMute
+                                : 0,
                           ),
-                          SizedBox(
-                            width: 96,
-                            child: SliderTheme(
-                              data: SliderTheme.of(context).copyWith(
-                                trackHeight: 3,
-                                activeTrackColor: accentBright,
-                                inactiveTrackColor: playerBarMuted,
-                                thumbColor: bodyText,
-                                thumbShape: const RoundSliderThumbShape(
-                                  enabledThumbRadius: 4,
-                                ),
-                                overlayShape: const RoundSliderOverlayShape(
-                                  overlayRadius: 10,
-                                ),
+                          icon: Icon(
+                            widget.player.volume == 0
+                                ? Icons.volume_off
+                                : Icons.volume_up,
+                            size: 20,
+                          ),
+                        ),
+                        SizedBox(
+                          width: roomy ? 96 : 64,
+                          child: SliderTheme(
+                            data: SliderTheme.of(context).copyWith(
+                              trackHeight: 3,
+                              activeTrackColor: accentBright,
+                              inactiveTrackColor: playerBarMuted,
+                              thumbColor: bodyText,
+                              thumbShape: const RoundSliderThumbShape(
+                                enabledThumbRadius: 4,
                               ),
-                              child: Slider(
-                                max: 1,
-                                value: widget.player.volume,
-                                onChanged: widget.player.setVolume,
+                              overlayShape: const RoundSliderOverlayShape(
+                                overlayRadius: 10,
                               ),
                             ),
+                            child: Slider(
+                              max: 1,
+                              value: widget.player.volume,
+                              onChanged: widget.player.setVolume,
+                            ),
                           ),
-                        ],
+                        ),
                         IconButton(
                           tooltip: 'Warteschlange',
                           onPressed: widget.onQueueOpen,
