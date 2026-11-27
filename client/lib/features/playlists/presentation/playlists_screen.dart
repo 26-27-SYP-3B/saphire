@@ -7,6 +7,7 @@ import '../../../core/storage/session_store.dart';
 import '../../../core/storage/settings_store.dart';
 import '../../../core/utils/pick_image.dart';
 import '../../../shared/widgets/app_shell.dart';
+import '../../../shared/widgets/track_art.dart';
 import '../../library/data/library_repository.dart';
 import '../../library/data/local_library.dart';
 import '../../library/domain/local_playlist.dart';
@@ -18,9 +19,10 @@ import '../data/cover_store.dart';
 import '../data/playlist_repository.dart';
 import '../domain/playlist.dart';
 
-const _emptyNote = 'Noch keine Playlist. Eine Playlist gehört dir, nicht der geteilten Bibliothek.';
+const _emptyNote =
+    'Noch keine Playlist. Eine Playlist gehört dir, nicht der geteilten Bibliothek.';
 
-/// Playlists: create one with a title and a cover, put songs in it, start it.
+/// Playlists: create one in the sheet Spotify uses, put songs in it, start it or shuffle it.
 ///
 /// Starting a playlist fills the queue from that playlist and plays its first song. The
 /// player only ever reads a queue — so a queue filled from a playlist and a queue filled
@@ -42,6 +44,9 @@ class PlaylistsScreen extends StatefulWidget {
     this.settings,
     this.localLibrary,
     this.covers,
+    this.initialId,
+    this.initialLocalName,
+    this.openCreate = false,
   });
 
   final PlaylistRepository playlists;
@@ -60,13 +65,18 @@ class PlaylistsScreen extends StatefulWidget {
   final LocalLibrary? localLibrary;
   final CoverStore? covers;
 
+  /// A playlist a link picked, or a local one by name. Null opens the list without a detail.
+  final int? initialId;
+  final String? initialLocalName;
+
+  /// A link may ask for the create sheet, which is what the "+" in the sidebar does.
+  final bool openCreate;
+
   @override
   State<PlaylistsScreen> createState() => _PlaylistsScreenState();
 }
 
 class _PlaylistsScreenState extends State<PlaylistsScreen> {
-  final TextEditingController _name = TextEditingController();
-
   List<Playlist> _playlists = [];
   List<Track> _library = [];
   PlaylistWithSongs? _selected;
@@ -82,6 +92,19 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
   String? _note;
   bool _busy = false;
 
+  /// The two fields of the sheets. They live on the page, not in the sheet, because the sheet
+  /// is still built for a few frames while it closes — a controller disposed on close would be
+  /// used after its end.
+  final TextEditingController _createName = TextEditingController();
+  final TextEditingController _songQuery = TextEditingController();
+
+  @override
+  void dispose() {
+    _createName.dispose();
+    _songQuery.dispose();
+    super.dispose();
+  }
+
   late final SettingsStore _settings = widget.settings ?? SettingsStore();
   late final LocalLibrary _local = widget.localLibrary ?? LocalLibrary();
   late final CoverStore _covers = widget.covers ?? CoverStore();
@@ -94,20 +117,25 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
       ? [for (final track in _local.tracks) track.title]
       : [for (final track in _library) track.title];
 
-  String? get _selectedName => _isLocal ? _selectedLocal?.name : _selected?.playlist.name;
+  String? get _selectedName =>
+      _isLocal ? _selectedLocal?.name : _selected?.playlist.name;
 
   /// The rows of the open playlist. A local playlist numbers its songs by their place, a
   /// server playlist by the position the server gave them; both are 1-based and contiguous.
-  List<({int position, String title})> get _selectedSongs {
+  List<({int position, String title, int trackId})> get _selectedSongs {
     if (_isLocal) {
       final playlist = _selectedLocal;
       if (playlist == null) return const [];
       return [
-        for (var i = 0; i < playlist.songs.length; i++) (position: i + 1, title: playlist.songs[i].title),
+        for (var i = 0; i < playlist.songs.length; i++)
+          (position: i + 1, title: playlist.songs[i].title, trackId: -1),
       ];
     }
     final songs = _selected?.songs ?? const <PlaylistSong>[];
-    return [for (final song in songs) (position: song.position, title: song.title)];
+    return [
+      for (final song in songs)
+        (position: song.position, title: song.title, trackId: song.trackId),
+    ];
   }
 
   String? get _selectedCoverKey {
@@ -127,18 +155,19 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
   void initState() {
     super.initState();
     _load();
-  }
-
-  @override
-  void dispose() {
-    _name.dispose();
-    super.dispose();
+    if (widget.openCreate) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _createSheet();
+      });
+    }
   }
 
   Future<void> _load() async {
-    // Local mode has no server to ask. What is on the device is the whole list.
     if (_isLocal) {
-      setState(() => _note = _local.playlists.isEmpty ? _emptyNote : null);
+      setState(() {
+        _note = _local.playlists.isEmpty ? _emptyNote : null;
+        _selectedLocal = _localByName(widget.initialLocalName);
+      });
       return;
     }
 
@@ -151,10 +180,11 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
         _note = playlists.isEmpty ? _emptyNote : null;
         _busy = false;
       });
+      for (final playlist in playlists) {
+        if (playlist.id == widget.initialId) await _open(playlist);
+      }
     } on PlaylistException catch (error) {
       if (!mounted) return;
-      // Only a 401 says this token is gone; a 429 or a 400 is not a lost login. When the
-      // app does drop it, the guard and the page agree on the same session.
       if (error.statusCode == 401) widget.session.clear();
       setState(() {
         _note = error.message;
@@ -162,9 +192,6 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
       });
     }
 
-    // The picker names songs the way the library does, so it needs the whole list once.
-    // A failure here leaves the playlists visible and only the picker empty; it must not
-    // overwrite what the page already said.
     try {
       final library = await widget.library.list();
       if (mounted) setState(() => _library = library);
@@ -173,53 +200,216 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
     }
   }
 
-  Future<void> _create() async {
+  LocalPlaylist? _localByName(String? name) {
+    if (name == null) return null;
+    for (final playlist in _local.playlists) {
+      if (playlist.name == name) return playlist;
+    }
+    return null;
+  }
+
+  /// The create sheet Spotify opens from "+". The cover can be picked before the playlist
+  /// exists; it waits in `_newCover` until the create answered with a name or an id.
+  Future<void> _createSheet() async {
+    _createName.clear();
+    Uint8List? cover;
+    String? error;
+    var sending = false;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheet) => Padding(
+          padding: EdgeInsets.fromLTRB(
+            20,
+            0,
+            20,
+            MediaQuery.viewInsetsOf(context).bottom + 20,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Playlist erstellen',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  _Cover(
+                    cover: cover,
+                    size: 72,
+                    icon: Icons.add_photo_alternate_outlined,
+                    onTap: sending
+                        ? null
+                        : () async {
+                            final picked = await _pickCoverImage();
+                            if (!context.mounted) return;
+                            if (picked.error != null) {
+                              setSheet(() => error = picked.error);
+                              return;
+                            }
+                            if (picked.cover != null) {
+                              setSheet(() => cover = picked.cover);
+                            }
+                          },
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: TextField(
+                      controller: _createName,
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Titel der Playlist',
+                      ),
+                      onSubmitted: sending
+                          ? null
+                          : (_) async {
+                              final message = await _createChecked(
+                                _createName.text,
+                                cover,
+                              );
+                              if (message == null && sheetContext.mounted) {
+                                Navigator.pop(sheetContext);
+                              }
+                              if (message != null) {
+                                setSheet(() => error = message);
+                              }
+                            },
+                    ),
+                  ),
+                ],
+              ),
+              if (error != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
+              const SizedBox(height: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: sending
+                        ? null
+                        : () => Navigator.pop(sheetContext),
+                    child: const Text('Abbrechen'),
+                  ),
+                  const SizedBox(width: 12),
+                  FilledButton(
+                    onPressed: sending
+                        ? null
+                        : () async {
+                            setSheet(() => sending = true);
+                            final message = await _createChecked(
+                              _createName.text,
+                              cover,
+                            );
+                            if (!sheetContext.mounted) return;
+                            if (message == null) {
+                              Navigator.pop(sheetContext);
+                            } else {
+                              setSheet(() {
+                                sending = false;
+                                error = message;
+                              });
+                            }
+                          },
+                    child: const Text('Anlegen'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Creates a playlist and returns the message to show, or null when it worked. The page
+  /// state is set here, so the sheet only has to close on null.
+  Future<String?> _createChecked(String rawName, Uint8List? cover) async {
+    final name = rawName.trim();
     if (_isLocal) {
-      final created = _local.createPlaylist(_name.text);
-      if (created == null) {
-        setState(() => _note = 'Bitte einen Titel eingeben, der noch nicht vergeben ist.');
-        return;
+      if (name.isEmpty ||
+          _local.playlists.any((playlist) => playlist.name == name)) {
+        return 'Bitte einen Titel eingeben, der noch nicht vergeben ist.';
       }
 
+      _newCover = cover;
+      final created = _local.createPlaylist(name);
+      if (created == null) {
+        return 'Bitte einen Titel eingeben, der noch nicht vergeben ist.';
+      }
       final stored = await _takeCover('local:${created.name}');
-      if (!mounted) return;
+      if (!mounted) return null;
       setState(() {
         _selectedLocal = created;
+        _selected = null;
+        _song = -1;
         _note = stored
             ? 'Playlist „${created.name}“ angelegt.'
             : 'Playlist „${created.name}“ angelegt. Das Bild konnte nicht gespeichert werden.';
-        _song = -1;
       });
-      return;
+      return null;
     }
 
     setState(() => _busy = true);
     try {
-      final created = await widget.playlists.create(_name.text);
-      if (!mounted) return;
+      final created = await widget.playlists.create(name);
+      if (!mounted) return null;
+      _newCover = cover;
       final stored = await _takeCover(_serverKey(created.id));
-      if (!mounted) return;
-      // The action keeps its name: what the button says is what happened.
+      if (!mounted) return null;
       setState(() {
         _playlists = [..._playlists, created];
         _selected = PlaylistWithSongs(playlist: created, songs: []);
+        _selectedLocal = null;
+        _song = -1;
+        _busy = false;
         _note = stored
             ? 'Playlist „${created.name}“ angelegt.'
             : 'Playlist „${created.name}“ angelegt. Das Bild konnte nicht gespeichert werden.';
-        _busy = false;
-        _song = -1;
       });
+      return null;
     } on PlaylistException catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _note = error.message;
-        _busy = false;
-      });
+      if (mounted) setState(() => _busy = false);
+      return error.message;
     }
   }
 
-  /// The image picked before the create was for the playlist the create just made, and
-  /// only now is there a key to keep it under. False says the storage refused it.
+  /// Picks and checks a cover for the create sheet. The check is the same one the detail
+  /// cover uses: the picker's filter is an offer, not a check.
+  Future<({Uint8List? cover, String? error})> _pickCoverImage() async {
+    final Uint8List? picked;
+    try {
+      picked = await widget.pickImage();
+    } catch (_) {
+      return (cover: null, error: 'Das Bild konnte nicht gelesen werden.');
+    }
+    if (picked == null) return (cover: null, error: null);
+    if (picked.length > maxCoverBytes) {
+      return (
+        cover: null,
+        error: 'Das Bild ist größer als 1 MB. Bitte ein kleineres wählen.',
+      );
+    }
+    if (!isImage(picked)) {
+      return (
+        cover: null,
+        error: 'Die Datei ist kein Bild (PNG, JPEG, GIF oder WebP).',
+      );
+    }
+    return (cover: picked, error: null);
+  }
+
+  /// The image picked for the playlist that is about to be created only has a key once the
+  /// create answered, so it waits in `_newCover` until then. False says the storage refused it.
   Future<bool> _takeCover(String key) async {
     final cover = _newCover;
     if (cover == null) return true;
@@ -231,38 +421,28 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
   /// A picked image is kept under `key`; the playlist that is still being created has no
   /// key yet, so its image waits in `_newCover` until the create answers.
   Future<void> _pickCover(String? key) async {
-    final Uint8List? picked;
-    try {
-      picked = await widget.pickImage();
-    } catch (_) {
-      if (mounted) setState(() => _note = 'Das Bild konnte nicht gelesen werden.');
+    final picked = await _pickCoverImage();
+    if (!mounted) return;
+    if (picked.error != null) {
+      setState(() => _note = picked.error);
       return;
     }
-    if (picked == null || !mounted) return;
-
-    // Refused rather than cut, so the stored image is the one that was picked.
-    if (picked.length > maxCoverBytes) {
-      setState(() => _note = 'Das Bild ist größer als 1 MB. Bitte ein kleineres wählen.');
-      return;
-    }
-    if (!isImage(picked)) {
-      setState(() => _note = 'Die Datei ist kein Bild (PNG, JPEG, GIF oder WebP).');
-      return;
-    }
+    final cover = picked.cover;
+    if (cover == null) return;
 
     if (key == null) {
       setState(() {
-        _newCover = picked;
+        _newCover = cover;
         _note = null;
       });
       return;
     }
 
-    final stored = await _covers.save(key, picked);
+    final stored = await _covers.save(key, cover);
     if (!mounted) return;
-    setState(() => _note = stored
-        ? null
-        : 'Das Bild konnte nicht gespeichert werden. Es bleibt nur bis zum Neustart sichtbar.');
+    setState(
+      () => _note = stored ? null : 'Das Bild konnte nicht gespeichert werden. Es bleibt nur bis zum Neustart sichtbar.',
+    );
   }
 
   // The list on the left shows how many songs a playlist has. Adding or removing one here
@@ -315,11 +495,20 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
   Future<void> _addSong() async {
     final index = _song;
     if (index < 0 || index >= _songTitles.length) {
-      setState(() => _note = _isLocal
-          ? 'Bitte ein Lied aus der lokalen Bibliothek wählen.'
-          : 'Bitte ein Lied aus der Bibliothek wählen.');
+      setState(
+        () => _note = _isLocal
+            ? 'Bitte ein Lied aus der lokalen Bibliothek wählen.'
+            : 'Bitte ein Lied aus der Bibliothek wählen.',
+      );
       return;
     }
+    await _addSongAt(index);
+  }
+
+  /// Adds the song at [index] of the picker list to the open playlist. Shared by the compact
+  /// dropdown and the "Songs hinzufügen" sheet, so both write the same positions.
+  Future<void> _addSongAt(int index) async {
+    if (index < 0 || index >= _songTitles.length) return;
 
     if (_isLocal) {
       final playlist = _selectedLocal;
@@ -338,15 +527,19 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
 
     setState(() => _busy = true);
     try {
-      final song = await widget.playlists.addSong(detail.playlist.id, _library[index].id);
+      final song = await widget.playlists.addSong(
+        detail.playlist.id,
+        _library[index].id,
+      );
       if (!mounted) return;
-      // The position the server answered with is the one the row shows.
       setState(() {
-        _selected = PlaylistWithSongs(playlist: detail.playlist, songs: [...detail.songs, song]);
+        _selected = PlaylistWithSongs(
+          playlist: detail.playlist,
+          songs: [...detail.songs, song],
+        );
         _note = 'Song an Position ${song.position} eingefügt.';
         _busy = false;
         _song = -1;
-        // The list on the left shows a count; it has to say the same as the rows here.
         _countChanged(detail.playlist.id, detail.songs.length + 1);
       });
     } on PlaylistException catch (error) {
@@ -361,7 +554,11 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
   Future<void> _removeSong(int position) async {
     if (_isLocal) {
       final playlist = _selectedLocal;
-      if (playlist == null || position < 1 || position > playlist.songs.length) return;
+      if (playlist == null ||
+          position < 1 ||
+          position > playlist.songs.length) {
+        return;
+      }
 
       setState(() {
         _local.removeFromPlaylist(playlist, position - 1);
@@ -378,18 +575,23 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
       await widget.playlists.removeSong(detail.playlist.id, position);
       if (!mounted) return;
 
-      // The server renumbers the songs after the removed one, so the rows shift up. The
-      // positions the page shows afterwards are the ones the next read would return.
       final remaining = [
         for (final song in detail.songs)
           if (song.position != position)
             song.position > position
-                ? PlaylistSong(position: song.position - 1, trackId: song.trackId, title: song.title)
+                ? PlaylistSong(
+                    position: song.position - 1,
+                    trackId: song.trackId,
+                    title: song.title,
+                  )
                 : song,
       ];
 
       setState(() {
-        _selected = PlaylistWithSongs(playlist: detail.playlist, songs: remaining);
+        _selected = PlaylistWithSongs(
+          playlist: detail.playlist,
+          songs: remaining,
+        );
         _countChanged(detail.playlist.id, remaining.length);
         _note = 'Position $position entfernt.';
         _busy = false;
@@ -403,7 +605,222 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
     }
   }
 
-  Future<void> _start() async {
+  /// Puts one row of the open playlist into the queue without starting it. A server row is
+  /// appended through the queue endpoint; a device row goes into the stored queue.
+  Future<void> _queueSong(
+    ({int position, String title, int trackId}) song,
+  ) async {
+    if (_isLocal) {
+      final tracks = [
+        for (final track in _local.tracks)
+          if (track.title == song.title) track,
+      ];
+      if (tracks.isEmpty) return;
+      _local.addToQueue(tracks.first);
+      await widget.player.syncLocalQueue(_local.queue);
+      if (mounted) {
+        setState(() => _note = '${song.title} in die Warteschlange gelegt.');
+      }
+      return;
+    }
+
+    setState(() => _busy = true);
+    try {
+      final entry = await widget.queues.append(song.trackId);
+      if (!mounted) return;
+      widget.queue.append(entry.asManual());
+      setState(() {
+        _note = '${song.title} in die Warteschlange gelegt.';
+        _busy = false;
+      });
+    } on QueueException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _note = error.message;
+        _busy = false;
+      });
+    }
+  }
+
+  /// Adds a row of the open playlist to another playlist, which is what the three-dot menu
+  /// offers besides the queue and the removal.
+  Future<void> _copySongTo(
+    ({int position, String title, int trackId}) song,
+  ) async {
+    if (_isLocal) {
+      final targets = [
+        for (final playlist in _local.playlists)
+          if (playlist.name != _selectedLocal?.name) playlist,
+      ];
+      if (targets.isEmpty) {
+        setState(() => _note = 'Es gibt keine andere Playlist.');
+        return;
+      }
+      final picked = await _pickPlaylist(
+        targets.map((playlist) => playlist.name).toList(),
+      );
+      if (picked == null || !mounted) return;
+      final target = targets.firstWhere((playlist) => playlist.name == picked);
+      final track = [
+        for (final track in _local.tracks)
+          if (track.title == song.title) track,
+      ];
+      if (track.isEmpty) return;
+      _local.addToPlaylist(target, track.first);
+      setState(() => _note = 'Song zur Playlist „${target.name}“ hinzugefügt.');
+      return;
+    }
+
+    final targets = [
+      for (final playlist in _playlists)
+        if (playlist.id != _selected?.playlist.id) playlist,
+    ];
+    if (targets.isEmpty) {
+      setState(() => _note = 'Es gibt keine andere Playlist.');
+      return;
+    }
+    final picked = await _pickPlaylist([
+      for (final playlist in targets) playlist.name,
+    ]);
+    if (picked == null || !mounted) return;
+    final target = targets.firstWhere((playlist) => playlist.name == picked);
+
+    setState(() => _busy = true);
+    try {
+      final added = await widget.playlists.addSong(target.id, song.trackId);
+      if (!mounted) return;
+      setState(() {
+        _note =
+            'Song an Position ${added.position} zur Playlist „${target.name}“ hinzugefügt.';
+        _busy = false;
+      });
+    } on PlaylistException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _note = error.message;
+        _busy = false;
+      });
+    }
+  }
+
+  Future<String?> _pickPlaylist(List<String> names) =>
+      showModalBottomSheet<String>(
+        context: context,
+        showDragHandle: true,
+        builder: (context) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Zu Playlist hinzufügen',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+              ),
+              for (final name in names)
+                ListTile(
+                  leading: const TrackArt(size: 40, icon: Icons.queue_music),
+                  title: Text(name),
+                  onTap: () => Navigator.pop(context, name),
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      );
+
+  /// The full picker behind "Songs hinzufügen": a field and the library, so a long playlist
+  /// can be filled without the small dropdown. Picking a row adds it and closes the sheet.
+  Future<void> _addSongSheet() async {
+    _songQuery.clear();
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheet) {
+          final titles = _songTitles;
+          final needle = _songQuery.text.trim().toLowerCase();
+          final matches = [
+            for (var i = 0; i < titles.length; i++)
+              if (titles[i].toLowerCase().contains(needle)) i,
+          ];
+
+          return SizedBox(
+            height: MediaQuery.sizeOf(context).height * 0.7,
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Songs hinzufügen',
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _songQuery,
+                        autofocus: true,
+                        onChanged: (_) => setSheet(() {}),
+                        decoration: const InputDecoration(
+                          hintText: 'Songs suchen',
+                          prefixIcon: Icon(Icons.search),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: matches.isEmpty
+                      ? Center(
+                          child: Text(
+                            titles.isEmpty
+                                ? 'Die Bibliothek ist leer.'
+                                : 'Keine Songs gefunden.',
+                            style: TextStyle(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
+                            ),
+                          ),
+                        )
+                      : ListView.builder(
+                          itemCount: matches.length,
+                          itemBuilder: (context, position) {
+                            final index = matches[position];
+                            return ListTile(
+                              leading: TrackArt(size: 40),
+                              title: Text(
+                                titles[index],
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              trailing: const Icon(Icons.add),
+                              onTap: () async {
+                                await _addSongAt(index);
+                                if (sheetContext.mounted) {
+                                  Navigator.pop(sheetContext);
+                                }
+                              },
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _start({bool shuffle = false}) async {
     if (_isLocal) {
       final playlist = _selectedLocal;
       if (playlist == null) return;
@@ -412,12 +829,10 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
         return;
       }
 
-      // The stored queue is what the bar plays, so it works again after a restart.
       _local.setQueue(playlist.songs, fromName: playlist.name);
+      widget.player.shuffle = shuffle;
       setState(() => _busy = true);
       try {
-        // Starting a playlist fills the queue and plays its first song; the bar is where the
-        // queue shows up now, so there is no page to open.
         await widget.player.playLocalQueue(playlist.songs);
         if (!mounted) return;
         setState(() {
@@ -446,14 +861,12 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
 
     setState(() => _busy = true);
     try {
-      // Starting a playlist means filling the queue from it. The queue does not know it
-      // came from a playlist, so the name has to be said here — it is what the panel shows.
-      final entries = await widget.queues.fill(QueueSource.playlist(detail.playlist.id));
+      final entries = await widget.queues.fill(
+        QueueSource.playlist(detail.playlist.id),
+      );
       if (!mounted) return;
       widget.queue.fill(entries, fromName: detail.playlist.name);
-
-      // The first song is opened as well: the queue itself lives in the bar, so filling it
-      // without playing would look like nothing happened.
+      widget.player.shuffle = shuffle;
       await widget.player.playCurrent();
       if (!mounted) return;
       setState(() => _note = null);
@@ -461,13 +874,13 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
       if (!mounted) return;
       setState(() => _note = error.message);
     } catch (error) {
-      // A song that cannot be opened is not a queue error, so it is reported like the local
-      // branch does.
       if (!mounted) return;
-      setState(() => _note = switch (error) {
-        PlaybackException(:final message) => message,
-        _ => 'Das Lied konnte nicht gespielt werden: $error',
-      });
+      setState(
+        () => _note = switch (error) {
+          PlaybackException(:final message) => message,
+          _ => 'Das Lied konnte nicht gespielt werden: $error',
+        },
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -476,7 +889,6 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
 
     return AppShell(
       selected: '/playlists',
@@ -487,36 +899,32 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
       session: widget.session,
       localMode: _isLocal,
       localLibrary: _local,
+      sidebarPlaylists: _playlists,
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Playlists', style: theme.textTheme.displaySmall),
-            const SizedBox(height: 16),
             Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _Cover(
-                  cover: _newCover,
-                  size: 56,
-                  icon: Icons.add_photo_alternate_outlined,
-                  onTap: _busy ? null : () => _pickCover(null),
-                ),
-                const SizedBox(width: 12),
                 Expanded(
-                  child: TextField(
-                    controller: _name,
-                    decoration: const InputDecoration(labelText: 'Titel der Playlist'),
-                  ),
+                  child: Text('Playlists', style: theme.textTheme.displaySmall),
                 ),
-                const SizedBox(width: 12),
-                FilledButton(onPressed: _busy ? null : _create, child: const Text('Anlegen')),
+                FilledButton.icon(
+                  onPressed: _busy ? null : _createSheet,
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('Playlist erstellen'),
+                ),
               ],
             ),
             if (_note != null) ...[
               const SizedBox(height: 12),
-              Text(_note!, style: theme.textTheme.bodyMedium?.copyWith(color: scheme.error)),
+              Text(
+                _note!,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.error,
+                ),
+              ),
             ],
             const SizedBox(height: 20),
             Expanded(
@@ -560,8 +968,13 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
           final playlist = _local.playlists[index];
 
           return ListTile(
-            leading: _Cover(cover: _covers['local:${playlist.name}'], size: 40),
-            title: Text(playlist.name),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+            leading: _Cover(cover: _covers['local:${playlist.name}'], size: 48),
+            title: Text(
+              playlist.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
             subtitle: Text('${playlist.songs.length} Songs'),
             selected: identical(_selectedLocal, playlist),
             onTap: _busy ? null : () => _openLocal(playlist),
@@ -577,8 +990,13 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
         final selected = _selected?.playlist.id == playlist.id;
 
         return ListTile(
-          leading: _Cover(cover: _covers[_serverKey(playlist.id)], size: 40),
-          title: Text(playlist.name),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+          leading: _Cover(cover: _covers[_serverKey(playlist.id)], size: 48),
+          title: Text(
+            playlist.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
           subtitle: Text('${playlist.songCount} Songs'),
           selected: selected,
           onTap: _busy ? null : () => _open(playlist),
@@ -590,50 +1008,99 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
   Widget _detail(ThemeData theme) {
     final name = _selectedName;
     if (name == null) {
-      return Text('Eine Playlist auswählen, um ihre Songs zu sehen.', style: theme.textTheme.bodyMedium);
+      return Align(
+        alignment: Alignment.topLeft,
+        child: Text(
+          'Eine Playlist auswählen, um ihre Songs zu sehen.',
+          style: theme.textTheme.bodyMedium,
+        ),
+      );
     }
 
     final songs = _selectedSongs;
     final titles = _songTitles;
-    // A selected playlist always has a cover key: it is made from its name or its id.
     final coverKey = _selectedCoverKey!;
+    // A phone's detail pane is short: a smaller cover leaves room for the controls and the
+    // first songs without the pane overflowing.
+    final compact = MediaQuery.sizeOf(context).width < 640;
 
-    final info = Row(
+    final header = Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
       children: [
         _Cover(
           cover: _covers[coverKey],
-          size: 96,
+          size: compact ? 96 : 140,
+          radius: 8,
           onTap: _busy ? null : () => _pickCover(coverKey),
         ),
-        const SizedBox(width: 16),
+        const SizedBox(width: 20),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(name, style: theme.textTheme.titleMedium),
-              const SizedBox(height: 4),
-              Text('${songs.length} Songs', style: theme.textTheme.bodyMedium),
+              Text(
+                'PLAYLIST',
+                style: theme.textTheme.labelSmall?.copyWith(letterSpacing: 1.2),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                name,
+                style: theme.textTheme.displaySmall,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '${songs.length} Songs',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  FilledButton.icon(
+                    onPressed: _busy ? null : () => _start(),
+                    icon: const Icon(Icons.play_arrow),
+                    label: const Text('Playlist starten'),
+                  ),
+                  IconButton.filledTonal(
+                    tooltip: 'Zufällige Wiedergabe',
+                    onPressed: _busy ? null : () => _start(shuffle: true),
+                    icon: const Icon(Icons.shuffle),
+                  ),
+                ],
+              ),
             ],
           ),
         ),
       ],
     );
-    final start = FilledButton(onPressed: _busy ? null : _start, child: const Text('Playlist starten'));
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return ListView(
+      padding: EdgeInsets.zero,
       children: [
-        // The button goes under the title when the width is a phone's, instead of
-        // squeezing the title to nothing beside it.
-        LayoutBuilder(
-          builder: (context, constraints) => constraints.maxWidth < 520
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [info, const SizedBox(height: 12), start],
-                )
-              : Row(children: [Expanded(child: info), start]),
+        header,
+        const SizedBox(height: 20),
+        Row(
+          children: [
+            OutlinedButton.icon(
+              onPressed: _busy ? null : _addSongSheet,
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Songs hinzufügen'),
+            ),
+            const Spacer(),
+            IconButton(
+              tooltip: 'Playlist-Cover ändern',
+              onPressed: _busy ? null : () => _pickCover(coverKey),
+              icon: const Icon(Icons.add_photo_alternate_outlined),
+            ),
+          ],
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         Row(
           children: [
             Expanded(
@@ -642,38 +1109,76 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
                 value: _song >= 0 && _song < titles.length ? _song : null,
                 hint: Text(
                   titles.isEmpty
-                      ? (_isLocal ? 'Keine Lieder auf dem Gerät' : 'Die Bibliothek ist leer')
-                      : (_isLocal ? 'Lied aus der lokalen Bibliothek wählen' : 'Lied aus der Bibliothek wählen'),
+                      ? (_isLocal
+                            ? 'Keine Lieder auf dem Gerät'
+                            : 'Die Bibliothek ist leer')
+                      : (_isLocal
+                            ? 'Lied aus der lokalen Bibliothek wählen'
+                            : 'Lied aus der Bibliothek wählen'),
                 ),
                 items: [
-                  for (var i = 0; i < titles.length; i++) DropdownMenuItem(value: i, child: Text(titles[i])),
+                  for (var i = 0; i < titles.length; i++)
+                    DropdownMenuItem(
+                      value: i,
+                      child: Text(titles[i], overflow: TextOverflow.ellipsis),
+                    ),
                 ],
-                onChanged: _busy || titles.isEmpty ? null : (value) => setState(() => _song = value ?? -1),
+                onChanged: _busy || titles.isEmpty
+                    ? null
+                    : (value) => setState(() => _song = value ?? -1),
               ),
             ),
             const SizedBox(width: 12),
-            FilledButton.tonal(onPressed: _busy ? null : _addSong, child: const Text('Hinzufügen')),
+            FilledButton.tonal(
+              onPressed: _busy ? null : _addSong,
+              child: const Text('Hinzufügen'),
+            ),
           ],
         ),
         const SizedBox(height: 12),
-        Expanded(
-          child: songs.isEmpty
-              ? Text('Noch keine Songs. Oben ein Lied wählen und hinzufügen.', style: theme.textTheme.bodyMedium)
-              : ListView.builder(
-                  itemCount: songs.length,
-                  itemBuilder: (context, index) {
-                    final song = songs[index];
-                    return ListTile(
-                      leading: Text('${song.position}'),
-                      title: Text(song.title),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: _busy ? null : () => _removeSong(song.position),
-                      ),
-                    );
-                  },
-                ),
-        ),
+        if (songs.isEmpty)
+          Align(
+            alignment: Alignment.topLeft,
+            child: Text(
+              'Noch keine Songs. Oben ein Lied wählen und hinzufügen.',
+              style: theme.textTheme.bodyMedium,
+            ),
+          )
+        else
+          for (final song in songs)
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+              leading: Text('${song.position}'),
+              title: Text(
+                song.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing: PopupMenuButton<String>(
+                tooltip: 'Aktionen für ${song.title}',
+                onSelected: (value) {
+                  if (value == 'queue') {
+                    _queueSong(song);
+                  } else if (value == 'copy') {
+                    _copySongTo(song);
+                  } else {
+                    _removeSong(song.position);
+                  }
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(
+                    value: 'queue',
+                    child: Text('Zur Warteschlange hinzufügen'),
+                  ),
+                  PopupMenuItem(
+                    value: 'copy',
+                    child: Text('Zu Playlist hinzufügen'),
+                  ),
+                  PopupMenuItem(value: 'remove', child: Text('Entfernen')),
+                ],
+              ),
+            ),
+        const SizedBox(height: 24),
       ],
     );
   }
@@ -681,12 +1186,19 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
 
 /// A playlist cover: the picked image, or a mark for the one that is still missing.
 class _Cover extends StatelessWidget {
-  const _Cover({required this.cover, required this.size, this.icon = Icons.album, this.onTap});
+  const _Cover({
+    required this.cover,
+    required this.size,
+    this.icon = Icons.album,
+    this.onTap,
+    this.radius = 6,
+  });
 
   final Uint8List? cover;
   final double size;
   final IconData icon;
   final VoidCallback? onTap;
+  final double radius;
 
   @override
   Widget build(BuildContext context) {
@@ -694,9 +1206,9 @@ class _Cover extends StatelessWidget {
 
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(radius),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(radius),
         child: Container(
           width: size,
           height: size,
@@ -706,11 +1218,13 @@ class _Cover extends StatelessWidget {
               : Image.memory(
                   cover!,
                   fit: BoxFit.cover,
-                  // A full photo would be decoded at its own size for a thumbnail.
-                  cacheWidth: (size * MediaQuery.devicePixelRatioOf(context)).round(),
-                  // A stored cover that cannot be read shows the mark, not an exception.
-                  errorBuilder: (context, error, stack) =>
-                      Icon(icon, size: size / 2, color: scheme.onSurfaceVariant),
+                  cacheWidth: (size * MediaQuery.devicePixelRatioOf(context))
+                      .round(),
+                  errorBuilder: (context, error, stack) => Icon(
+                    icon,
+                    size: size / 2,
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
         ),
       ),

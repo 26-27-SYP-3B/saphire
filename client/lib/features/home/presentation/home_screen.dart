@@ -16,6 +16,7 @@ import '../../player/data/queue_repository.dart';
 import '../../player/domain/player.dart';
 import '../../player/domain/queue.dart';
 import '../../playlists/data/playlist_repository.dart';
+import '../../playlists/domain/playlist.dart';
 import '../../upload/data/upload_repository.dart';
 import '../../upload/domain/track.dart';
 
@@ -97,6 +98,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final List<_UploadFile> _files = [];
   List<Track> _library = [];
+  List<Playlist> _playlists = [];
   final TextEditingController _search = TextEditingController();
 
   late final SettingsStore _settings = widget.settings ?? SettingsStore();
@@ -127,6 +129,9 @@ class _HomeScreenState extends State<HomeScreen> {
       // The search has nothing to filter until the library is here, so it is read once
       // when the page opens rather than on every keystroke.
       _loadLibrary();
+      // The desktop sidebar lists the playlists. A read that fails only leaves that list
+      // short; it is not a message the start page has to show.
+      _loadSidebarPlaylists();
     }
   }
 
@@ -148,6 +153,15 @@ class _HomeScreenState extends State<HomeScreen> {
       // the router guard and the page then agree on the same session.
       widget.repository.logout();
       setState(() => _note = error.message);
+    }
+  }
+
+  Future<void> _loadSidebarPlaylists() async {
+    try {
+      final playlists = await widget.playlists.list();
+      if (mounted) setState(() => _playlists = playlists);
+    } on PlaylistException {
+      // Only the sidebar shortcut is missing; the page itself still works.
     }
   }
 
@@ -195,7 +209,9 @@ class _HomeScreenState extends State<HomeScreen> {
           // The percent is what Dio reports while this file is written; the server
           // answers after it has read and checked it.
           onProgress: (sent, total) {
-            if (mounted && total > 0) setState(() => row.percent = (sent * 100 / total).round());
+            if (mounted && total > 0) {
+              setState(() => row.percent = (sent * 100 / total).round());
+            }
           },
         );
         if (mounted) {
@@ -204,7 +220,9 @@ class _HomeScreenState extends State<HomeScreen> {
             // The search filters the list that was read when the page opened; a song uploaded
             // now has to be in it too, or the page hides what it just showed. A list read
             // while the upload was in flight may already hold it.
-            if (!_library.any((entry) => entry.id == track.id)) _library.add(track);
+            if (!_library.any((entry) => entry.id == track.id)) {
+              _library.add(track);
+            }
           });
         }
       } on UploadException catch (error) {
@@ -232,9 +250,11 @@ class _HomeScreenState extends State<HomeScreen> {
       // storage access for most folders, and saying so beats "no songs in here"; picking one file
       // at a time is what works there.
       if (mounted) {
-        setState(() => _note = folder
-            ? 'Dieser Ordner konnte nicht gelesen werden. Wähle die Songs stattdessen einzeln aus.'
-            : 'Die Dateien konnten nicht gelesen werden. Versuch es erneut.');
+        setState(
+          () => _note = folder
+              ? 'Dieser Ordner konnte nicht gelesen werden. Wähle die Songs stattdessen einzeln aus.'
+              : 'Die Dateien konnten nicht gelesen werden. Versuch es erneut.',
+        );
       }
       return;
     } finally {
@@ -243,13 +263,19 @@ class _HomeScreenState extends State<HomeScreen> {
     if (picked == null || !mounted) return;
 
     if (picked.isEmpty) {
-      if (folder) setState(() => _note = 'In diesem Ordner sind keine Audiodateien.');
+      if (folder) {
+        setState(() => _note = 'In diesem Ordner sind keine Audiodateien.');
+      }
       return;
     }
 
     setState(() {
       for (final file in picked!) {
-        final refused = _local.add(name: file.name, path: file.path, bytes: file.bytes);
+        final refused = _local.add(
+          name: file.name,
+          path: file.path,
+          bytes: file.bytes,
+        );
         // The message names the file, so with a batch it is clear which one was refused.
         if (refused != null) _note = '${file.name}: $refused';
       }
@@ -278,14 +304,20 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Track> _results() {
     final query = _search.text.trim().toLowerCase();
     if (query.isEmpty) return const [];
-    return [for (final entry in _library) if (_matches(entry.title)) entry];
+    return [
+      for (final entry in _library)
+        if (_matches(entry.title)) entry,
+    ];
   }
 
   /// The same search over the songs on this device, so a phone without a server can search too.
   List<LocalTrack> _localResults() {
     final query = _search.text.trim().toLowerCase();
     if (query.isEmpty) return const [];
-    return [for (final track in _local.tracks) if (_matches(track.title)) track];
+    return [
+      for (final track in _local.tracks)
+        if (_matches(track.title)) track,
+    ];
   }
 
   /// One action on the shared player at a time. The page rebuilds after every one of them:
@@ -318,13 +350,16 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Playlists page starts a playlist. The player only ever reads a queue, so a song picked
   /// here and a song from a playlist play exactly the same way.
   Future<void> _play(Track entry) => _control(() async {
-    widget.player.queue.fill(await widget.queues.fill(QueueSource.track(entry.id)));
+    widget.player.queue.fill(
+      await widget.queues.fill(QueueSource.track(entry.id)),
+    );
     await widget.player.playCurrent();
   });
 
   /// A local song plays straight from the device: no queue call and no token, so it works
   /// with no server and no account.
-  Future<void> _playLocal(LocalTrack track) => _control(() => widget.player.playLocal(track));
+  Future<void> _playLocal(LocalTrack track) =>
+      _control(() => widget.player.playLocal(track));
 
   /// Long-pressing a local card puts the song into the local queue. The queue in the bar
   /// then plays the list in order, still without a server.
@@ -354,6 +389,7 @@ class _HomeScreenState extends State<HomeScreen> {
       session: widget.session,
       localMode: _settings.localMode,
       localLibrary: _local,
+      sidebarPlaylists: _playlists,
       child: Column(
         children: [
           _topBar(),
@@ -388,20 +424,29 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           IconButton(
                             tooltip: 'Ordner auswählen',
-                            onPressed: _picking ? null : () => _addLocal(folder: true),
-                            icon: Icon(Icons.create_new_folder, color: scheme.primary),
+                            onPressed: _picking
+                                ? null
+                                : () => _addLocal(folder: true),
+                            icon: Icon(
+                              Icons.create_new_folder,
+                              color: scheme.primary,
+                            ),
                           ),
                         ],
                       ),
                     ),
                     Text(
                       _localHint,
-                      style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                     const SizedBox(height: 12),
                     // A song on this device is found by the same field as one on the server, so
                     // the search works on a phone without a server too.
-                    _row([for (final track in _local.tracks) _localCard(track)]),
+                    _row([
+                      for (final track in _local.tracks) _localCard(track),
+                    ]),
                   ],
                   // Local mode has no server to upload to, so only the songs on
                   // this device are shown.
@@ -416,11 +461,16 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     Text(
                       _uploadHint,
-                      style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                     const SizedBox(height: 12),
                     _row([
-                      for (final file in _files.where((file) => _matches(_title(file)))) _fileCard(file),
+                      for (final file in _files.where(
+                        (file) => _matches(_title(file)),
+                      ))
+                        _fileCard(file),
                     ]),
                   ],
                 ],
@@ -456,7 +506,9 @@ class _HomeScreenState extends State<HomeScreen> {
             child: TextField(
               controller: _search,
               onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(hintText: 'Was möchtest du wiedergeben?'),
+              decoration: const InputDecoration(
+                hintText: 'Was möchtest du wiedergeben?',
+              ),
             ),
           ),
           const SizedBox(width: 16),
@@ -485,9 +537,15 @@ class _HomeScreenState extends State<HomeScreen> {
               context.go('/login');
             },
             itemBuilder: (context) => [
-              const PopupMenuItem(value: 'settings', child: Text('Einstellungen')),
+              const PopupMenuItem(
+                value: 'settings',
+                child: Text('Einstellungen'),
+              ),
               if (_settings.localMode)
-                const PopupMenuItem(value: 'connect', child: Text('Mit Server verbinden'))
+                const PopupMenuItem(
+                  value: 'connect',
+                  child: Text('Mit Server verbinden'),
+                )
               else
                 const PopupMenuItem(value: 'logout', child: Text('Abmelden')),
             ],
@@ -501,7 +559,9 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               child: Text(
                 name == null ? '?' : name.substring(0, 1).toUpperCase(),
-                style: theme.textTheme.labelLarge?.copyWith(color: scheme.onPrimary),
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: scheme.onPrimary,
+                ),
               ),
             ),
           ),
@@ -534,7 +594,9 @@ class _HomeScreenState extends State<HomeScreen> {
         const SizedBox(height: 6),
         Text(
           'Hier sind deine Highlights für heute.',
-          style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
         ),
       ],
     );
@@ -547,7 +609,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final theme = Theme.of(context);
     final phone = MediaQuery.sizeOf(context).width < AppShell.wideAt;
     final label = Expanded(
-      child: Text(title, style: theme.textTheme.titleLarge, maxLines: 1, overflow: TextOverflow.ellipsis),
+      child: Text(
+        title,
+        style: theme.textTheme.titleLarge,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
     );
 
     return Padding(
@@ -576,7 +643,10 @@ class _HomeScreenState extends State<HomeScreen> {
         return Wrap(
           spacing: 12,
           runSpacing: 12,
-          children: [for (final card in cards) SizedBox(width: width, height: 186, child: card)],
+          children: [
+            for (final card in cards)
+              SizedBox(width: width, height: 186, child: card),
+          ],
         );
       },
     );
@@ -607,7 +677,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
-                  colors: [scheme.primary.withValues(alpha: 0.35), scheme.surface],
+                  colors: [
+                    scheme.primary.withValues(alpha: 0.35),
+                    scheme.surface,
+                  ],
                 ),
                 borderRadius: BorderRadius.circular(8),
               ),
@@ -625,7 +698,9 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             Text(
               item.meta,
-              style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -641,7 +716,11 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _songCard(Track entry) {
     return InkWell(
       onTap: _busy ? null : () => _play(entry),
-      child: _card((title: entry.title, meta: 'Bibliothek', icon: Icons.audio_file)),
+      child: _card((
+        title: entry.title,
+        meta: 'Bibliothek',
+        icon: Icons.audio_file,
+      )),
     );
   }
 
@@ -674,7 +753,10 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(failed ? Icons.error : Icons.audio_file, color: failed ? scheme.error : scheme.primary),
+            Icon(
+              failed ? Icons.error : Icons.audio_file,
+              color: failed ? scheme.error : scheme.primary,
+            ),
             const Spacer(),
             Text(
               _title(file),
@@ -685,7 +767,9 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 6),
             Text(
               _result(file),
-              style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
@@ -701,8 +785,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   String _size(int bytes) {
-    return bytes >= 1000000 ? '${(bytes / 1000000).toStringAsFixed(1)} MB' : '${(bytes / 1000).round()} kB';
+    return bytes >= 1000000
+        ? '${(bytes / 1000000).toStringAsFixed(1)} MB'
+        : '${(bytes / 1000).round()} kB';
   }
 }
-
-

@@ -113,13 +113,16 @@ void main() {
     );
     await tester.pump();
 
+    // The desktop bar shows the two clocks on either side of the progress bar, the way
+    // Spotify does, instead of one combined label.
     audio.at(const Duration(seconds: 10));
     await tester.pumpAndSettle();
-    expect(find.text('0:10 / 0:30'), findsOneWidget);
+    expect(find.text('0:10'), findsOneWidget);
+    expect(find.text('0:30'), findsOneWidget);
 
     audio.at(const Duration(seconds: 11));
     await tester.pumpAndSettle();
-    expect(find.text('0:11 / 0:30'), findsOneWidget);
+    expect(find.text('0:11'), findsOneWidget);
   });
 
   // A 320 dp phone is the narrowest shape the transport has to fit. The queue button and the
@@ -273,7 +276,7 @@ void main() {
     await tester.tap(find.byTooltip('Warteschlange'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Warteschlange'), findsOneWidget);
+    expect(find.text('Warteschlange'), findsWidgets);
     expect(find.text('0 Titel'), findsOneWidget);
 
     // The full panel is one tap away, but the song keeps playing in this view.

@@ -602,8 +602,9 @@ void main() {
     expect(tester.getRect(row).bottom, closeTo(900, 1));
     expect(tester.getRect(row).top, greaterThanOrEqualTo(tester.getRect(find.byType(PlayerBar)).bottom));
 
-    // A label with no screen behind it is not on a row a person is trying to reach with one thumb.
-    expect(find.text('Suche'), findsNothing);
+    // The three destinations of the phone navigation are real screens, so all three are
+    // on the row; the labels without a screen (Alben, Künstler*innen) are not.
+    expect(find.text('Suche'), findsOneWidget);
     expect(find.text('Alben'), findsNothing);
     expect(find.text('Künstler*innen'), findsNothing);
 
