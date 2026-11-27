@@ -401,8 +401,8 @@ void main() {
     expect(find.text('solo.mp3'), findsOneWidget);
 
     // Nothing is current until the player starts one: the server keeps the order, the device
-    // decides what it plays. So there is no "Läuft gerade" section yet.
-    expect(find.text('Läuft gerade'), findsNothing);
+    // decides what it plays. So there is no "Wird gerade gespielt" section yet.
+    expect(find.text('Wird gerade gespielt'), findsNothing);
 
     // The panel only reads: opening it is the documented GET /api/queue.
     expect(adapter.requests.first.uri.path, '/api/queue');
@@ -431,7 +431,7 @@ void main() {
 
     expect(audio.opened, ['$apiBaseUrl/api/music/4']);
     expect(wiring.queue.current?.trackId, 4);
-    expect(find.text('Läuft gerade'), findsOneWidget);
+    expect(find.text('Wird gerade gespielt'), findsOneWidget);
 
     audio.complete();
     await tester.pumpAndSettle();
@@ -649,7 +649,7 @@ void main() {
       },
     );
 
-    await tester.tap(find.descendant(of: row(tester, 'Läuft gerade · Position 4'), matching: find.byType(PopupMenuButton<String>)));
+    await tester.tap(find.descendant(of: row(tester, 'Wird gerade gespielt · Position 4'), matching: find.byType(PopupMenuButton<String>)));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Aus Warteschlange entfernen'));
     await tester.pumpAndSettle();
@@ -658,6 +658,85 @@ void main() {
     expect(adapter.lastOptions?.uri.path, '/api/queue/4');
     expect(find.text('Position 4 entfernt.'), findsOneWidget);
     expect(wiring.queue.entries.map((entry) => entry.trackId), [8, 4, 7]);
+  });
+
+  // The same song can be in the queue more than once. Opening the panel must keep the copy
+  // this device is at, not jump to the last copy of the same track.
+  testWidgets('a read keeps the row this device is at, not the last copy of the same song', (tester) async {
+    const twice = [
+      ...queueAnswer,
+      {'position': 4.0, 'track_id': 8.0, 'title': 'Technogal.mp3'},
+    ];
+
+    final wiring = await openQueue(
+      tester,
+      queues: StubAdapter(200, twice),
+      prep: (wiring) async {
+        wiring.queue.fill(mirror(twice));
+        wiring.queue.index = 0;
+      },
+    );
+
+    expect(wiring.queue.current?.position, 1);
+  });
+
+  // "Als Nächstes abspielen" moves a row to the slot directly behind the playing one. A row
+  // that is in front of it must land there too, not one slot later.
+  testWidgets('a row in front of the current song is moved directly behind it', (tester) async {
+    final audio = FakePlayer();
+    addTearDown(audio.dispose);
+
+    final wiring = await openQueue(
+      tester,
+      queues: StubAdapter(200, queueAnswer),
+      audio: audio,
+      prep: (wiring) async {
+        wiring.queue.fill(mirror(queueAnswer));
+        wiring.queue.index = 1;
+        await wiring.player.playCurrent();
+      },
+    );
+
+    await tester.tap(menu(tester, 'Technogal.mp3'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Als Nächstes abspielen'));
+    await tester.pumpAndSettle();
+
+    expect(wiring.queue.entries.map((entry) => entry.trackId), [4, 8, 7]);
+  });
+
+  // A paused row is still the row the player has open. Removing it must stop that audio,
+  // not leave a song loaded that the next play would resume under a different title.
+  testWidgets('removing the paused current song stops the audio', (tester) async {
+    final audio = FakePlayer();
+    addTearDown(audio.dispose);
+
+    final queues = StubAdapter(204, const {});
+    queues.queue.add((200, queueAnswer));
+
+    final wiring = await openQueue(
+      tester,
+      queues: queues,
+      audio: audio,
+      prep: (wiring) async {
+        wiring.queue.fill(mirror(queueAnswer));
+        await wiring.player.playCurrent();
+        await wiring.player.pause();
+      },
+    );
+
+    await tester.tap(
+      find.descendant(
+        of: row(tester, 'Wird gerade gespielt · Position 1'),
+        matching: find.byType(PopupMenuButton<String>),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Aus Warteschlange entfernen'));
+    await tester.pumpAndSettle();
+
+    expect(audio.stopped, isNotEmpty);
+    expect(wiring.queue.current, isNull);
   });
 
   // A queue without rows is not an empty screen; it says what would fill it. The add tab the
@@ -829,7 +908,7 @@ void main() {
     );
 
     expect(wiring.queue.current?.trackId, 8);
-    expect(find.text('Läuft gerade'), findsOneWidget);
+    expect(find.text('Wird gerade gespielt'), findsOneWidget);
   });
 
   // What a device is playing is its own, the server does not know it. A read may not lose it: the
@@ -854,7 +933,7 @@ void main() {
     // The same song, only at another slot: a read keeps what this device is playing.
     expect(wiring.queue.current?.trackId, 8);
     expect(audio.stopped, isEmpty);
-    expect(find.text('Läuft gerade'), findsOneWidget);
+    expect(find.text('Wird gerade gespielt'), findsOneWidget);
   });
 
   // A song that is no longer in the list cannot be the current row. Then the audio stops with it,

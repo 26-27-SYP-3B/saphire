@@ -122,7 +122,8 @@ class _QueuePanelState extends State<QueuePanel> {
 
   /// Which list the queue came from. Neither answer names its source, so only what was passed in
   /// when it was filled is known.
-  String? _origin() => widget.localMode ? _local.queueOrigin : widget.queue.filledFrom;
+  String? _origin() =>
+      widget.localMode ? _local.queueOrigin : widget.queue.filledFrom;
 
   /// Reads the queue. On the server this is the list another device may have changed since the
   /// last look. On this device there is nothing to fetch: the rows are built from the stored
@@ -148,12 +149,33 @@ class _QueuePanelState extends State<QueuePanel> {
 
       // A queue answer names no source, so the only thing a refresh can keep is what this panel
       // already knew. Rows it did not see before cannot be told apart.
-      final known = {for (final entry in widget.queue.entries) if (entry.manual) entry.trackId};
+      final known = {
+        for (final entry in widget.queue.entries)
+          if (entry.manual) entry.trackId,
+      };
 
+      // The same song can be in the queue twice. The slot this device is at is the one with
+      // the same number when the list did not change; otherwise the first copy is the
+      // honest guess. Taking the last match would jump to another row of the same song.
       var keep = -1;
       for (var i = 0; i < entries.length; i++) {
-        if (current != null && entries[i].trackId == current.trackId) keep = i;
-        if (known.contains(entries[i].trackId)) entries[i] = entries[i].asManual();
+        if (current != null && entries[i].trackId == current.trackId) {
+          if (keep < 0) keep = i;
+          if (entries[i].position == current.position) {
+            keep = i;
+            break;
+          }
+        }
+        if (known.contains(entries[i].trackId)) {
+          entries[i] = entries[i].asManual();
+        }
+      }
+      // The manual marks must be applied to the rows after the search, not only up to the
+      // matched slot.
+      for (var i = 0; i < entries.length; i++) {
+        if (known.contains(entries[i].trackId)) {
+          entries[i] = entries[i].asManual();
+        }
       }
 
       setState(() {
@@ -163,7 +185,9 @@ class _QueuePanelState extends State<QueuePanel> {
         _busy = false;
       });
 
-      if (current != null && keep < 0) await widget.player.stop();
+      if (current != null && current.local == null && keep < 0) {
+        await widget.player.stop();
+      }
     } on QueueException catch (error) {
       if (!mounted) return;
       _report(error.message, error.statusCode);
@@ -192,10 +216,14 @@ class _QueuePanelState extends State<QueuePanel> {
       final origin = _local.queueOrigin;
       for (final playlist in _local.playlists) {
         if (playlist.name == origin) {
-          return _offer([for (final track in playlist.songs) QueueEntry.fromLocal(0, track)]);
+          return _offer([
+            for (final track in playlist.songs) QueueEntry.fromLocal(0, track),
+          ]);
         }
       }
-      return _offer([for (final track in _local.tracks) QueueEntry.fromLocal(0, track)]);
+      return _offer([
+        for (final track in _local.tracks) QueueEntry.fromLocal(0, track),
+      ]);
     }
 
     try {
@@ -209,13 +237,17 @@ class _QueuePanelState extends State<QueuePanel> {
         final songs = (await widget.playlists.get(playing.id)).songs;
         if (!mounted) return;
         return _offer([
-          for (final song in songs) QueueEntry(position: 0, trackId: song.trackId, title: song.title),
+          for (final song in songs)
+            QueueEntry(position: 0, trackId: song.trackId, title: song.title),
         ]);
       }
 
       final tracks = await widget.library.list();
       if (!mounted) return;
-      _offer([for (final track in tracks) QueueEntry(position: 0, trackId: track.id, title: track.title)]);
+      _offer([
+        for (final track in tracks)
+          QueueEntry(position: 0, trackId: track.id, title: track.title),
+      ]);
     } catch (_) {
       // A suggestion that cannot be read is not a queue that cannot be read: the queue reports
       // its own errors, and the panel stays usable without anything to suggest.
@@ -234,7 +266,10 @@ class _QueuePanelState extends State<QueuePanel> {
   List<QueueEntry> _suggestions() {
     final query = _query.text.trim().toLowerCase();
     if (query.isEmpty) return _top;
-    return [for (final entry in _pool) if (entry.title.toLowerCase().contains(query)) entry];
+    return [
+      for (final entry in _pool)
+        if (entry.title.toLowerCase().contains(query)) entry,
+    ];
   }
 
   /// Only a 401 says this token is gone; a 429 or a 400 is not a lost login. When the app does
@@ -257,7 +292,9 @@ class _QueuePanelState extends State<QueuePanel> {
       if (entry.local != null) {
         // A stored queue and the stored library are read separately, so the same file is not the
         // same object after a restart: its path is what says it is the same song.
-        if (identical(row.local, entry.local) || (entry.local!.path != null && row.local?.path == entry.local!.path)) {
+        if (identical(row.local, entry.local) ||
+            (entry.local!.path != null &&
+                row.local?.path == entry.local!.path)) {
           return row;
         }
       } else if (row.trackId == entry.trackId) {
@@ -278,7 +315,11 @@ class _QueuePanelState extends State<QueuePanel> {
       // A song on this device has no id the server could know, so its row can only be in the
       // queue stored here — even when the queue shown on the page is the server's.
       _local.addToQueue(track);
-      final row = QueueEntry.fromLocal(_local.queue.length, track, manual: true);
+      final row = QueueEntry.fromLocal(
+        _local.queue.length,
+        track,
+        manual: true,
+      );
       widget.queue.append(row);
       return row;
     }
@@ -296,13 +337,14 @@ class _QueuePanelState extends State<QueuePanel> {
   /// touches the store has to come through here, or the page keeps showing rows the store no
   /// longer has.
   void _fillFromLocal() {
-    widget.queue.fill(
-      [
-        for (var i = 0; i < _local.queue.length; i++)
-          QueueEntry.fromLocal(i + 1, _local.queue[i], manual: _local.handAdded.contains(_local.queue[i])),
-      ],
-      fromName: _local.queueOrigin,
-    );
+    widget.queue.fill([
+      for (var i = 0; i < _local.queue.length; i++)
+        QueueEntry.fromLocal(
+          i + 1,
+          _local.queue[i],
+          manual: _local.handAdded.contains(_local.queue[i]),
+        ),
+    ], fromName: _local.queueOrigin);
   }
 
   /// Puts the player's list in step with the stored queue, so the row shown here is the row that
@@ -315,7 +357,11 @@ class _QueuePanelState extends State<QueuePanel> {
     // comes from where the player is, because the audio and the page cannot disagree about what
     // is playing.
     final playing = widget.player.localCurrent;
-    widget.queue.index = playing == null ? -1 : widget.queue.entries.indexWhere((row) => identical(row.local, playing));
+    widget.queue.index = playing == null
+        ? -1
+        : widget.queue.entries.indexWhere(
+            (row) => identical(row.local, playing),
+          );
   }
 
   /// Plays a row. The queue goes on from that song, which is what clicking a row in a queue
@@ -368,6 +414,21 @@ class _QueuePanelState extends State<QueuePanel> {
     final wasPlaying = identical(row, widget.queue.current);
     widget.queue.removeAt(row.position);
 
+    // A row that is a file on this device has no slot on the server. Deleting its mirror
+    // position there would remove a different song, so it is taken out of the device queue
+    // only.
+    if (row.local != null && !widget.localMode) {
+      final at = _local.queue.indexOf(row.local!);
+      if (at >= 0) _local.removeFromQueue(at);
+      await widget.player.removeLocal(row.local!);
+      if (!mounted) return;
+      setState(() {
+        _note = 'Position ${row.position} entfernt.';
+        _busy = false;
+      });
+      return;
+    }
+
     if (widget.localMode) {
       _local.removeFromQueue(row.position - 1);
 
@@ -392,10 +453,18 @@ class _QueuePanelState extends State<QueuePanel> {
         _busy = false;
       });
 
-      if (wasPlaying && widget.player.playing) {
+      if (wasPlaying) {
+        // A paused row is still the source the player has open. Stopping it here is what
+        // makes the next play start a row of the queue instead of resuming the removed song
+        // under the title of another one.
+        final wasAudible = widget.player.playing;
         await widget.player.stop();
         if (!mounted) return;
-        await widget.player.playCurrent();
+        if (wasAudible) {
+          await widget.player.playCurrent();
+        } else {
+          widget.queue.index = -1;
+        }
         if (!mounted) return;
         setState(() => _busy = false);
       }
@@ -418,7 +487,9 @@ class _QueuePanelState extends State<QueuePanel> {
     ];
 
     if (own.isEmpty) {
-      setState(() => _note = 'Es sind keine eigenen Songs in der Warteschlange.');
+      setState(
+        () => _note = 'Es sind keine eigenen Songs in der Warteschlange.',
+      );
       return;
     }
 
@@ -447,6 +518,14 @@ class _QueuePanelState extends State<QueuePanel> {
       // From the back to the front: the server renumbers what follows a removal, so removing a
       // front row first would move the numbers under the rows that still have to go.
       for (final entry in own.reversed) {
+        if (entry.local != null) {
+          // A device row only exists in the mirror and the device queue; the server has no
+          // slot to delete and would remove whichever server song now sits at that number.
+          final at = _local.queue.indexOf(entry.local!);
+          if (at >= 0) _local.removeFromQueue(at);
+          widget.queue.removeAt(entry.position);
+          continue;
+        }
         await widget.queues.remove(entry.position);
         if (!mounted) return;
         widget.queue.removeAt(entry.position);
@@ -466,12 +545,13 @@ class _QueuePanelState extends State<QueuePanel> {
   Future<void> _addToPlaylist(QueueEntry entry, int choice) async {
     if (_busy) return;
 
-    setState(() => _busy = true);
-
     if (widget.localMode) {
       final track = entry.local;
-      if (track == null || choice < 0 || choice >= _local.playlists.length) return;
+      if (track == null || choice < 0 || choice >= _local.playlists.length) {
+        return;
+      }
       final playlist = _local.playlists[choice];
+      setState(() => _busy = true);
 
       _local.addToPlaylist(playlist, track);
       if (!mounted) return;
@@ -485,9 +565,13 @@ class _QueuePanelState extends State<QueuePanel> {
     }
 
     if (choice < 0 || choice >= _playlists.length) return;
+    setState(() => _busy = true);
 
     try {
-      final song = await widget.playlists.addSong(_playlists[choice].id, entry.trackId);
+      final song = await widget.playlists.addSong(
+        _playlists[choice].id,
+        entry.trackId,
+      );
       if (!mounted) return;
 
       // The action keeps its name: what the menu said is what happened, with the position the
@@ -525,9 +609,11 @@ class _QueuePanelState extends State<QueuePanel> {
     }
 
     // The row that is playing cannot be put behind itself, and a slot the panel does not have is
-    // not a move. Saying it will be played next would be a claim the panel did not do.
+    // not a move. A row in front of the current one moves one slot up when it is taken out, so
+    // its target is one number smaller than the target of a row behind it.
     final at = widget.queue.entries.indexOf(row);
-    if (at == current || !await _moveRow(at + 1, current + 2)) {
+    final target = at > current ? current + 2 : current + 1;
+    if (at == current || !await _moveRow(at + 1, target)) {
       if (!mounted) return;
       setState(() => _busy = false);
       return;
@@ -559,7 +645,9 @@ class _QueuePanelState extends State<QueuePanel> {
 
   Future<void> _move(int fromPosition, int toPosition) async {
     if (_busy) return;
-    if (fromPosition == toPosition) return; // a row dropped on itself is not a move
+    if (fromPosition == toPosition) {
+      return; // a row dropped on itself is not a move
+    }
 
     if (!await _moveRow(fromPosition, toPosition)) return;
     if (!mounted) return;
@@ -589,20 +677,43 @@ class _QueuePanelState extends State<QueuePanel> {
               const Expanded(
                 child: TabBar(
                   tabs: [
-                    Tab(icon: Tooltip(message: 'Warteschlange', child: Icon(Icons.queue_music))),
-                    Tab(icon: Tooltip(message: 'Zuletzt gespielt', child: Icon(Icons.history))),
+                    Tab(
+                      icon: Tooltip(
+                        message: 'Warteschlange',
+                        child: Icon(Icons.queue_music),
+                      ),
+                    ),
+                    Tab(
+                      icon: Tooltip(
+                        message: 'Zuletzt gespielt',
+                        child: Icon(Icons.history),
+                      ),
+                    ),
                   ],
                 ),
               ),
-              IconButton(tooltip: 'Warteschlange schließen', icon: const Icon(Icons.close), onPressed: widget.onClose),
+              IconButton(
+                tooltip: 'Warteschlange schließen',
+                icon: const Icon(Icons.close),
+                onPressed: widget.onClose,
+              ),
             ],
           ),
           if (_note != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
-              child: Text(_note!, style: theme.textTheme.bodyMedium?.copyWith(color: scheme.error)),
+              child: Text(
+                _note!,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: scheme.error,
+                ),
+              ),
             ),
-          Expanded(child: TabBarView(children: [_queueTab(widget.phone), _historyTab()])),
+          Expanded(
+            child: TabBarView(
+              children: [_queueTab(widget.phone), _historyTab()],
+            ),
+          ),
           Align(
             alignment: Alignment.centerLeft,
             child: Padding(
@@ -634,7 +745,11 @@ class _QueuePanelState extends State<QueuePanel> {
           child: TextField(
             controller: _query,
             onChanged: (_) => setState(() {}),
-            decoration: const InputDecoration(hintText: 'Song suchen', prefixIcon: Icon(Icons.search), isDense: true),
+            decoration: const InputDecoration(
+              hintText: 'Song suchen',
+              prefixIcon: Icon(Icons.search),
+              isDense: true,
+            ),
           ),
         ),
         // One list, so the six songs and the queue scroll together: a drop-up has no room for three
@@ -644,14 +759,16 @@ class _QueuePanelState extends State<QueuePanel> {
             padding: const EdgeInsets.fromLTRB(0, 8, 0, 12),
             children: [
               if (suggestions.isNotEmpty) ...[
-                _section(_query.text.trim().isEmpty ? 'Vorschläge' : 'Suchergebnisse'),
+                _section(
+                  _query.text.trim().isEmpty ? 'Vorschläge' : 'Suchergebnisse',
+                ),
                 for (final entry in suggestions) _suggestion(entry),
               ],
               if (widget.queue.isEmpty)
                 _empty()
               else ...[
                 if (current != null) ...[
-                  _section('Läuft gerade'),
+                  _section('Wird gerade gespielt'),
                   _row(current, phone: phone),
                 ],
                 if (own.isNotEmpty) ...[
@@ -659,7 +776,9 @@ class _QueuePanelState extends State<QueuePanel> {
                   for (final entry in own) _row(entry, phone: phone),
                 ],
                 if (fromList.isNotEmpty) ...[
-                  _section('Als Nächstes aus: ${_origin() ?? 'der Warteschlange'}'),
+                  _section(
+                    'Als Nächstes aus: ${_origin() ?? 'der Warteschlange'}',
+                  ),
                   for (final entry in fromList) _row(entry, phone: phone),
                 ],
               ],
@@ -682,7 +801,11 @@ class _QueuePanelState extends State<QueuePanel> {
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
         child: Row(
           children: [
-            Icon(Icons.music_note, size: 18, color: theme.colorScheme.onSurfaceVariant),
+            Icon(
+              Icons.music_note,
+              size: 18,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
@@ -726,11 +849,16 @@ class _QueuePanelState extends State<QueuePanel> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Füge Songs zur Warteschlange hinzu', style: theme.textTheme.titleMedium),
+          Text(
+            'Füge Songs zur Warteschlange hinzu',
+            style: theme.textTheme.titleMedium,
+          ),
           const SizedBox(height: 10),
           Text(
             'Such oben nach einem Lied, oder öffne eine Playlist.',
-            style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
           ),
         ],
       ),
@@ -810,7 +938,9 @@ class _QueuePanelState extends State<QueuePanel> {
                 border: Border.all(color: scheme.primary),
                 borderRadius: BorderRadius.circular(10),
               )
-            : (dropOn ? BoxDecoration(border: Border.all(color: scheme.primary)) : null),
+            : (dropOn
+                  ? BoxDecoration(border: Border.all(color: scheme.primary))
+                  : null),
         padding: const EdgeInsets.fromLTRB(20, 8, 12, 8),
         child: Row(
           children: [
@@ -820,15 +950,22 @@ class _QueuePanelState extends State<QueuePanel> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(entry.title, style: theme.textTheme.labelLarge, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  Text(
+                    entry.title,
+                    style: theme.textTheme.labelLarge,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                   Text(
                     // A row of the history has no list it came from, because what was played is
                     // not a list that is still being played.
                     current
-                        ? 'Läuft gerade · Position ${entry.position}'
+                        ? 'Wird gerade gespielt · Position ${entry.position}'
                         : (inList
-                            ? (entry.manual ? 'deine Warteschlange' : (_origin() ?? 'die Warteschlange'))
-                            : 'Zuletzt gespielt'),
+                              ? (entry.manual
+                                    ? 'deine Warteschlange'
+                                    : (_origin() ?? 'die Warteschlange'))
+                              : 'Zuletzt gespielt'),
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: current ? scheme.primary : scheme.onSurfaceVariant,
                     ),
@@ -841,7 +978,12 @@ class _QueuePanelState extends State<QueuePanel> {
             // The grip is the handle: hold it and move the row. On a phone that is the long
             // press, on a desktop a press with the mouse. A song from the history is not part
             // of the order, so it has no handle.
-            if (inList) LongPressDraggable<int>(data: entry.position, feedback: _feedback(), child: const Icon(Icons.drag_handle, size: 20)),
+            if (inList)
+              LongPressDraggable<int>(
+                data: entry.position,
+                feedback: _feedback(),
+                child: const Icon(Icons.drag_handle, size: 20),
+              ),
             _menu(entry),
           ],
         ),
@@ -854,22 +996,37 @@ class _QueuePanelState extends State<QueuePanel> {
   Widget _menu(QueueEntry entry) {
     // The value is the place in the list of the caller's playlists — the same shape in both
     // modes, because a playlist on a device has no id.
-    final names = widget.localMode ? _local.playlists.map((playlist) => playlist.name) : _playlists.map((playlist) => playlist.name);
-    final choices = [for (var i = 0; i < names.length; i++) ('playlist:$i', names.elementAt(i))];
+    final names = widget.localMode
+        ? _local.playlists.map((playlist) => playlist.name)
+        : _playlists.map((playlist) => playlist.name);
+    final choices = [
+      for (var i = 0; i < names.length; i++)
+        ('playlist:$i', names.elementAt(i)),
+    ];
 
     return PopupMenuButton<String>(
       tooltip: 'Lied',
       onSelected: (value) => _choose(entry, value),
       itemBuilder: (context) => [
-        const PopupMenuItem(value: 'remove', child: Text('Aus Warteschlange entfernen')),
-        const PopupMenuItem(value: 'next', child: Text('Als Nächstes abspielen')),
+        const PopupMenuItem(
+          value: 'remove',
+          child: Text('Aus Warteschlange entfernen'),
+        ),
+        const PopupMenuItem(
+          value: 'next',
+          child: Text('Als Nächstes abspielen'),
+        ),
         // Adding to a playlist needs one that belongs to the caller, so the names are the choice
         // here and the line above says what picking one of them does.
-        const PopupMenuItem(enabled: false, child: Text('Zur Playlist hinzufügen')),
+        const PopupMenuItem(
+          enabled: false,
+          child: Text('Zur Playlist hinzufügen'),
+        ),
         if (choices.isEmpty)
           const PopupMenuItem(enabled: false, child: Text('Keine Playlist'))
         else
-          for (final choice in choices) PopupMenuItem(value: choice.$1, child: Text(choice.$2)),
+          for (final choice in choices)
+            PopupMenuItem(value: choice.$1, child: Text(choice.$2)),
       ],
     );
   }
