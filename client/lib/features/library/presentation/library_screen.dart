@@ -779,7 +779,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     onSelected: (key) => setState(() => _sort = key),
                     itemBuilder: (context) => [
                       for (final key in sortKeys)
-                        CheckedPopupMenuItem(value: key, checked: key == _sort, child: Text(key)),
+                        CheckedPopupMenuItem(
+                          value: key,
+                          checked: key == _sort,
+                          child: Text(key),
+                        ),
                     ],
                   ),
                 const SizedBox(width: 4),
@@ -1302,7 +1306,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
           ),
           title: Text(group.name, maxLines: 1, overflow: TextOverflow.ellipsis),
           subtitle: Text(
-            '${group.subtitle} · ${group.tracks.length} Songs',
+            view == LibraryView.albums
+                ? '${group.subtitle} · ${group.tracks.length} Songs'
+                : '${group.tracks.length} Songs',
             style: Theme.of(context).textTheme.bodySmall
                 ?.copyWith(color: mutedText),
             maxLines: 1,
