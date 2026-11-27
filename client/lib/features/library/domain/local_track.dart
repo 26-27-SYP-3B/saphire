@@ -35,8 +35,8 @@ class LocalTrack {
 
   /// The same song in the shared track shape, so a library row and a queue row do not have to
   /// care where a song came from.
-  Track toTrack() => Track(
-    id: -1,
+  Track toTrack({int id = -1}) => Track(
+    id: id,
     title: title,
     artist: artist,
     album: album,

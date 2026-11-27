@@ -20,6 +20,7 @@ import 'package:saphire_client/features/player/presentation/queue_panel.dart';
 import 'package:saphire_client/features/playlists/presentation/playlists_screen.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
 import 'package:saphire_client/features/upload/domain/track.dart';
+import 'package:saphire_client/shared/widgets/library_sidebar.dart';
 import 'package:saphire_client/shared/widgets/player_bar.dart';
 
 import '../../support/fake_player.dart';
@@ -760,8 +761,9 @@ void main() {
       find.descendant(of: find.byType(PlayerBar), matching: find.text('lokal.mp3')),
       findsOneWidget,
     );
-    // A file on this device has no server actions.
-    expect(find.byTooltip('Aktionen für lokal.mp3'), findsNothing);
+    // A file on this device can be queued and put into a local playlist, so it has its own
+    // actions menu now.
+    expect(find.byTooltip('Aktionen für lokal.mp3'), findsOneWidget);
 
     // The bar's play button continues the paused local song instead of clearing it.
     await tester.tap(find.descendant(of: find.byType(PlayerBar), matching: find.byTooltip('Pause')));
@@ -865,7 +867,7 @@ void main() {
     expect(find.text('Neutrone (Remix)'), findsOneWidget);
 
     // Every page with the sidebar leads on from every other one.
-    await tester.tap(find.text('Playlists'));
+    await tester.tap(find.descendant(of: find.byType(LibrarySidebar), matching: find.text('Playlists')));
     await tester.pumpAndSettle();
     expect(find.byType(PlaylistsScreen), findsOneWidget);
 

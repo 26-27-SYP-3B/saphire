@@ -1,24 +1,29 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../../app/theme.dart';
 import '../../../core/storage/session_store.dart';
 import '../../../core/storage/settings_store.dart';
 import '../../../core/utils/audio_format.dart';
 import '../../../core/utils/pick_audio.dart';
+import '../../../shared/domain/track.dart';
 import '../../../shared/widgets/app_shell.dart';
+import '../../../shared/widgets/track_art.dart';
 import '../../playlists/data/playlist_repository.dart';
 import '../../playlists/domain/playlist.dart';
 import '../../player/data/queue_repository.dart';
 import '../../player/domain/player.dart';
 import '../../player/domain/queue.dart';
 import '../../upload/data/upload_repository.dart';
-import '../../upload/domain/track.dart';
 import '../data/library_repository.dart';
 import '../data/local_library.dart';
+import '../domain/local_playlist.dart';
 import '../domain/local_track.dart';
 
-/// The three the list can be ordered by. There is nothing else to order by.
+/// The three the song list can be ordered by. There is nothing else to order by.
 const sortKeys = ['Titel', 'Interpret', 'Hinzugefügt am'];
 
 /// The categories the filter offers, in the order the panel shows them. Every value of a
@@ -45,11 +50,14 @@ String artistOf(Track track) => track.artist.isNotEmpty
 
 /// The extensions a song can have (see `audioExtensions`), so a title ending in one of them is
 /// the name it was stored under rather than a tagged title.
-final fileExtensions = [for (final extension in audioExtensions) extension.substring(1)];
+final fileExtensions = [
+  for (final extension in audioExtensions) extension.substring(1),
+];
 
 bool looksLikeFileName(String title) {
   final dot = title.lastIndexOf('.');
-  return dot > 0 && fileExtensions.contains(title.substring(dot + 1).toLowerCase());
+  return dot > 0 &&
+      fileExtensions.contains(title.substring(dot + 1).toLowerCase());
 }
 
 /// The naming habit of an untagged file: "interpret - titel.mp3".
@@ -63,7 +71,7 @@ String artistFromName(String title) {
 const unknownValue = '–';
 
 /// A row shows the length as mm:ss. A file the server could not measure shows the dash,
-/// because the server can only know it for MPEG Layer III (see server/metadata.go).
+/// because the server can only know it for MPEG Layer III (see server/metadata.rs).
 String durationOf(Track track) {
   if (track.durationMs <= 0) return unknownValue;
 
@@ -72,47 +80,37 @@ String durationOf(Track track) {
   return '$minutes:${(seconds % 60).toString().padLeft(2, '0')}';
 }
 
-/// One row of the list: a song from the server or a file on this device. Both are songs
-/// the user can play, so they share one list instead of two sections.
-class _Entry {
-  _Entry.server(Track this.track, this.id) : local = null;
-  _Entry.local(LocalTrack this.local, this.id) : track = null;
+/// A view of the library that is not the plain song list. The four chips Spotify puts above
+/// "Deine Bibliothek" are the same four here; the song list is what no chip selected shows.
+enum LibraryView { songs, playlists, albums, artists, local }
 
-  final Track? track;
-  final LocalTrack? local;
+/// One group in the album or artist view: a name, the songs behind it and the first cover the
+/// songs carry. The rows are built from this, so the grid and the list show the same thing.
+class _Group {
+  _Group(this.name);
 
-  /// The server id, or a negative one for a song on this device. No two rows share it, so
-  /// the order cannot change between rebuilds where the sort keys are equal.
-  final int id;
+  final String name;
+  final List<Track> tracks = [];
+  Uint8List? cover;
+  String subtitle = '';
 
-  String get title => track?.title ?? local!.title;
-
-  /// A local file's tags are not read, so the row does not guess an artist from its name.
-  String get artist => track == null ? '' : artistOf(track!);
-
-  String get album => track?.album ?? '';
-
-  String get genre => track?.genre ?? '';
-
-  /// 0 where the file names no year, which is every song on this device.
-  int get year => track?.year ?? 0;
-
-  String get duration => track == null ? unknownValue : durationOf(track!);
-
-  int get uploadedAt => track?.uploadedAt ?? 0;
+  void add(Track track) {
+    tracks.add(track);
+    cover ??= track.cover;
+  }
 }
 
-/// The library: the songs the server has, filtered and sorted, with the same actions the rest
-/// of the app uses — play, add to a playlist, add to the queue, upload a new song. It draws
-/// the app's frame through AppShell, so it is the same page shape as the start page.
+/// The library: the songs the server has and the songs on this device in one place, Spotify's
+/// filter chips above them, the sort and the metadata filter below, and a list or a grid.
 ///
-/// The songs on this device are in the same list, because to the user they are the same
-/// kind of thing: a song that can be played. There is no server call for them, so the page
-/// also works in local mode, where there is no session and nothing to upload.
+/// The four chips are views, not filters on the same list: Playlists shows the caller's
+/// playlists, Alben and Künstler*innen group the songs, Lokal keeps the device songs and the
+/// unselected chip is the whole song list. A group opens that album or artist as a song list,
+/// so a chip never hides a song for good.
 ///
 /// Playing goes through the shared queue rather than through a second player: a song opened
-/// here and a song opened from a playlist play exactly the same way, and the bar at the
-/// bottom shows the same song as the queue in the bar.
+/// here and a song opened from a playlist play exactly the same way, and the bar at the bottom
+/// shows the same song as the queue.
 class LibraryScreen extends StatefulWidget {
   const LibraryScreen({
     super.key,
@@ -124,6 +122,8 @@ class LibraryScreen extends StatefulWidget {
     required this.uploads,
     required this.session,
     this.pickAudio = pickAudioFiles,
+    this.pickLocal = pickLocalAudioFiles,
+    this.pickFolder = pickLocalFolder,
     this.settings,
     this.localLibrary,
     this.initialTrackId,
@@ -140,6 +140,8 @@ class LibraryScreen extends StatefulWidget {
   /// What the queue frame needs: the session the queue calls are made with.
   final SessionStore session;
   final PickAudio pickAudio;
+  final PickLocalAudio pickLocal;
+  final PickLocalAudio pickFolder;
 
   /// Null in a test that does not care about local mode: the stores then stay in memory.
   final SettingsStore? settings;
@@ -150,7 +152,7 @@ class LibraryScreen extends StatefulWidget {
   /// without a link.
   final int? initialTrackId;
 
-  /// The chip a link picked: `albums`, `artists` or `local`. Null opens the song list.
+  /// The chip a link picked: `albums`, `artists`, `local` or `playlists`. Null opens the songs.
   final String? initialView;
 
   @override
@@ -164,6 +166,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
   late final LocalLibrary _local = widget.localLibrary ?? LocalLibrary();
 
   String _sort = sortKeys.first;
+  LibraryView _view = LibraryView.songs;
+  bool _grid = false;
   List<Track> _tracks = [];
   List<Playlist> _playlists = [];
 
@@ -175,22 +179,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
   /// an overlay instead, so this stays false there.
   bool _filtersOpen = false;
 
-  // What a request answered: an error, or nothing when all is well.
   String? _note;
 
   // Reading the list and sending a batch are two different things. One flag for both would
-  // make the button say "Wird hochgeladen…" while nothing is being uploaded, and a batch
-  // could be sent into a list that is still on its way.
+  // make the button say "Wird hochgeladen…" while nothing is being uploaded.
   bool _loading = false;
-  // Choosing the files and sending them are two phases as well: while the picker is open
-  // nothing has been sent yet, so the label cannot claim it is.
   bool _picking = false;
   bool _uploading = false;
   bool _busy = false;
 
   // What the message is about. Only a failed read can be retried here; a file the server
-  // refused has to be chosen again, so its message must not offer a retry. The flag belongs
-  // to the message, so it is set wherever the message is set.
+  // refused has to be chosen again, so its message must not offer a retry.
   bool _noteIsReadError = false;
 
   // The link is answered once: a later read of the list must not start the song again.
@@ -201,22 +200,20 @@ class _LibraryScreenState extends State<LibraryScreen> {
   @override
   void initState() {
     super.initState();
-    // The bar and the marked row agree on what is current, so this page listens to the
-    // player: a song that ends on its own has no tap behind it, and a page that only
-    // rebuilt on a tap would still show the row of the song that just finished.
     _changes = widget.player.changes.listen((_) {
       if (mounted) setState(() {});
     });
-    // Both lists are on the server. Local mode has no server and no session, so neither
-    // read is sent there; the songs on this device are already in the store.
+    _view = switch (widget.initialView) {
+      'playlists' => LibraryView.playlists,
+      'albums' => LibraryView.albums,
+      'artists' => LibraryView.artists,
+      'local' => LibraryView.local,
+      _ => LibraryView.songs,
+    };
     if (!_settings.localMode) {
       _load();
-      // The names the menu offers come from the server, so they are read with the library. A
-      // page that guesses them would show playlists that are not there.
       _loadPlaylists();
     } else if (widget.initialTrackId != null) {
-      // A link names a song in the server library; without a server it cannot be opened, and
-      // saying so is better than silently opening the device library.
       _openedLink = true;
       _note = 'Das verlinkte Lied ist nicht in der Bibliothek.';
     }
@@ -230,8 +227,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _load() async {
-    // A second read while one is on its way would let the earlier answer overwrite the
-    // later one, so the retry cannot be started twice.
     if (_loading) return;
     setState(() => _loading = true);
 
@@ -271,25 +266,22 @@ class _LibraryScreenState extends State<LibraryScreen> {
       }
     }
     if (linked == null) {
-      if (mounted) setState(() => _note = 'Das verlinkte Lied ist nicht in der Bibliothek.');
+      if (mounted) {
+        setState(
+          () => _note = 'Das verlinkte Lied ist nicht in der Bibliothek.',
+        );
+      }
       return;
     }
     await _play(linked);
-    // A failed queue call or a refused token must not consume the link for good: a later read
-    // (the retry on the page) tries the song again instead of silently forgetting it.
     if (widget.queue.current?.trackId != linked.id) _openedLink = false;
   }
 
-  /// The names the menu can offer. A page that has not read them shows only the queue, and
-  /// the first playlist is created when it is picked, because there is no other way to get
-  /// one here.
   Future<void> _loadPlaylists() async {
     try {
       final playlists = await widget.playlists.list();
       if (mounted) setState(() => _playlists = playlists);
     } on PlaylistException catch (error) {
-      // A note about a link that could not be opened is the more specific answer; a failed
-      // playlist read must not replace it.
       if (mounted && _note == null) {
         setState(() {
           _note = error.message;
@@ -300,8 +292,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _upload() async {
-    // The button stays disabled for the whole batch, so a second click cannot send the same
-    // files again. A picker that fails must release it too.
     if (_picking) return;
     setState(() => _picking = true);
 
@@ -309,11 +299,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
     try {
       picked = await widget.pickAudio();
     } catch (error) {
-      // The picker itself failing is not a file the server refused, so the row above cannot
-      // name a file. The message says what the user can do next.
       if (mounted) {
         setState(() {
-          _note = 'Die Dateien konnten nicht gelesen werden. Versuch es erneut.';
+          _note =
+              'Die Dateien konnten nicht gelesen werden. Versuch es erneut.';
           _noteIsReadError = false;
         });
       }
@@ -324,20 +313,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
     if (picked == null) return;
 
-    // Only now is a file actually on its way, so only now can the button say so.
     setState(() => _uploading = true);
     try {
       for (final file in picked) {
         try {
-          // The server answers with the row it stored, so the song is in the library here
-          // without reading the list again.
-          final track = await widget.uploads.upload(filename: file.name, bytes: file.bytes);
+          final track = await widget.uploads.upload(
+            filename: file.name,
+            bytes: file.bytes,
+          );
           if (!mounted) return;
           setState(() => _tracks.add(track));
         } on UploadException catch (error) {
-          // A file the server refused is not added. In a batch the message has to say which
-          // file it is about, and a later success must not hide it. This message is not about
-          // a read, so it must not get the retry that belongs to one.
           if (mounted) {
             setState(() {
               _note = '${file.name}: ${error.message}';
@@ -349,6 +335,51 @@ class _LibraryScreenState extends State<LibraryScreen> {
     } finally {
       if (mounted) setState(() => _uploading = false);
     }
+  }
+
+  /// Adds picked files to the local library. Each file is checked on its own, so a refused
+  /// one says why and the rest still land in the library. `folder` takes a directory instead.
+  Future<void> _addLocal({bool folder = false}) async {
+    if (_picking) return;
+    setState(() => _picking = true);
+
+    final List<PickedLocal>? picked;
+    try {
+      picked = await (folder ? widget.pickFolder() : widget.pickLocal());
+    } on UnsupportedError catch (error) {
+      if (mounted) setState(() => _note = '${error.message}');
+      return;
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => _note = folder
+              ? 'Dieser Ordner konnte nicht gelesen werden. Wähle die Songs stattdessen einzeln aus.'
+              : 'Die Dateien konnten nicht gelesen werden. Versuch es erneut.',
+        );
+      }
+      return;
+    } finally {
+      if (mounted) setState(() => _picking = false);
+    }
+    if (picked == null || !mounted) return;
+
+    if (picked.isEmpty) {
+      if (folder) {
+        setState(() => _note = 'In diesem Ordner sind keine Audiodateien.');
+      }
+      return;
+    }
+
+    setState(() {
+      for (final file in picked!) {
+        final refused = _local.add(
+          name: file.name,
+          path: file.path,
+          bytes: file.bytes,
+        );
+        if (refused != null) _note = '${file.name}: $refused';
+      }
+    });
   }
 
   Future<void> _control(Future<void> Function() action) async {
@@ -368,81 +399,126 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   /// Opening a row fills the queue with that one song and plays it, the way the Playlists
-  /// page starts a playlist. The player only ever reads a queue, so a song opened here and a
-  /// song opened from a playlist play the same way.
+  /// page starts a playlist. A song on this device plays straight from the file.
   Future<void> _play(Track track) => _control(() async {
+    if (track.isLocal) {
+      await widget.player.playLocal(track.toLocalTrack());
+      return;
+    }
     widget.queue.fill(await widget.queues.fill(QueueSource.track(track.id)));
     await widget.player.playCurrent();
   });
 
-  /// A song on this device plays straight from the file: no queue call and no token, so it
-  /// works with no server and no session.
-  Future<void> _playLocal(LocalTrack track) => _control(() => widget.player.playLocal(track));
-
   Future<void> _addToQueue(Track track) => _control(() async {
+    if (track.isLocal) {
+      _local.addToQueue(track.toLocalTrack());
+      await widget.player.syncLocalQueue(_local.queue);
+      if (mounted) {
+        setState(() => _note = '${track.title} in die Warteschlange gelegt.');
+      }
+      return;
+    }
     final entry = await widget.queues.append(track.id);
-    // A row the person added themselves, which is what "Warteschlange leeren" takes out again.
     if (mounted) widget.queue.append(entry.asManual());
   });
 
-  Future<void> _addToPlaylist(Track track, int playlistId) => _control(() async {
-    if (playlistId == 0) {
-      // Nothing exists yet, so the menu's first entry creates the playlist it names. The id
-      // is taken from the answer, not assumed.
-      final created = await widget.playlists.create('Meine Playlist');
-      if (!mounted) return;
-      setState(() => _playlists = [created]);
-      await widget.playlists.addSong(created.id, track.id);
-      return;
-    }
-    await widget.playlists.addSong(playlistId, track.id);
-  });
+  Future<void> _addToPlaylist(Track track, String? value) async {
+    if (value == null) return;
+    await _control(() async {
+      if (track.isLocal) {
+        LocalPlaylist? playlist;
+        if (value == 'new-local') {
+          playlist = _local.createPlaylist('Meine Playlist');
+          if (playlist == null) {
+            if (mounted) {
+              setState(
+                () => _note = 'Der Name „Meine Playlist“ ist schon vergeben.',
+              );
+            }
+            return;
+          }
+        } else {
+          for (final entry in _local.playlists) {
+            if (entry.name == value) playlist = entry;
+          }
+        }
+        if (playlist == null) return;
+        _local.addToPlaylist(playlist, track.toLocalTrack());
+        if (mounted) {
+          setState(
+            () => _note = 'Song zur Playlist „${playlist!.name}“ hinzugefügt.',
+          );
+        }
+        return;
+      }
 
-  /// Every song, server and device, before search and filter. The filter offers its values
-  /// from this list, so a picked value cannot look at a list that is already narrowed by it.
-  List<_Entry> _entries() => [
-    for (final track in _tracks) _Entry.server(track, track.id),
+      var id = int.tryParse(value);
+      if (id == null || id == 0) {
+        final created = await widget.playlists.create('Meine Playlist');
+        if (!mounted) return;
+        setState(() => _playlists = [..._playlists, created]);
+        id = created.id;
+      }
+      final song = await widget.playlists.addSong(id, track.id);
+      if (mounted) {
+        setState(
+          () => _note =
+              'Song an Position ${song.position} zur Playlist hinzugefügt.',
+        );
+      }
+    });
+  }
+
+  /// Every song, server and device, in the shared shape. The device ids are negative and
+  /// distinct, so the order of two local rows is stable.
+  List<Track> _all() => [
+    ..._tracks,
     for (var index = 0; index < _local.tracks.length; index++)
-      _Entry.local(_local.tracks[index], -index - 1),
+      _local.tracks[index].toTrack(id: -index - 1),
   ];
 
-  /// What a song says for one filter category. A missing value is "Unbekannt", which is a
-  /// filter of its own, so a song without a genre is not hidden from every genre filter.
-  String _filterValue(_Entry entry, String category) => switch (category) {
-    'Interpret' => entry.artist.isEmpty ? unknownFilter : entry.artist,
-    'Album' => entry.album.isEmpty ? unknownFilter : entry.album,
-    'Genre' => entry.genre.isEmpty ? unknownFilter : entry.genre,
-    _ => entry.year == 0 ? unknownFilter : '${entry.year}',
+  String _artistOf(Track track) =>
+      track.isLocal ? track.artist : artistOf(track);
+
+  String _filterValue(Track track, String category) => switch (category) {
+    'Interpret' => _artistOf(track).isEmpty ? unknownFilter : _artistOf(track),
+    'Album' => track.album.isEmpty ? unknownFilter : track.album,
+    'Genre' => track.genre.isEmpty ? unknownFilter : track.genre,
+    _ => track.year == 0 ? unknownFilter : '${track.year}',
   };
 
-  /// The values each category offers, read from every song in the list. Ordering is what a
-  /// reader expects: names by name, years newest first, and "Unbekannt" at the end of a year
-  /// list because it is not a year.
   Map<String, List<String>> _filterOptions() {
-    final entries = _entries();
+    final tracks = _all();
     return {
       for (final category in filterKeys)
-        category: ({
-          for (final entry in entries) _filterValue(entry, category),
-        }.toList()..sort((a, b) {
-          if (category != 'Erscheinungsjahr') return a.toLowerCase().compareTo(b.toLowerCase());
-          if (a == unknownFilter) return 1;
-          if (b == unknownFilter) return -1;
-          return int.parse(b).compareTo(int.parse(a));
-        })),
+        category:
+            ({for (final track in tracks) _filterValue(track, category)}
+                .toList()
+              ..sort((a, b) {
+                if (category != 'Erscheinungsjahr') {
+                  return a.toLowerCase().compareTo(b.toLowerCase());
+                }
+                if (a == unknownFilter) return 1;
+                if (b == unknownFilter) return -1;
+                return int.parse(b).compareTo(int.parse(a));
+              })),
     };
   }
 
-  bool _matchesFilters(_Entry entry) {
+  bool _matchesFilters(Track track) {
     for (final category in filterKeys) {
       final chosen = _filters[category];
       if (chosen == null || chosen.isEmpty) continue;
-      if (!chosen.contains(_filterValue(entry, category))) return false;
+      if (!chosen.contains(_filterValue(track, category))) return false;
     }
     return true;
   }
 
-  void _toggleFilter(Map<String, Set<String>> filters, String category, String value) {
+  void _toggleFilter(
+    Map<String, Set<String>> filters,
+    String category,
+    String value,
+  ) {
     final values = filters.putIfAbsent(category, () => <String>{});
     if (!values.remove(value)) values.add(value);
     if (values.isEmpty) filters.remove(category);
@@ -461,22 +537,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
     for (final entry in _filters.entries) entry.key: {...entry.value},
   };
 
-  /// Whether the window has room for the filter panel below the sort. A larger text scale
-  /// makes every row taller, so the window has to grow with it.
   bool _inlineFilters(BuildContext context) {
     final room = MediaQuery.sizeOf(context);
     final textScale = MediaQuery.textScalerOf(context).scale(1);
     return room.width >= 700 && room.height >= filterPanelMinHeight * textScale;
   }
 
-  /// Opens the filter. A phone gets it as an overlay from below (with "Anwenden", because the
-  /// list is behind it); a wide layout gets it inline below the sort and applies on every tap,
-  /// so the list narrows while the filter is still open.
   Future<void> _openFilters() async {
     final options = _filterOptions();
 
-    // The panel needs room below the list controls; a phone in landscape is wide but has no
-    // height for it, so it gets the overlay too.
     if (_inlineFilters(context)) {
       setState(() => _filtersOpen = !_filtersOpen);
       return;
@@ -488,11 +557,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
       isScrollControlled: true,
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheet) => Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.viewInsetsOf(context).bottom,
+          ),
           child: _filterPanel(
             options: options,
             selected: picked,
-            onToggle: (category, value) => setSheet(() => _toggleFilter(picked, category, value)),
+            onToggle: (category, value) =>
+                setSheet(() => _toggleFilter(picked, category, value)),
             onReset: () => setSheet(() {
               picked = {};
             }),
@@ -513,51 +585,811 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
-  /// What the page shows now: the rows that match the search and every picked filter, in the
-  /// order the sort was picked. The songs on this device are part of the same list, so the
-  /// filter applies to both sources.
-  List<_Entry> _visible() {
+  /// What the song list shows: the search, every picked filter and, in the local view, only
+  /// the songs on this device.
+  List<Track> _visible() {
     final query = _search.text.trim().toLowerCase();
     final rows = [
-      for (final entry in _entries())
-        if ((query.isEmpty ||
-                entry.title.toLowerCase().contains(query) ||
-                entry.artist.toLowerCase().contains(query)) &&
-            _matchesFilters(entry))
-          entry,
+      for (final track in _all())
+        if ((_view != LibraryView.local || track.isLocal) &&
+            (query.isEmpty ||
+                track.title.toLowerCase().contains(query) ||
+                _artistOf(track).toLowerCase().contains(query)) &&
+            _matchesFilters(track))
+          track,
     ];
 
-    // Names and artists are compared without case, so "ahne" comes before "Zehn" the way a
-    // user reads it. What is not available is a dictionary collation, so an umlaut still
-    // sorts by its code point, after z.
-    //
-    // Newest first for the date; the id decides what the date cannot, so the order does not
-    // change on every rebuild. A song on this device has no date, so it counts as the
-    // oldest and comes last for "Hinzugefügt am". Its artist is unknown, which sorts it to
-    // the top for "Interpret" — the dash the row shows is where an artist would be.
     switch (_sort) {
       case 'Interpret':
         rows.sort((a, b) {
-          final byArtist = a.artist.toLowerCase().compareTo(b.artist.toLowerCase());
+          final byArtist = _artistOf(a)
+              .toLowerCase()
+              .compareTo(_artistOf(b).toLowerCase());
           return byArtist != 0 ? byArtist : a.id.compareTo(b.id);
         });
       case 'Hinzugefügt am':
-        rows.sort((a, b) => b.uploadedAt != a.uploadedAt
-            ? b.uploadedAt.compareTo(a.uploadedAt)
-            : b.id.compareTo(a.id));
+        rows.sort(
+          (a, b) => b.uploadedAt != a.uploadedAt
+              ? b.uploadedAt.compareTo(a.uploadedAt)
+              : b.id.compareTo(a.id),
+        );
       default:
         rows.sort((a, b) {
-          final byTitle = a.title.toLowerCase().compareTo(b.title.toLowerCase());
+          final byTitle = a.title.toLowerCase().compareTo(
+            b.title.toLowerCase(),
+          );
           return byTitle != 0 ? byTitle : a.id.compareTo(b.id);
         });
     }
-
     return rows;
   }
 
-  /// The filter itself, used inline on a wide layout and inside the phone's overlay. The
-  /// footer's buttons are different because only the phone has to apply a whole selection at
-  /// once; the wide layout has already narrowed the list while the chips were tapped.
+  /// The groups of the album and artist views. The songs are the same ones the list shows, so
+  /// the counts and names cannot drift apart.
+  List<_Group> _groups(LibraryView view) {
+    final groups = <String, _Group>{};
+    for (final track in _all()) {
+      final name = switch (view) {
+        LibraryView.albums => track.album.isEmpty ? unknownFilter : track.album,
+        _ => _artistOf(track).isEmpty ? unknownFilter : _artistOf(track),
+      };
+      groups.putIfAbsent(name, () => _Group(name)).add(track);
+    }
+    for (final group in groups.values) {
+      final artists = {
+        for (final track in group.tracks)
+          if (_artistOf(track).isNotEmpty) _artistOf(track),
+      };
+      group.subtitle = view == LibraryView.albums
+          ? (artists.isEmpty ? unknownValue : artists.join(', '))
+          : '${group.tracks.length} ${group.tracks.length == 1 ? 'Song' : 'Songs'}';
+    }
+    return groups.values.toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+  }
+
+  void _openGroup(LibraryView view, _Group group) {
+    setState(() {
+      _view = LibraryView.songs;
+      _filters.clear();
+      _filters[view == LibraryView.albums ? 'Album' : 'Interpret'] = {
+        group.name,
+      };
+      _filtersOpen = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final rows = _visible();
+    final total = _tracks.length + _local.tracks.length;
+    final shownTotal = _view == LibraryView.local
+        ? [
+            for (final t in _all())
+              if (t.isLocal) t,
+          ].length
+        : total;
+    final filtering = _filters.isNotEmpty;
+    final searching = _search.text.trim().isNotEmpty;
+    final filterCount = _filters.values.fold<int>(
+      0,
+      (sum, values) => sum + values.length,
+    );
+    final inlineFilters = _inlineFilters(context);
+    final songsView = _view == LibraryView.songs || _view == LibraryView.local;
+    // A phone keeps only the view chips above the list; the sort is a menu-shaped control on
+    // Spotify's phone library too, and the chips would push the first songs below the fold.
+    final phone = MediaQuery.sizeOf(context).width < 600;
+
+    return AppShell(
+      selected: '/library',
+      player: widget.player,
+      queues: widget.queues,
+      playlists: widget.playlists,
+      library: widget.library,
+      session: widget.session,
+      localMode: _settings.localMode,
+      localLibrary: _local,
+      sidebarPlaylists: _playlists,
+      // The whole page scrolls as one list, the way Spotify's library does. The header is the
+      // first child instead of a fixed block, so a phone with a filter applied does not run out
+      // of room above the songs.
+      child: ListView(
+        padding: EdgeInsets.zero,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Bibliothek', style: theme.textTheme.displaySmall),
+                      const SizedBox(height: 4),
+                      if (!_loading && shownTotal > 0)
+                        Text(
+                          songsView
+                              ? (!filtering && !searching
+                                    ? '$shownTotal Songs'
+                                    : '${rows.length} von $shownTotal Songs passen '
+                                          '${filtering && searching
+                                              ? 'zu Suche und Filter'
+                                              : filtering
+                                              ? 'zu den Filtern'
+                                              : 'zur Suche'}')
+                              : _view == LibraryView.playlists
+                              ? '${_playlists.length + _local.playlists.length} Playlists'
+                              : '${_groups(_view).length} ${_view == LibraryView.albums ? 'Alben' : 'Künstler*innen'}',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                if (!_settings.localMode &&
+                    MediaQuery.sizeOf(context).width >= 600)
+                  FilledButton.tonal(
+                    onPressed: _loading || _picking || _uploading
+                        ? null
+                        : _upload,
+                    child: Text(
+                      _uploading ? 'Wird hochgeladen…' : 'Song hochladen',
+                    ),
+                  ),
+                const SizedBox(width: 8),
+                IconButton.filled(
+                  tooltip: 'Hinzufügen',
+                  onPressed: _showAddSheet,
+                  icon: const Icon(Icons.add),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _search,
+                    onChanged: (_) => setState(() {}),
+                    decoration: const InputDecoration(
+                      hintText: 'Songs suchen',
+                      prefixIcon: Icon(Icons.search, size: 18),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // The filter stays beside the search, where it is reachable without scrolling
+                // even in a short landscape window; the sort chips can scroll with the page.
+                TextButton(
+                  onPressed: _openFilters,
+                  child: Text(
+                    filterCount == 0 ? 'Filter' : 'Filter ($filterCount)',
+                  ),
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  tooltip: _grid ? 'Liste' : 'Raster',
+                  onPressed: () => setState(() => _grid = !_grid),
+                  icon: Icon(_grid ? Icons.view_list : Icons.grid_view),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                _viewChip('Playlists', LibraryView.playlists),
+                _viewChip('Alben', LibraryView.albums),
+                _viewChip('Künstler*innen', LibraryView.artists),
+                _viewChip('Lokal', LibraryView.local),
+                if (songsView && !phone)
+                  for (final key in sortKeys) _sortChip(key),
+              ],
+            ),
+          ),
+          if (songsView && _filters.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 10, 24, 0),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  for (final category in filterKeys)
+                    for (final value in _filters[category] ?? const <String>{})
+                      InputChip(
+                        label: Text('$category: $value'),
+                        onDeleted: () =>
+                            setState(() => _removeFilter(category, value)),
+                        deleteButtonTooltipMessage:
+                            'Filter $category: $value entfernen',
+                      ),
+                  TextButton(
+                    onPressed: _resetFilters,
+                    child: const Text('Filter zurücksetzen'),
+                  ),
+                ],
+              ),
+            ),
+          if (songsView && _filtersOpen && inlineFilters)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+              child: _filterPanel(
+                options: _filterOptions(),
+                selected: _filters,
+                onToggle: (category, value) =>
+                    setState(() => _toggleFilter(_filters, category, value)),
+                onReset: _resetFilters,
+                showReset: false,
+              ),
+            ),
+          if (_note != null && !_loading)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(_note!, style: TextStyle(color: scheme.error)),
+                  ),
+                  if (_noteIsReadError)
+                    TextButton(
+                      onPressed: _load,
+                      child: const Text('Erneut versuchen'),
+                    ),
+                ],
+              ),
+            ),
+          const SizedBox(height: 8),
+          if (_loading)
+            _loadingState()
+          else if (_view == LibraryView.playlists)
+            ..._playlistChildren()
+          else if (_view == LibraryView.albums || _view == LibraryView.artists)
+            ..._groupChildren(_view)
+          else
+            ..._songChildren(rows, searching, filtering),
+        ],
+      ),
+    );
+  }
+
+  Widget _viewChip(String label, LibraryView view) {
+    final selected = _view == view;
+    return FilterChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: (_) => setState(() {
+        _view = selected ? LibraryView.songs : view;
+        _filtersOpen = false;
+      }),
+    );
+  }
+
+  Widget _sortChip(String key) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final picked = key == _sort;
+
+    return Semantics(
+      button: true,
+      selected: picked,
+      child: InkWell(
+        onTap: () => setState(() => _sort = key),
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: picked ? scheme.primary : fieldBackground,
+            border: Border.all(color: picked ? scheme.primary : scheme.outline),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(
+            key,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: picked ? Colors.white : scheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The children of the page list for the song view: the rows, or the cards when the grid
+  /// was picked, or the sentence that says why there is nothing.
+  List<Widget> _songChildren(List<Track> rows, bool searching, bool filtering) {
+    if (rows.isEmpty) return [_empty(searching, filtering)];
+    if (_grid) {
+      return [
+        _gridWrap([for (final track in rows) _songCard(track)]),
+      ];
+    }
+    return [
+      for (final track in rows) _songRow(track),
+      const SizedBox(height: 24),
+    ];
+  }
+
+  /// Cards in the same flow as the list: a Wrap keeps them part of the page list, so the header
+  /// and the cards scroll together instead of two nested scroll areas fighting for a finger.
+  Widget _gridWrap(List<Widget> cards) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final count = constraints.maxWidth >= 1200
+            ? 5
+            : constraints.maxWidth >= 900
+            ? 4
+            : constraints.maxWidth >= 600
+            ? 3
+            : 2;
+        const spacing = 12.0;
+        final width =
+            (constraints.maxWidth - 48 - (count - 1) * spacing) / count;
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
+          child: Wrap(
+            spacing: spacing,
+            runSpacing: 16,
+            children: [
+              for (final card in cards)
+                SizedBox(width: width, height: width + 64, child: card),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// One song: its cover, name, what is known about it and the actions the menu has. The whole
+  /// row can be tapped, so playing a song does not need the small icon.
+  Widget _songRow(Track track) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final current = track.isLocal
+        ? identical(widget.player.localCurrent?.path, track.localPath)
+        : widget.queue.current?.trackId == track.id;
+    final artist = _artistOf(track);
+
+    return InkWell(
+      onTap: _busy ? null : () => _play(track),
+      onSecondaryTapDown: (details) =>
+          _contextMenu(details.globalPosition, track),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: current ? scheme.surfaceContainer : null,
+          border: Border(
+            left: BorderSide(
+              color: current ? scheme.primary : Colors.transparent,
+              width: 2,
+            ),
+            bottom: const BorderSide(color: hairline),
+          ),
+        ),
+        child: Row(
+          children: [
+            IconButton(
+              tooltip: 'Abspielen',
+              onPressed: _busy ? null : () => _play(track),
+              icon: TrackArt(cover: track.cover, size: 44),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          track.title,
+                          style: theme.textTheme.labelLarge?.copyWith(
+                            color: current ? scheme.primary : null,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (track.isLocal) ...[
+                        const SizedBox(width: 8),
+                        const SourceBadge(local: true),
+                      ],
+                    ],
+                  ),
+                  Text(
+                    track.isLocal
+                        ? (artist.isEmpty ? 'Auf diesem Gerät' : artist)
+                        : (artist.isEmpty ? unknownValue : artist),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            Text(
+              durationOf(track),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(width: 8),
+            _menu(track),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _songCard(Track track) {
+    final theme = Theme.of(context);
+
+    return InkWell(
+      onTap: _busy ? null : () => _play(track),
+      onSecondaryTapDown: (details) =>
+          _contextMenu(details.globalPosition, track),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) => TrackArt(
+                cover: track.cover,
+                size: constraints.maxWidth,
+                radius: 8,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            track.title,
+            style: theme.textTheme.labelLarge,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          Text(
+            track.isLocal
+                ? 'Lokal'
+                : (_artistOf(track).isEmpty ? unknownValue : _artistOf(track)),
+            style: theme.textTheme.bodySmall?.copyWith(color: mutedText),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _menu(Track track) {
+    return PopupMenuButton<String>(
+      tooltip: 'Aktionen für ${track.title}',
+      onSelected: (value) {
+        if (value == 'queue') {
+          _addToQueue(track);
+        } else {
+          _addToPlaylist(track, value);
+        }
+      },
+      itemBuilder: (context) => [
+        const PopupMenuItem(
+          value: 'queue',
+          child: Text('Zur Warteschlange hinzufügen'),
+        ),
+        if (track.isLocal) ...[
+          if (_local.playlists.isEmpty)
+            const PopupMenuItem(
+              value: 'new-local',
+              child: Text('Zur neuen lokalen Playlist „Meine Playlist“'),
+            )
+          else
+            for (final playlist in _local.playlists)
+              PopupMenuItem(
+                value: playlist.name,
+                child: Text('Zur Playlist „${playlist.name}“'),
+              ),
+        ] else ...[
+          if (_playlists.isEmpty)
+            const PopupMenuItem(
+              value: 'new',
+              child: Text('Zur neuen Playlist „Meine Playlist“'),
+            )
+          else
+            for (final playlist in _playlists)
+              PopupMenuItem(
+                value: '${playlist.id}',
+                child: Text('Zur Playlist „${playlist.name}“'),
+              ),
+        ],
+      ],
+    );
+  }
+
+  /// A right click on a row opens the same actions the three-dot menu has, at the pointer. It
+  /// is what a desktop user tries before looking for a menu button.
+  Future<void> _contextMenu(Offset position, Track track) async {
+    final overlay = Overlay.of(context).context.findRenderObject();
+    if (overlay is! RenderBox) return;
+
+    final value = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        position & const Size(1, 1),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        const PopupMenuItem(
+          value: 'queue',
+          child: Text('Zur Warteschlange hinzufügen'),
+        ),
+        if (!track.isLocal && _playlists.isEmpty)
+          const PopupMenuItem(
+            value: 'new',
+            child: Text('Zur neuen Playlist „Meine Playlist“'),
+          )
+        else if (!track.isLocal)
+          for (final playlist in _playlists)
+            PopupMenuItem(
+              value: '${playlist.id}',
+              child: Text('Zur Playlist „${playlist.name}“'),
+            )
+        else if (_local.playlists.isEmpty)
+          const PopupMenuItem(
+            value: 'new-local',
+            child: Text('Zur neuen lokalen Playlist „Meine Playlist“'),
+          )
+        else
+          for (final playlist in _local.playlists)
+            PopupMenuItem(
+              value: playlist.name,
+              child: Text('Zur Playlist „${playlist.name}“'),
+            ),
+      ],
+    );
+    if (value == null) return;
+    if (value == 'queue') {
+      await _addToQueue(track);
+    } else {
+      await _addToPlaylist(track, value);
+    }
+  }
+
+  List<Widget> _playlistChildren() {
+    final local = [for (final playlist in _local.playlists) playlist];
+    if (_playlists.isEmpty && local.isEmpty) {
+      return [
+        _emptyMessage(
+          'Noch keine Playlist. Eine Playlist gehört dir, nicht der geteilten Bibliothek.',
+        ),
+      ];
+    }
+
+    if (_grid) {
+      return [
+        _gridWrap([
+          for (final playlist in _playlists)
+            _playlistCard(
+              playlist.name,
+              'Playlist · ${playlist.songCount} Songs',
+              () => context.go('/playlists?id=${playlist.id}'),
+            ),
+          for (final playlist in local)
+            _playlistCard(
+              playlist.name,
+              'Lokal · ${playlist.songs.length} Songs',
+              () => context.go(
+                '/playlists?local=${Uri.encodeComponent(playlist.name)}',
+              ),
+            ),
+        ]),
+      ];
+    }
+
+    return [
+      for (final playlist in _playlists)
+        _playlistRow(
+          name: playlist.name,
+          subtitle: 'Playlist · ${playlist.songCount} Songs',
+          onTap: () => context.go('/playlists?id=${playlist.id}'),
+        ),
+      for (final playlist in local)
+        _playlistRow(
+          name: playlist.name,
+          subtitle: 'Lokal · ${playlist.songs.length} Songs',
+          onTap: () => context.go(
+            '/playlists?local=${Uri.encodeComponent(playlist.name)}',
+          ),
+        ),
+      const SizedBox(height: 24),
+    ];
+  }
+
+  Widget _playlistCard(String name, String subtitle, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) => TrackArt(
+                size: constraints.maxWidth,
+                radius: 8,
+                icon: Icons.queue_music,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            name,
+            style: Theme.of(context).textTheme.labelLarge,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          Text(
+            subtitle,
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: mutedText),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _playlistRow({
+    required String name,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    final theme = Theme.of(context);
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+      leading: const TrackArt(size: 48, icon: Icons.queue_music),
+      title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text(
+        subtitle,
+        style: theme.textTheme.bodySmall?.copyWith(color: mutedText),
+      ),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: onTap,
+    );
+  }
+
+  List<Widget> _groupChildren(LibraryView view) {
+    final groups = _groups(view);
+    if (groups.isEmpty) return [_emptyMessage('Die Bibliothek ist noch leer.')];
+
+    if (_grid) {
+      return [
+        _gridWrap([for (final group in groups) _groupCard(view, group)]),
+      ];
+    }
+
+    return [
+      for (final group in groups)
+        ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          leading: TrackArt(
+            cover: group.cover,
+            size: 48,
+            icon: view == LibraryView.albums ? Icons.album : Icons.person,
+          ),
+          title: Text(group.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+          subtitle: Text(
+            '${group.subtitle} · ${group.tracks.length} Songs',
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: mutedText),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          onTap: () => _openGroup(view, group),
+        ),
+      const SizedBox(height: 24),
+    ];
+  }
+
+  Widget _groupCard(LibraryView view, _Group group) {
+    return InkWell(
+      onTap: () => _openGroup(view, group),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) => TrackArt(
+                cover: group.cover,
+                size: constraints.maxWidth,
+                radius: 8,
+                icon: view == LibraryView.albums ? Icons.album : Icons.person,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            group.name,
+            style: Theme.of(context).textTheme.labelLarge,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          Text(
+            group.subtitle,
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: mutedText),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showAddSheet() async {
+    final theme = Theme.of(context);
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Text('Hinzufügen', style: theme.textTheme.titleLarge),
+            ),
+            ListTile(
+              leading: const Icon(Icons.playlist_add),
+              title: const Text('Playlist erstellen'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                context.go('/playlists?create=1');
+              },
+            ),
+            if (!_settings.localMode)
+              ListTile(
+                leading: const Icon(Icons.upload_file),
+                title: const Text('Song hochladen'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _upload();
+                },
+              ),
+            ListTile(
+              leading: const Icon(Icons.audiotrack),
+              title: const Text('Lokale Songs hinzufügen'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _addLocal();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.create_new_folder),
+              title: const Text('Ordner auswählen'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _addLocal(folder: true);
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// The filter itself, used inline on a wide layout and inside the phone's overlay.
   Widget _filterPanel({
     required Map<String, List<String>> options,
     required Map<String, Set<String>> selected,
@@ -580,8 +1412,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // The categories scroll; the buttons stay put, so "Anwenden" is reachable without
-          // scrolling past every value.
           Flexible(
             child: SingleChildScrollView(
               child: Column(
@@ -599,7 +1429,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
                             FilterChip(
                               key: ValueKey('filter-$category-$value'),
                               label: Text(value),
-                              selected: selected[category]?.contains(value) ?? false,
+                              selected:
+                                  selected[category]?.contains(value) ?? false,
                               onSelected: (_) => onToggle(category, value),
                             ),
                         ],
@@ -621,7 +1452,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   onPressed: selected.isEmpty ? null : onReset,
                   child: const Text('Filter zurücksetzen'),
                 ),
-              if (onApply != null) FilledButton(onPressed: onApply, child: const Text('Anwenden')),
+              if (onApply != null)
+                FilledButton(onPressed: onApply, child: const Text('Anwenden')),
             ],
           ),
         ],
@@ -629,193 +1461,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final rows = _visible();
-    final total = _tracks.length + _local.tracks.length;
-    final filtering = _filters.isNotEmpty;
-    final searching = _search.text.trim().isNotEmpty;
-    final filterCount = _filters.values.fold<int>(0, (sum, values) => sum + values.length);
-    final inlineFilters = _inlineFilters(context);
-
-    return AppShell(
-      selected: '/library',
-      player: widget.player,
-      queues: widget.queues,
-      playlists: widget.playlists,
-      library: widget.library,
-      session: widget.session,
-      localMode: _settings.localMode,
-      localLibrary: _local,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Bibliothek', style: theme.textTheme.titleLarge),
-                const SizedBox(height: 4),
-                // What the page holds right now. While the list is on its way there is
-                // nothing to count, and a row that is not shown cannot be counted either, so
-                // this line says nothing until something is actually there.
-                if (!_loading && total > 0)
-                  Text(
-                    !filtering && !searching
-                        ? '$total Songs'
-                        : '${rows.length} von $total Songs passen '
-                              '${filtering && searching ? 'zu Suche und Filter' : filtering ? 'zu den Filtern' : 'zur Suche'}',
-                    style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-                  ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _search,
-                        onChanged: (_) => setState(() {}),
-                        decoration: const InputDecoration(
-                          hintText: 'Songs suchen',
-                          prefixIcon: Icon(Icons.search, size: 18),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    // One button for the whole page, so uploading works whether the library is
-                    // empty or already has songs in it. Its label follows what is actually
-                    // happening, and it is not usable while a batch is on its way or while the
-                    // list it would add to is still being read. Local mode has no server to
-                    // upload to.
-                    if (!_settings.localMode)
-                      FilledButton(
-                        onPressed: _loading || _picking || _uploading ? null : _upload,
-                        child: Text(_uploading ? 'Wird hochgeladen…' : 'Song hochladen'),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    for (final key in sortKeys) _sortChip(key),
-                    OutlinedButton.icon(
-                      onPressed: _openFilters,
-                      icon: const Icon(Icons.filter_list, size: 18),
-                      label: Text(filterCount == 0 ? 'Filter' : 'Filter ($filterCount)'),
-                    ),
-                  ],
-                ),
-                // The picked values stay visible above the list, so a narrowed list always
-                // says why it is narrow. Each chip can be taken off on its own; the button
-                // takes all of them off at once.
-                if (_filters.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      for (final category in filterKeys)
-                        for (final value in _filters[category] ?? const <String>{})
-                          InputChip(
-                            label: Text('$category: $value'),
-                            onDeleted: () => setState(() => _removeFilter(category, value)),
-                            deleteButtonTooltipMessage: 'Filter $category: $value entfernen',
-                          ),
-                      TextButton(onPressed: _resetFilters, child: const Text('Filter zurücksetzen')),
-                    ],
-                  ),
-                ],
-                // A wide layout keeps the filter open below the list controls; the phone puts
-                // the same panel in an overlay instead.
-                if (_filtersOpen && inlineFilters)
-                  _filterPanel(
-                    options: _filterOptions(),
-                    selected: _filters,
-                    onToggle: (category, value) => setState(() => _toggleFilter(_filters, category, value)),
-                    onReset: _resetFilters,
-                    // The chip row right above the panel already resets all filters.
-                    showReset: false,
-                  ),
-              ],
-            ),
-          ),
-          // A message about a read is not shown while a new read is on its way: the page
-          // would be reporting what an earlier answer said and what it is doing at the same
-          // time.
-          if (_note != null && !_loading)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
-              child: Row(
-                children: [
-                  Expanded(child: Text(_note!, style: TextStyle(color: scheme.error))),
-                  // Only a read can be started again from here.
-                  if (_noteIsReadError)
-                    TextButton(onPressed: _load, child: const Text('Erneut versuchen')),
-                ],
-              ),
-            ),
-          // While the list is on its way the page says that. It cannot claim what the library
-          // holds before it has an answer, and an empty message here read as "there is
-          // nothing" while the request was still open.
-          Expanded(
-            child: _loading
-                ? _loadingState()
-                : rows.isEmpty
-                ? _empty()
-                : ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-                    itemCount: rows.length,
-                    itemBuilder: (context, index) => _row(rows[index]),
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _sortChip(String key) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final picked = key == _sort;
-
-    // The selected one is shown by color alone, so it is said again for anyone who does not
-    // see the fill, and the row is tall enough to be a target, not a line.
-    return Semantics(
-      button: true,
-      selected: picked,
-      child: InkWell(
-        onTap: () => setState(() => _sort = key),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
-          decoration: BoxDecoration(
-            color: picked ? scheme.primary : scheme.surfaceContainer,
-            border: Border.all(color: picked ? scheme.primary : scheme.outline),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Text(
-            key,
-            style: theme.textTheme.labelLarge?.copyWith(color: picked ? scheme.onPrimary : scheme.onSurfaceVariant),
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// While the list is on its way the page says what it is doing, because it cannot claim
-  /// anything about a library it has not read.
   Widget _loadingState() {
     final theme = Theme.of(context);
 
@@ -832,14 +1477,29 @@ class _LibraryScreenState extends State<LibraryScreen> {
           const SizedBox(height: 8),
           Text(
             'Songs werden geladen.',
-            style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _empty() {
+  Widget _emptyMessage(String message) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+      child: Text(
+        message,
+        style: theme.textTheme.bodyMedium?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+        ),
+      ),
+    );
+  }
+
+  Widget _empty(bool searching, bool filtering) {
     final theme = Theme.of(context);
     final emptyLibrary = _tracks.isEmpty && _local.tracks.isEmpty;
 
@@ -848,133 +1508,31 @@ class _LibraryScreenState extends State<LibraryScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Where a message above already says what went wrong, nothing here claims what the
-          // library holds — that would be the page lying about an answer it never got.
           if (_note == null) ...[
             Text(
               emptyLibrary
                   ? (_settings.localMode
                         ? 'Die Bibliothek ist noch leer. Füge auf der Startseite lokale Songs hinzu.'
                         : 'Die Bibliothek ist noch leer. Lade einen Song hoch, um sie zu füllen.')
-                  : _filters.isNotEmpty
+                  : filtering
                   ? 'Keine Songs gefunden.'
                   : 'Keine Songs passen zur Suche.',
-              style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
-            // A filter the user set can hide every song, and the list behind this message is
-            // not the place to take it off again.
-            if (!emptyLibrary && _filters.isNotEmpty) ...[
+            if (!emptyLibrary && filtering) ...[
               const SizedBox(height: 8),
               Align(
                 alignment: Alignment.centerLeft,
-                child: TextButton(onPressed: _resetFilters, child: const Text('Filter zurücksetzen')),
+                child: TextButton(
+                  onPressed: _resetFilters,
+                  child: const Text('Filter zurücksetzen'),
+                ),
               ),
             ],
           ],
         ],
-      ),
-    );
-  }
-
-  /// One song: its name, what is known about it, and the actions the menu has. The whole
-  /// row can be tapped, so playing a song does not need the small icon. A song on this
-  /// device says so instead of an artist, and has no server actions.
-  Widget _row(_Entry entry) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final track = entry.track;
-    final local = entry.local;
-    // The row of the song that is current is the one the bar at the bottom is showing, so
-    // both agree on what is current. A local file has no queue slot, so the player's own
-    // current song decides there.
-    final current = local != null
-        ? identical(widget.player.localCurrent, local)
-        : widget.queue.current?.trackId == track!.id;
-    final artist = entry.artist;
-
-    void play() {
-      if (local != null) {
-        _playLocal(local);
-      } else {
-        _play(track!);
-      }
-    }
-
-    return InkWell(
-      onTap: _busy ? null : play,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-        decoration: BoxDecoration(
-          // The current song is the one place on this page where the accent marks what is
-          // active; nothing else on the page is accent-colored.
-          color: current ? scheme.surfaceContainer : null,
-          border: Border(
-            // Flutter's default border color is black, so an unmarked row has to be said as
-            // transparent rather than left out.
-            left: BorderSide(color: current ? scheme.primary : Colors.transparent, width: 2),
-            bottom: BorderSide(color: scheme.outline),
-          ),
-        ),
-        child: Row(
-          children: [
-            IconButton(
-              tooltip: 'Abspielen',
-              onPressed: _busy ? null : play,
-              icon: Icon(Icons.play_arrow, color: current ? scheme.primary : scheme.onSurfaceVariant),
-            ),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    entry.title,
-                    style: theme.textTheme.labelLarge?.copyWith(color: current ? scheme.primary : null),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  Text(
-                    // What is known about the song: the artist its tags name, or what its own
-                    // name says when they do not. A song on this device has no tags to read.
-                    // Where nothing is known, the row shows a dash.
-                    local != null ? 'Auf diesem Gerät' : (artist.isEmpty ? unknownValue : artist),
-                    style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
-            // The length is put at the end of the row, so a list can be read top to bottom
-            // without reading every line.
-            Text(
-              entry.duration,
-              style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-            ),
-            const SizedBox(width: 12),
-            // A local file is not on the server, so it cannot go into a server queue or a
-            // server playlist.
-            if (track != null)
-              PopupMenuButton<String>(
-                tooltip: 'Aktionen für ${entry.title}',
-                onSelected: (value) {
-                  if (value == 'queue') {
-                    _addToQueue(track);
-                  } else {
-                    _addToPlaylist(track, int.parse(value));
-                  }
-                },
-                itemBuilder: (context) => [
-                  // Which playlists exist is the playlist page; here the menu can only add to
-                  // one that this page has read, or start the first one.
-                  if (_playlists.isEmpty)
-                    const PopupMenuItem(value: '0', child: Text('Zur neuen Playlist „Meine Playlist“')),
-                  for (final playlist in _playlists)
-                    PopupMenuItem(value: playlist.id.toString(), child: Text('Zur Playlist „${playlist.name}“')),
-                  const PopupMenuItem(value: 'queue', child: Text('Zur Warteschlange hinzufügen')),
-                ],
-              ),
-          ],
-        ),
       ),
     );
   }
