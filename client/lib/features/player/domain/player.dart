@@ -89,6 +89,31 @@ class QueuePlayer {
   double get volume => _volume;
   double get volumeBeforeMute => _volumeBeforeMute;
 
+  /// The songs the person marked with the heart. There is no like endpoint (api-docs.md,
+  /// Upcoming), so this is the device's memory and starts empty on every run.
+  /// shortcut: a like lives for the session; upgrade when the server has a favourites list.
+  final Set<String> _liked = {};
+
+  /// The key of the song that is open, or null when nothing is. A local song has no server id,
+  /// so its path (or its title for a browser pick) is what names it.
+  String? get likeKey {
+    final local = localCurrent;
+    if (local != null) return 'local:${local.path ?? local.title}';
+    final entry = queue.current;
+    return entry == null ? null : 'server:${entry.trackId}:${entry.title}';
+  }
+
+  bool get isLiked {
+    final key = likeKey;
+    return key != null && _liked.contains(key);
+  }
+
+  void toggleLike() {
+    final key = likeKey;
+    if (key == null) return;
+    if (!_liked.remove(key)) _liked.add(key);
+  }
+
   /// What an attempt by itself reported. A song that ends on its own has no tap behind it,
   /// so an error there would be a future nobody looks at, and the page would show a new
   /// current song without saying that opening it failed. A page that shows the queue reads

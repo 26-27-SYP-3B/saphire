@@ -42,6 +42,9 @@ class PlaylistsScreen extends StatefulWidget {
     this.settings,
     this.localLibrary,
     this.covers,
+    this.initialId,
+    this.initialLocalName,
+    this.openCreate = false,
   });
 
   final PlaylistRepository playlists;
@@ -59,6 +62,13 @@ class PlaylistsScreen extends StatefulWidget {
   final SettingsStore? settings;
   final LocalLibrary? localLibrary;
   final CoverStore? covers;
+
+  /// A playlist a link picked, or a local one by name. Null opens the list without a detail.
+  final int? initialId;
+  final String? initialLocalName;
+
+  /// A link may ask for the create sheet, which is what the "+" in the sidebar does.
+  final bool openCreate;
 
   @override
   State<PlaylistsScreen> createState() => _PlaylistsScreenState();

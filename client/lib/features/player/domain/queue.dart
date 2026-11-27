@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import '../../library/domain/local_track.dart';
 
 /// One song in a queue. It is either a reference to a library song, exactly as the queue
@@ -12,14 +14,23 @@ class QueueEntry {
     this.artist = '',
     this.durationMs = 0,
     this.waveform = const [],
+    this.cover,
     this.manual = false,
     this.local,
   });
 
   /// A row that is a file on this device. There is no server id for it, so `trackId` is -1
   /// and `local` is the whole row.
-  factory QueueEntry.fromLocal(int position, LocalTrack track, {bool manual = true}) =>
-      QueueEntry(position: position, trackId: -1, title: track.title, manual: manual, local: track);
+  factory QueueEntry.fromLocal(int position, LocalTrack track, {bool manual = true}) => QueueEntry(
+    position: position,
+    trackId: -1,
+    title: track.title,
+    artist: track.artist,
+    durationMs: track.durationMs,
+    cover: track.cover,
+    manual: manual,
+    local: track,
+  );
 
   /// 1-based, as the server numbers the slots. The positions stay contiguous, so a row
   /// can be addressed without knowing what was removed before it.
@@ -39,6 +50,9 @@ class QueueEntry {
 
   /// The song's shape as 64 peaks from 0 to 255, empty when the server could not decode it.
   final List<int> waveform;
+
+  /// The cover the file's tags carry, when it has one.
+  final Uint8List? cover;
 
   /// How the row got into the queue: the person put it there themselves, or a list did. The
   /// queue answer names no source, so this is what the mirror keeps, and it is the only thing
@@ -68,6 +82,7 @@ class QueueEntry {
     artist: artist,
     durationMs: durationMs,
     waveform: waveform,
+    cover: cover,
     manual: manual,
     local: local,
   );
@@ -79,6 +94,7 @@ class QueueEntry {
     artist: artist,
     durationMs: durationMs,
     waveform: waveform,
+    cover: cover,
     manual: true,
     local: local,
   );

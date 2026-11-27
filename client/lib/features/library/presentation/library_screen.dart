@@ -127,6 +127,7 @@ class LibraryScreen extends StatefulWidget {
     this.settings,
     this.localLibrary,
     this.initialTrackId,
+    this.initialView,
   });
 
   final LibraryRepository library;
@@ -148,6 +149,9 @@ class LibraryScreen extends StatefulWidget {
   /// `/library?track=<id>` address is the same as tapping the row. Null when the page was opened
   /// without a link.
   final int? initialTrackId;
+
+  /// The chip a link picked: `albums`, `artists` or `local`. Null opens the song list.
+  final String? initialView;
 
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();

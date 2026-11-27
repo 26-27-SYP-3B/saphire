@@ -491,7 +491,7 @@ void main() {
     expect(find.textContaining('angelegt'), findsOneWidget);
     expect(local.playlists.single.name, 'Favoriten');
 
-    await tester.tap(find.widgetWithText(ListTile, 'Favoriten'));
+    await tester.tap(find.widgetWithText(ListTile, 'Favoriten').last);
     await tester.pumpAndSettle();
 
     await tester.tap(find.byType(DropdownButton<int>));

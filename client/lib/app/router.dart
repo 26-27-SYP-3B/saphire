@@ -13,6 +13,7 @@ import '../features/library/presentation/library_screen.dart';
 import '../features/playlists/data/cover_store.dart';
 import '../features/playlists/data/playlist_repository.dart';
 import '../features/playlists/presentation/playlists_screen.dart';
+import '../features/search/presentation/search_screen.dart';
 import '../features/player/data/queue_repository.dart';
 import '../features/player/domain/player.dart';
 import '../features/player/domain/queue.dart';
@@ -148,6 +149,22 @@ GoRouter buildRouter({
           settings: settingsStore,
           localLibrary: localLibrary,
           covers: covers,
+          initialId: int.tryParse(state.uri.queryParameters['id'] ?? ''),
+          initialLocalName: state.uri.queryParameters['local'],
+          openCreate: state.uri.queryParameters['create'] == '1',
+        ),
+      ),
+      GoRoute(
+        path: '/search',
+        builder: (context, state) => SearchScreen(
+          library: library,
+          playlists: playlists,
+          queues: queues,
+          queue: queue,
+          player: player,
+          session: session,
+          settings: settingsStore,
+          localLibrary: localLibrary,
         ),
       ),
       GoRoute(
@@ -165,6 +182,7 @@ GoRouter buildRouter({
           settings: settingsStore,
           localLibrary: localLibrary,
           initialTrackId: int.tryParse(state.uri.queryParameters['track'] ?? ''),
+          initialView: state.uri.queryParameters['view'],
         ),
       ),
     ],

@@ -49,3 +49,19 @@ class LocalTrack {
     cover: cover,
   );
 }
+
+/// The other direction: a row in the shared shape that is a file on this device, passed to the
+/// player that only knows how to open a path or bytes.
+extension TrackOnDevice on Track {
+  LocalTrack toLocalTrack() => LocalTrack(
+    title: title,
+    path: localPath,
+    bytes: localBytes,
+    artist: artist,
+    album: album,
+    genre: genre,
+    year: year,
+    durationMs: durationMs,
+    cover: cover,
+  );
+}
