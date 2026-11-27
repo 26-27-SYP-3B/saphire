@@ -772,6 +772,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     filterCount == 0 ? 'Filter' : 'Filter ($filterCount)',
                   ),
                 ),
+                if (phone)
+                  PopupMenuButton<String>(
+                    tooltip: 'Sortieren',
+                    icon: const Icon(Icons.sort, size: 20),
+                    onSelected: (key) => setState(() => _sort = key),
+                    itemBuilder: (context) => [
+                      for (final key in sortKeys)
+                        CheckedPopupMenuItem(value: key, checked: key == _sort, child: Text(key)),
+                    ],
+                  ),
                 const SizedBox(width: 4),
                 IconButton(
                   tooltip: _grid ? 'Liste' : 'Raster',
