@@ -372,7 +372,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
   /// page starts a playlist. A song on this device plays straight from the file.
   Future<void> _play(Track track) => _control(() async {
     if (track.isLocal) {
-      await widget.player.playLocal(track.toLocalTrack());
+      final file = track.toLocalTrack();
+      // A song played from the library replaces the device queue, the same way starting one
+      // server song replaces the server queue.
+      _local.setQueue([file]);
+      await widget.player.playLocal(file);
       return;
     }
     widget.queue.fill(await widget.queues.fill(QueueSource.track(track.id)));

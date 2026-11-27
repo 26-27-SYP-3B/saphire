@@ -112,7 +112,9 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Future<void> _play(Track track) => _control(() async {
     if (track.isLocal) {
-      await widget.player.playLocal(track.toLocalTrack());
+      final file = track.toLocalTrack();
+      _local.setQueue([file]);
+      await widget.player.playLocal(file);
       return;
     }
     widget.queue.fill(await widget.queues.fill(QueueSource.track(track.id)));

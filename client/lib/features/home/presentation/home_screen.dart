@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -360,8 +361,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   /// A local song plays straight from the device: no queue call and no token, so it works
   /// with no server and no account.
-  Future<void> _playLocal(LocalTrack track) =>
-      _control(() => widget.player.playLocal(track));
+  Future<void> _playLocal(LocalTrack track) => _control(() async {
+    // The stored queue is what the queue panel reads; a song played on its own replaces it,
+    // so the panel names the song that is really playing.
+    _local.setQueue([track]);
+    await widget.player.playLocal(track);
+  });
 
   /// Long-pressing a local card puts the song into the local queue. The queue in the bar
   /// then plays the list in order, still without a server.
@@ -654,7 +659,9 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _card(({String title, String meta, IconData icon}) item) {
+  Widget _card(
+    ({String title, String meta, IconData icon, Uint8List? cover}) item,
+  ) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
@@ -686,10 +693,23 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Padding(
-                padding: const EdgeInsets.all(10),
-                child: Icon(item.icon, color: scheme.onSurface),
-              ),
+              child: item.cover == null
+                  ? Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: Icon(item.icon, color: scheme.onSurface),
+                    )
+                  : ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.memory(
+                        item.cover!,
+                        fit: BoxFit.cover,
+                        cacheWidth: 400,
+                        errorBuilder: (context, error, stack) => Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: Icon(item.icon, color: scheme.onSurface),
+                        ),
+                      ),
+                    ),
             ),
             const SizedBox(height: 10),
             Text(
@@ -720,8 +740,9 @@ class _HomeScreenState extends State<HomeScreen> {
       onTap: _busy ? null : () => _play(entry),
       child: _card((
         title: entry.title,
-        meta: 'Bibliothek',
+        meta: displayArtist(entry),
         icon: Icons.audio_file,
+        cover: entry.cover,
       )),
     );
   }
@@ -736,6 +757,7 @@ class _HomeScreenState extends State<HomeScreen> {
         title: track.title,
         meta: '${displayArtist(track.toTrack())} · Lokal',
         icon: Icons.audiotrack,
+        cover: track.cover,
       )),
     );
   }

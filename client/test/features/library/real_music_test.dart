@@ -17,6 +17,7 @@ import 'package:saphire_client/features/player/data/queue_repository.dart';
 import 'package:saphire_client/features/player/domain/player.dart';
 import 'package:saphire_client/features/player/domain/queue.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
+import 'package:saphire_client/shared/widgets/now_playing_header.dart';
 import 'package:saphire_client/shared/widgets/player_bar.dart';
 
 import '../../support/fake_player.dart';
@@ -155,26 +156,58 @@ void main() {
       );
       expect(audio.opened.single, contains('Angst.mp3'));
 
+      // The desktop "Gerade läuft" panel gets the same cover, title and artist as the bar.
+      await tester.tap(find.byTooltip('Warteschlange'));
+      await tester.pumpAndSettle();
+
+      final header = find.byType(NowPlayingHeader);
+      expect(header, findsOneWidget);
+      expect(find.text('Gerade läuft'), findsOneWidget);
+      expect(
+        find.descendant(of: header, matching: find.text('Angst')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: header, matching: find.text('Rammstein')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: header, matching: find.byType(Image)),
+        findsOneWidget,
+      );
+
+      expect(audio.stopped, isEmpty);
+
+      await tester.tap(find.byTooltip('Warteschlange schließen'));
+      await tester.pumpAndSettle();
+
       // The same page at a phone size keeps the title and artist readable.
       tester.view
         ..physicalSize = const Size(420, 900)
         ..devicePixelRatio = 1.0;
       await tester.pumpAndSettle();
 
+      final bar = find.byType(PlayerBar);
       expect(
-        find.descendant(
-          of: find.byType(PlayerBar),
-          matching: find.text('Angst'),
-        ),
+        find.descendant(of: bar, matching: find.text('Angst')),
         findsOneWidget,
       );
       expect(
-        find.descendant(
-          of: find.byType(PlayerBar),
-          matching: find.text('Rammstein'),
-        ),
+        find.descendant(of: bar, matching: find.text('Rammstein')),
         findsOneWidget,
       );
+
+      // Tapping the mini player opens the phone view: no volume, no ten-second jumps, one
+      // plain seek line and the cover from the tag.
+      await tester.tap(find.descendant(of: bar, matching: find.text('Angst')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(Slider), findsOneWidget);
+      expect(find.byIcon(Icons.replay_10), findsNothing);
+      expect(find.byIcon(Icons.forward_10), findsNothing);
+      expect(find.byTooltip('Stumm'), findsNothing);
+      expect(find.byTooltip('Warteschlange'), findsOneWidget);
+      expect(find.byType(Image), findsWidgets);
       expect(tester.takeException(), isNull);
 
       // The binding tears the widget tree down after the test; the fake player's streams are
