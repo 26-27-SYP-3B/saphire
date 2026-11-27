@@ -20,6 +20,7 @@ import 'package:saphire_client/features/player/presentation/queue_panel.dart';
 import 'package:saphire_client/features/playlists/presentation/playlists_screen.dart';
 import 'package:saphire_client/features/upload/data/upload_repository.dart';
 import 'package:saphire_client/features/upload/domain/track.dart';
+import 'package:saphire_client/shared/widgets/library_sidebar.dart';
 import 'package:saphire_client/shared/widgets/player_bar.dart';
 
 import '../../support/fake_player.dart';
@@ -67,6 +68,14 @@ const libraryAnswer = [
     'uploaded_at': 100.0,
   },
 ];
+
+// One playlist for the Playlists chip and the sidebar.
+const playlistForLibrary = {
+  'id': 1.0,
+  'name': 'Favoriten',
+  'created_at': 1794180269.0,
+  'song_count': 2.0,
+};
 
 // What POST /api/queue answers for a fill from one song: that song at slot 1. A queue entry
 // is only a reference to a library song, so the title here is the title the library row has,
@@ -118,7 +127,9 @@ Future<Wiring> openLibrary(
 }) async {
   // The test font draws every glyph as wide as the font size, so this page needs
   // more room than the default test window.
-  tester.view..physicalSize = size..devicePixelRatio = 1.0;
+  tester.view
+    ..physicalSize = size
+    ..devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
 
@@ -148,8 +159,15 @@ Future<Wiring> openLibrary(
         queue: wiring.queue,
         player: wiring.player,
         session: wiring.session,
-        uploads: UploadRepository(Dio()..httpClientAdapter = uploadAdapter ?? list, wiring.session),
-        pickAudio: pickAudio ?? (() async => [(name: 'song.mp3', bytes: Uint8List.fromList([1, 2, 3]))]),
+        uploads: UploadRepository(
+          Dio()..httpClientAdapter = uploadAdapter ?? list,
+          wiring.session,
+        ),
+        pickAudio:
+            pickAudio ??
+            (() async => [
+              (name: 'song.mp3', bytes: Uint8List.fromList([1, 2, 3])),
+            ]),
         settings: settings,
         localLibrary: localLibrary ?? LocalLibrary(),
         initialTrackId: initialTrackId,
@@ -181,7 +199,11 @@ Future<void> openFilterPanel(WidgetTester tester) async {
 
 /// A filter value is drawn as a chip and, for an artist, again in a row, so a pick addresses
 /// the chip by the category it belongs to rather than by the text it shows.
-Future<void> pickFilter(WidgetTester tester, String category, String value) async {
+Future<void> pickFilter(
+  WidgetTester tester,
+  String category,
+  String value,
+) async {
   final chip = find.byKey(ValueKey('filter-$category-$value'));
   // The panel scrolls when it is taller than its box, so a category further down has to be
   // brought into view before it can be tapped.
@@ -194,16 +216,19 @@ Future<void> pickFilter(WidgetTester tester, String category, String value) asyn
 /// The rows as the page shows them, top to bottom. A row can only be told apart by
 /// the text it draws, so the titles are what the order is read from.
 List<String> shownOrder(WidgetTester tester, List<String> titles) {
-  final rows = [for (final title in titles) (title, tester.getTopLeft(find.text(title)).dy)]
-    ..sort((a, b) => a.$2.compareTo(b.$2));
+  final rows = [
+    for (final title in titles) (title, tester.getTopLeft(find.text(title)).dy),
+  ]..sort((a, b) => a.$2.compareTo(b.$2));
 
   return [for (final row in rows) row.$1];
 }
 
 // The row's own play icon, not the one the bar at the bottom has. Both are called
 // 'Abspielen', so an unscoped finder here would find the bar's button as well.
-Finder playIcon(WidgetTester tester) =>
-    find.descendant(of: find.byType(ListView), matching: find.byTooltip('Abspielen'));
+Finder playIcon(WidgetTester tester) => find.descendant(
+  of: find.byType(CustomScrollView),
+  matching: find.byTooltip('Abspielen'),
+);
 
 void main() {
   test('reads the library answer as songs', () async {
@@ -212,7 +237,11 @@ void main() {
       loggedIn(),
     ).list();
 
-    expect(tracks.map((track) => track.title), ['Neutrone (Remix)', 'Alle Songs', 'Bohne']);
+    expect(tracks.map((track) => track.title), [
+      'Neutrone (Remix)',
+      'Alle Songs',
+      'Bohne',
+    ]);
     expect(tracks.first.artist, 'Kraftwerk');
     expect(tracks.first.album, 'Trans Europa Express');
     expect(tracks.first.genre, 'Elektronik');
@@ -230,18 +259,29 @@ void main() {
   // A row that is not an object cannot be half a song, so the answer is an error.
   test('a row that is not an object is an error', () async {
     await expectLater(
-      LibraryRepository(Dio()..httpClientAdapter = StubAdapter(200, [4.0]), loggedIn()).list(),
+      LibraryRepository(
+        Dio()..httpClientAdapter = StubAdapter(200, [4.0]),
+        loggedIn(),
+      ).list(),
       throwsA(isA<LibraryException>()),
     );
   });
 
-  // The artist is what the file's tags said. Only where the file does not say one is
-  // the name used, and a name that does not say it shows nothing.
-  test('the artist is the server field, or the name when the file has no tags', () {
-    expect(artistOf(Track(id: 1, title: 'Neutrone (Remix)', artist: 'Kraftwerk')), 'Kraftwerk');
-    expect(artistOf(Track(id: 2, title: 'Kraftwerk - Technogal.mp3')), 'Kraftwerk');
-    expect(artistOf(Track(id: 3, title: 'Alle Songs.mp3')), '');
-    expect(artistFromName('A - Titel.mp3'), 'A');
+  // The artist is what the tags said. A file without an artist tag says so; nothing is
+  // guessed from the file name.
+  test('the artist is the tag, or the unknown-artist placeholder', () {
+    expect(
+      artistOf(Track(id: 1, title: 'Neutrone (Remix)', artist: 'Kraftwerk')),
+      'Kraftwerk',
+    );
+    expect(
+      artistOf(Track(id: 2, title: 'Kraftwerk - Technogal.mp3')),
+      'Unbekannter Künstler',
+    );
+    expect(
+      artistOf(Track(id: 3, title: 'Alle Songs.mp3')),
+      'Unbekannter Künstler',
+    );
   });
 
   test('a length is shown as minutes and seconds, a file that cannot be measured as a dash', () {
@@ -250,7 +290,9 @@ void main() {
     expect(durationOf(Track(id: 3, title: 'x')), '–');
   });
 
-  testWidgets('the library shows every song with its artist and length', (tester) async {
+  testWidgets('the library shows every song with its artist and length', (
+    tester,
+  ) async {
     await openLibrary(tester);
 
     expect(find.text('Neutrone (Remix)'), findsOneWidget);
@@ -276,18 +318,27 @@ void main() {
 
   // Only [] means empty. An answer that is not the documented list is an error the
   // user is told about, not a library that looks empty.
-  testWidgets('an answer that is not the documented list shows an error', (tester) async {
+  testWidgets('an answer that is not the documented list shows an error', (
+    tester,
+  ) async {
     await openLibrary(tester, libraryBody: {'id': 4.0});
 
-    expect(find.text('Die Antwort des Servers konnte nicht gelesen werden.'), findsOneWidget);
+    expect(
+      find.text('Die Antwort des Servers konnte nicht gelesen werden.'),
+      findsOneWidget,
+    );
     expect(find.textContaining('Bibliothek ist noch leer'), findsNothing);
   });
 
   // A page that got an error says what happened and offers the one thing that can
   // still work: reading the list again. Showing "the library is empty" here would be
   // the page claiming something about an answer it never received.
-  testWidgets('a failed read says what happened and can be started again', (tester) async {
-    final adapter = StubAdapter(401, {'error': 'session is not valid or expired'});
+  testWidgets('a failed read says what happened and can be started again', (
+    tester,
+  ) async {
+    final adapter = StubAdapter(401, {
+      'error': 'session is not valid or expired',
+    });
 
     await openLibrary(tester, libraryAdapter: adapter);
 
@@ -311,8 +362,12 @@ void main() {
   testWidgets('the retry only belongs to a failed read', (tester) async {
     await openLibrary(
       tester,
-      libraryAdapter: StubAdapter(401, {'error': 'session is not valid or expired'}),
-      uploadAdapter: StubAdapter(400, {'error': 'only audio files are accepted'}),
+      libraryAdapter: StubAdapter(401, {
+        'error': 'session is not valid or expired',
+      }),
+      uploadAdapter: StubAdapter(400, {
+        'error': 'only audio files are accepted',
+      }),
     );
 
     expect(find.text('Erneut versuchen'), findsOneWidget);
@@ -320,13 +375,18 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Song hochladen'));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('only audio files are accepted'), findsOneWidget);
+    expect(
+      find.textContaining('only audio files are accepted'),
+      findsOneWidget,
+    );
     expect(find.text('Erneut versuchen'), findsNothing);
   });
 
   // While the list is still on its way the page says so, instead of claiming the
   // library is empty — that is what a slow server looked like before.
-  testWidgets('the page says what it is doing while the list is on its way', (tester) async {
+  testWidgets('the page says what it is doing while the list is on its way', (
+    tester,
+  ) async {
     final adapter = StubAdapter(200, libraryAnswer);
     final gate = Completer<void>();
     adapter.wait = gate.future;
@@ -364,7 +424,9 @@ void main() {
     expect(find.text('Bohne'), findsNothing);
   });
 
-  testWidgets('the sort selection orders the rows by what was picked', (tester) async {
+  testWidgets('the sort selection orders the rows by what was picked', (
+    tester,
+  ) async {
     await openLibrary(tester);
 
     // Titel, the default: what starts with A comes first.
@@ -375,13 +437,21 @@ void main() {
 
     // Interpret: the artists decide the order, so this is a different order than by
     // title — the rows are the same rows, only moved.
-    expect(shownOrder(tester, titles), ['Bohne', 'Neutrone (Remix)', 'Alle Songs']);
+    expect(shownOrder(tester, titles), [
+      'Bohne',
+      'Neutrone (Remix)',
+      'Alle Songs',
+    ]);
 
     await pickSort(tester, 'Hinzugefügt am');
 
     // Hinzugefügt am: the newer song comes first, which is a different order than
     // either of the other two, so this branch is really the one that decided it.
-    expect(shownOrder(tester, titles), ['Neutrone (Remix)', 'Alle Songs', 'Bohne']);
+    expect(shownOrder(tester, titles), [
+      'Neutrone (Remix)',
+      'Alle Songs',
+      'Bohne',
+    ]);
   });
 
   // The comparison is case-insensitive, so a name that starts with a small letter comes
@@ -392,8 +462,20 @@ void main() {
     await openLibrary(
       tester,
       libraryBody: [
-        {'id': 1.0, 'title': 'Zeh', 'artist': 'ahn', 'duration_ms': 0.0, 'uploaded_at': 1.0},
-        {'id': 2.0, 'title': 'qhn', 'artist': 'Zeta', 'duration_ms': 0.0, 'uploaded_at': 2.0},
+        {
+          'id': 1.0,
+          'title': 'Zeh',
+          'artist': 'ahn',
+          'duration_ms': 0.0,
+          'uploaded_at': 1.0,
+        },
+        {
+          'id': 2.0,
+          'title': 'qhn',
+          'artist': 'Zeta',
+          'duration_ms': 0.0,
+          'uploaded_at': 2.0,
+        },
       ],
     );
 
@@ -412,12 +494,26 @@ void main() {
   // names, descending for the date, which is the direction that key already reads in. The
   // ids are the other way round than the capitals, so a comparison that did care about
   // case would answer differently.
-  testWidgets('rows the sort key cannot tell apart are ordered by id', (tester) async {
+  testWidgets('rows the sort key cannot tell apart are ordered by id', (
+    tester,
+  ) async {
     await openLibrary(
       tester,
       libraryBody: [
-        {'id': 8.0, 'title': 'Gleich', 'artist': 'Zukunft', 'duration_ms': 0.0, 'uploaded_at': 5.0},
-        {'id': 4.0, 'title': 'gleich', 'artist': 'Zukunft', 'duration_ms': 0.0, 'uploaded_at': 5.0},
+        {
+          'id': 8.0,
+          'title': 'Gleich',
+          'artist': 'Zukunft',
+          'duration_ms': 0.0,
+          'uploaded_at': 5.0,
+        },
+        {
+          'id': 4.0,
+          'title': 'gleich',
+          'artist': 'Zukunft',
+          'duration_ms': 0.0,
+          'uploaded_at': 5.0,
+        },
       ],
     );
 
@@ -431,7 +527,9 @@ void main() {
   // asks the shared player for the current entry, so the bar shows the same song the queue
   // page would. What the test can read is what the page sent and what the player was asked to
   // open — the title in the bar is the one the queue answer carries.
-  testWidgets('playing a song fills the queue with it and opens that song', (tester) async {
+  testWidgets('playing a song fills the queue with it and opens that song', (
+    tester,
+  ) async {
     final audio = FakePlayer();
     final queues = StubAdapter(200, queueFor(4, 'Neutrone (Remix)'));
     final wiring = await openLibrary(
@@ -447,7 +545,10 @@ void main() {
     expect(queues.lastOptions?.data, {'source': 'track', 'source_id': 4});
     expect(audio.opened, ['$apiBaseUrl/api/music/4']);
     expect(
-      find.descendant(of: find.byType(PlayerBar), matching: find.text('Neutrone (Remix)')),
+      find.descendant(
+        of: find.byType(PlayerBar),
+        matching: find.text('Neutrone (Remix)'),
+      ),
       findsOneWidget,
     );
     expect(wiring.queue.current?.trackId, 4);
@@ -470,7 +571,10 @@ void main() {
     expect(queues.lastOptions?.data, {'source': 'track', 'source_id': 8});
     expect(audio.opened, ['$apiBaseUrl/api/music/8']);
     expect(
-      find.descendant(of: find.byType(PlayerBar), matching: find.text('Alle Songs')),
+      find.descendant(
+        of: find.byType(PlayerBar),
+        matching: find.text('Alle Songs'),
+      ),
       findsOneWidget,
     );
   });
@@ -481,15 +585,22 @@ void main() {
   // colors the app paints.
   testWidgets('the row of the song that is playing is marked', (tester) async {
     final audio = FakePlayer();
-    final wiring = await openLibrary(tester, audio: audio, queues: StubAdapter(200, queueFor(8, 'Alle Songs')));
+    final wiring = await openLibrary(
+      tester,
+      audio: audio,
+      queues: StubAdapter(200, queueFor(8, 'Alle Songs')),
+    );
 
     // The bar at the bottom shows the same title once a song is playing, so a row is
     // looked for inside the list rather than anywhere on the screen.
     BoxDecoration decorationOf(String title) {
       final row = tester.widget<Container>(
         find.descendant(
-          of: find.byType(ListView),
-          matching: find.ancestor(of: find.text(title), matching: find.byType(Container)),
+          of: find.byType(CustomScrollView),
+          matching: find.ancestor(
+            of: find.text(title),
+            matching: find.byType(Container),
+          ),
         ),
       );
       return row.decoration! as BoxDecoration;
@@ -510,7 +621,10 @@ void main() {
     // The page and the bar name the same song.
     expect(wiring.queue.current?.trackId, 8);
     expect(
-      find.descendant(of: find.byType(PlayerBar), matching: find.text('Alle Songs')),
+      find.descendant(
+        of: find.byType(PlayerBar),
+        matching: find.text('Alle Songs'),
+      ),
       findsOneWidget,
     );
   });
@@ -518,26 +632,42 @@ void main() {
   // A song that cannot be opened is not a JSON answer from the server, so the message is the
   // exception's own text, shown on the page that made the call. The song never opened, so it
   // must not stay current and the bar must not name it as if it were playing.
-  testWidgets('a song the player cannot start is named by the page, not by the bar', (tester) async {
-    final audio = FakePlayer();
-    audio.openError = 'das Audioobjekt ist geschlossen';
-    final wiring = await openLibrary(tester, libraryBody: [libraryAnswer.first], queues: StubAdapter(200, queueFor(4, 'Neutrone (Remix)')), audio: audio);
+  testWidgets(
+    'a song the player cannot start is named by the page, not by the bar',
+    (tester) async {
+      final audio = FakePlayer();
+      audio.openError = 'das Audioobjekt ist geschlossen';
+      final wiring = await openLibrary(
+        tester,
+        libraryBody: [libraryAnswer.first],
+        queues: StubAdapter(200, queueFor(4, 'Neutrone (Remix)')),
+        audio: audio,
+      );
 
-    await tester.tap(playIcon(tester));
-    await tester.pumpAndSettle();
+      await tester.tap(playIcon(tester));
+      await tester.pumpAndSettle();
 
-    expect(find.textContaining('das Audioobjekt ist geschlossen'), findsOneWidget);
-    expect(wiring.queue.current, isNull);
-    expect(
-      find.descendant(of: find.byType(PlayerBar), matching: find.text('Nichts wird abgespielt')),
-      findsOneWidget,
-    );
-  });
+      expect(
+        find.textContaining('das Audioobjekt ist geschlossen'),
+        findsOneWidget,
+      );
+      expect(wiring.queue.current, isNull);
+      expect(
+        find.descendant(
+          of: find.byType(PlayerBar),
+          matching: find.text('Nichts wird abgespielt'),
+        ),
+        findsOneWidget,
+      );
+    },
+  );
 
   // Adding to the queue is a call, not a play: nothing becomes current, so the bar still names
   // no song. The menu's first entry creates the playlist it names when the page has none, and
   // the id the follow-up call uses is the one the answer carried.
-  testWidgets('the context menu adds a song to the queue and to a playlist', (tester) async {
+  testWidgets('the context menu adds a song to the queue and to a playlist', (
+    tester,
+  ) async {
     final playlistAdapter = StubAdapter(200, <Object>[]);
     // Answers in the order the page calls them: the list (nothing yet, so the menu can only
     // offer the first one), the create, then the song.
@@ -546,7 +676,11 @@ void main() {
       (201, createdPlaylist),
       (201, {'position': 1.0, 'track_id': 4.0, 'title': 'Neutrone (Remix)'}),
     ]);
-    final queueAdapter = StubAdapter(200, {'position': 1.0, 'track_id': 4.0, 'title': 'Neutrone (Remix)'});
+    final queueAdapter = StubAdapter(200, {
+      'position': 1.0,
+      'track_id': 4.0,
+      'title': 'Neutrone (Remix)',
+    });
 
     final wiring = await openLibrary(
       tester,
@@ -562,7 +696,13 @@ void main() {
     expect(queueAdapter.lastOptions?.data, {'track_id': 4});
     // The mirror takes the row the server answered with; adding does not make it current.
     expect(wiring.queue.entries.map((entry) => entry.trackId), [4]);
-    expect(find.descendant(of: find.byType(PlayerBar), matching: find.text('Nichts wird abgespielt')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(PlayerBar),
+        matching: find.text('Nichts wird abgespielt'),
+      ),
+      findsOneWidget,
+    );
 
     await openMenu(tester, 'Neutrone (Remix)');
     await tester.tap(find.text('Zur neuen Playlist „Meine Playlist“'));
@@ -571,28 +711,39 @@ void main() {
     // The list, the create, and the song at the id the create answered with — not an id the
     // page made up.
     final calls = playlistAdapter.requests;
-    expect(calls.map((request) => request.uri.path), ['/api/playlists', '/api/playlists', '/api/playlists/1/songs']);
+    expect(calls.map((request) => request.uri.path), [
+      '/api/playlists',
+      '/api/playlists',
+      '/api/playlists/1/songs',
+    ]);
     expect(calls[1].data, {'name': 'Meine Playlist'});
     expect(calls[2].data, {'track_id': 4});
   });
 
   testWidgets('an uploaded song is added to the library', (tester) async {
     final adapter = StubAdapter(200, [libraryAnswer.first]);
-    adapter.queue.add((201, {
-      'id': 9.0,
-      'uploaded_by': 'lukas',
-      'title': 'song.mp3',
-      // An artist and a length that differ from the listed song, so the row that came
-      // from this answer can be told apart from the one that came from the list.
-      'artist': 'Neu',
-      'duration_ms': 61000.0,
-      'stored_name': '18cfd7db41d243d98cc87c4ab33dded6.mp3',
-      'size': 1500000.0,
-      'content_type': 'audio/mpeg',
-      'uploaded_at': 1793974311.0,
-    }));
+    adapter.queue.add((
+      201,
+      {
+        'id': 9.0,
+        'uploaded_by': 'lukas',
+        'title': 'song.mp3',
+        // An artist and a length that differ from the listed song, so the row that came
+        // from this answer can be told apart from the one that came from the list.
+        'artist': 'Neu',
+        'duration_ms': 61000.0,
+        'stored_name': '18cfd7db41d243d98cc87c4ab33dded6.mp3',
+        'size': 1500000.0,
+        'content_type': 'audio/mpeg',
+        'uploaded_at': 1793974311.0,
+      },
+    ));
 
-    await openLibrary(tester, libraryBody: [libraryAnswer.first], uploadAdapter: adapter);
+    await openLibrary(
+      tester,
+      libraryBody: [libraryAnswer.first],
+      uploadAdapter: adapter,
+    );
     await tester.tap(find.widgetWithText(FilledButton, 'Song hochladen'));
     await tester.pumpAndSettle();
 
@@ -605,22 +756,85 @@ void main() {
 
   // The button stays disabled for the whole batch, and a file the server refused keeps
   // its message even when a later file of the same batch succeeds.
-  testWidgets('the button stays disabled for the batch and a refused file keeps its message', (tester) async {
+  testWidgets(
+    'the button stays disabled for the batch and a refused file keeps its message',
+    (tester) async {
+      final adapter = StubAdapter(200, [libraryAnswer.first]);
+      adapter.queue.add((
+        400,
+        {
+          'error': 'only audio files are accepted (mp3, wav, m4a, ogg, opus, flac, aac)',
+        },
+      ));
+      adapter.queue.add((
+        201,
+        {
+          'id': 10.0,
+          'uploaded_by': 'lukas',
+          'title': 'second.mp3',
+          'artist': '',
+          'duration_ms': 0.0,
+          'stored_name': '18cfd7db41d243d98cc87c4ab33dded6.mp3',
+          'size': 1500000.0,
+          'content_type': 'audio/mpeg',
+          'uploaded_at': 1793974311.0,
+        },
+      ));
+      final gate = Completer<void>();
+      adapter.wait = gate.future;
+
+      await openLibrary(
+        tester,
+        libraryBody: [libraryAnswer.first],
+        uploadAdapter: adapter,
+        pickAudio: () async => [
+          (name: 'notes.txt', bytes: Uint8List.fromList([1, 2, 3])),
+          (name: 'second.mp3', bytes: Uint8List.fromList([4, 5, 6])),
+        ],
+      );
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Song hochladen'));
+      await tester.pumpAndSettle();
+
+      // The first answer is held by the gate, so the second file has not been sent and the
+      // button is still disabled. The button is taken by type, so the label is checked as
+      // something the page chose rather than as the name the finder was given.
+      final button = tester.widget<FilledButton>(find.byType(FilledButton));
+      expect((button.child as Text).data, 'Wird hochgeladen…');
+      expect(button.onPressed, isNull);
+      expect(
+        find.textContaining('only audio files are accepted'),
+        findsNothing,
+      );
+
+      gate.complete();
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('notes.txt: only audio files are accepted'),
+        findsOneWidget,
+      );
+      expect(find.text('second.mp3'), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Song hochladen'),
+            )
+            .onPressed,
+        isNotNull,
+      );
+    },
+  );
+
+  // A file the server refuses is not added, so there is nothing to show for it but its message.
+  testWidgets('a file the server refuses is not added', (tester) async {
     final adapter = StubAdapter(200, [libraryAnswer.first]);
-    adapter.queue.add((400, {'error': 'only audio files are accepted (mp3, wav, m4a, ogg, opus, flac, aac)'}));
-    adapter.queue.add((201, {
-      'id': 10.0,
-      'uploaded_by': 'lukas',
-      'title': 'second.mp3',
-      'artist': '',
-      'duration_ms': 0.0,
-      'stored_name': '18cfd7db41d243d98cc87c4ab33dded6.mp3',
-      'size': 1500000.0,
-      'content_type': 'audio/mpeg',
-      'uploaded_at': 1793974311.0,
-    }));
-    final gate = Completer<void>();
-    adapter.wait = gate.future;
+    adapter.queue.add((
+      400,
+      {
+        'error': 'only audio files are accepted (mp3, wav, m4a, ogg, opus, flac, aac)',
+      },
+    ));
 
     await openLibrary(
       tester,
@@ -628,44 +842,15 @@ void main() {
       uploadAdapter: adapter,
       pickAudio: () async => [
         (name: 'notes.txt', bytes: Uint8List.fromList([1, 2, 3])),
-        (name: 'second.mp3', bytes: Uint8List.fromList([4, 5, 6])),
       ],
     );
-
     await tester.tap(find.widgetWithText(FilledButton, 'Song hochladen'));
     await tester.pumpAndSettle();
 
-    // The first answer is held by the gate, so the second file has not been sent and the
-    // button is still disabled. The button is taken by type, so the label is checked as
-    // something the page chose rather than as the name the finder was given.
-    final button = tester.widget<FilledButton>(find.byType(FilledButton));
-    expect((button.child as Text).data, 'Wird hochgeladen…');
-    expect(button.onPressed, isNull);
-    expect(find.textContaining('only audio files are accepted'), findsNothing);
-
-    gate.complete();
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('notes.txt: only audio files are accepted'), findsOneWidget);
-    expect(find.text('second.mp3'), findsOneWidget);
-    expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Song hochladen')).onPressed, isNotNull);
-  });
-
-  // A file the server refuses is not added, so there is nothing to show for it but its message.
-  testWidgets('a file the server refuses is not added', (tester) async {
-    final adapter = StubAdapter(200, [libraryAnswer.first]);
-    adapter.queue.add((400, {'error': 'only audio files are accepted (mp3, wav, m4a, ogg, opus, flac, aac)'}));
-
-    await openLibrary(
-      tester,
-      libraryBody: [libraryAnswer.first],
-      uploadAdapter: adapter,
-      pickAudio: () async => [(name: 'notes.txt', bytes: Uint8List.fromList([1, 2, 3]))],
+    expect(
+      find.textContaining('only audio files are accepted'),
+      findsOneWidget,
     );
-    await tester.tap(find.widgetWithText(FilledButton, 'Song hochladen'));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('only audio files are accepted'), findsOneWidget);
     expect(find.text('notes.txt'), findsNothing);
   });
 
@@ -673,13 +858,26 @@ void main() {
   // file name to show; the message says what to do next and the button is usable
   // again.
   testWidgets('a picker that fails says what to do next', (tester) async {
-    await openLibrary(tester, pickAudio: () async => throw Exception('no file picker in a test'));
+    await openLibrary(
+      tester,
+      pickAudio: () async => throw Exception('no file picker in a test'),
+    );
 
     await tester.tap(find.widgetWithText(FilledButton, 'Song hochladen'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Die Dateien konnten nicht gelesen werden. Versuch es erneut.'), findsOneWidget);
-    expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Song hochladen')).onPressed, isNotNull);
+    expect(
+      find.text('Die Dateien konnten nicht gelesen werden. Versuch es erneut.'),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Song hochladen'),
+          )
+          .onPressed,
+      isNotNull,
+    );
   });
 
   // Cancelling the picker is not an error, so nothing is claimed about it. A second
@@ -705,7 +903,7 @@ void main() {
 
     expect(find.text('Neutrone (Remix)'), findsOneWidget);
     expect(find.text('lokal.mp3'), findsOneWidget);
-    expect(find.text('Auf diesem Gerät'), findsOneWidget);
+    expect(find.text('Unbekannter Künstler'), findsOneWidget);
 
     await tester.enterText(find.byType(TextField), 'lokal');
     await tester.pumpAndSettle();
@@ -716,26 +914,32 @@ void main() {
 
   // Local mode has no server and no session: the songs on this device are all the page
   // needs, and uploading is not something it could offer.
-  testWidgets('a local library opens without a session and shows the songs on this device', (tester) async {
-    final local = LocalLibrary();
-    local.add(name: 'lokal.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
-    final adapter = StubAdapter(200, libraryAnswer);
+  testWidgets(
+    'a local library opens without a session and shows the songs on this device',
+    (tester) async {
+      final local = LocalLibrary();
+      local.add(
+        name: 'lokal.mp3',
+        bytes: Uint8List.fromList([0x49, 0x44, 0x33]),
+      );
+      final adapter = StubAdapter(200, libraryAnswer);
 
-    await openLibrary(
-      tester,
-      libraryAdapter: adapter,
-      settings: SettingsStore()..save(localMode: true),
-      localLibrary: local,
-    );
+      await openLibrary(
+        tester,
+        libraryAdapter: adapter,
+        settings: SettingsStore()..save(localMode: true),
+        localLibrary: local,
+      );
 
-    expect(find.text('lokal.mp3'), findsOneWidget);
-    expect(find.text('Auf diesem Gerät'), findsOneWidget);
-    // Not one call went to the server, so the page did not quietly read a library it
-    // cannot use.
-    expect(adapter.requests, isEmpty);
-    expect(find.text('Neutrone (Remix)'), findsNothing);
-    expect(find.widgetWithText(FilledButton, 'Song hochladen'), findsNothing);
-  });
+      expect(find.text('lokal.mp3'), findsOneWidget);
+      expect(find.text('Unbekannter Künstler'), findsOneWidget);
+      // Not one call went to the server, so the page did not quietly read a library it
+      // cannot use.
+      expect(adapter.requests, isEmpty);
+      expect(find.text('Neutrone (Remix)'), findsNothing);
+      expect(find.widgetWithText(FilledButton, 'Song hochladen'), findsNothing);
+    },
+  );
 
   testWidgets('a local row plays the file on this device', (tester) async {
     final audio = FakePlayer();
@@ -757,21 +961,41 @@ void main() {
     expect(audio.played, hasLength(1));
     // The bar names the same song, so the page does not say two things at once.
     expect(
-      find.descendant(of: find.byType(PlayerBar), matching: find.text('lokal.mp3')),
+      find.descendant(
+        of: find.byType(PlayerBar),
+        matching: find.text('lokal.mp3'),
+      ),
       findsOneWidget,
     );
-    // A file on this device has no server actions.
-    expect(find.byTooltip('Aktionen für lokal.mp3'), findsNothing);
+    // A file on this device can be queued and put into a local playlist, so it has its own
+    // actions menu now.
+    expect(find.byTooltip('Aktionen für lokal.mp3'), findsOneWidget);
 
     // The bar's play button continues the paused local song instead of clearing it.
-    await tester.tap(find.descendant(of: find.byType(PlayerBar), matching: find.byTooltip('Pause')));
+    await tester.tap(
+      find.descendant(
+        of: find.byType(PlayerBar),
+        matching: find.byTooltip('Pause'),
+      ),
+    );
     await tester.pumpAndSettle();
-    await tester.tap(find.descendant(of: find.byType(PlayerBar), matching: find.byTooltip('Abspielen')));
+    await tester.tap(
+      find.descendant(
+        of: find.byType(PlayerBar),
+        matching: find.byTooltip('Abspielen'),
+      ),
+    );
     await tester.pumpAndSettle();
 
     expect(audio.opened, hasLength(1));
     expect(audio.played, hasLength(2));
-    expect(find.descendant(of: find.byType(PlayerBar), matching: find.text('lokal.mp3')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(PlayerBar),
+        matching: find.text('lokal.mp3'),
+      ),
+      findsOneWidget,
+    );
   });
 
   // A shared link names a song, not a page: opening it is the same as tapping that row, so the
@@ -793,7 +1017,9 @@ void main() {
 
   // Without a server there is no library the link could name, so it says so instead of quietly
   // opening the device pages.
-  testWidgets('a link in local mode says the song is not in the library', (tester) async {
+  testWidgets('a link in local mode says the song is not in the library', (
+    tester,
+  ) async {
     final audio = FakePlayer();
     await openLibrary(
       tester,
@@ -802,17 +1028,25 @@ void main() {
       initialTrackId: 8,
     );
 
-    expect(find.text('Das verlinkte Lied ist nicht in der Bibliothek.'), findsOneWidget);
+    expect(
+      find.text('Das verlinkte Lied ist nicht in der Bibliothek.'),
+      findsOneWidget,
+    );
     expect(audio.opened, isEmpty);
   });
 
   // A link to a song that is no longer in the library must not open a different one; it says
   // what is missing and leaves the page as it is.
-  testWidgets('a link to a missing song says so and plays nothing', (tester) async {
+  testWidgets('a link to a missing song says so and plays nothing', (
+    tester,
+  ) async {
     final audio = FakePlayer();
     await openLibrary(tester, audio: audio, initialTrackId: 999);
 
-    expect(find.text('Das verlinkte Lied ist nicht in der Bibliothek.'), findsOneWidget);
+    expect(
+      find.text('Das verlinkte Lied ist nicht in der Bibliothek.'),
+      findsOneWidget,
+    );
     expect(audio.opened, isEmpty);
   });
 
@@ -820,8 +1054,12 @@ void main() {
   // buildRouter has a route for it. The library has one, so the item on Home opens this page
   // and the bar on this page leads back; that round trip is why the navigation is shared
   // rather than drawn per page.
-  testWidgets('the navigation opens the library and leads back', (tester) async {
-    tester.view..physicalSize = const Size(1600, 1200)..devicePixelRatio = 1.0;
+  testWidgets('the navigation opens the library and leads back', (
+    tester,
+  ) async {
+    tester.view
+      ..physicalSize = const Size(1600, 1200)
+      ..devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
@@ -836,7 +1074,14 @@ void main() {
     // The guard only reads the session, but Home asks who that session belongs to and drops it
     // when the answer is not there — so the test answers that call instead of sending it to a
     // network that is not there. Without this the page would be on the login, not on Home.
-    final auth = AuthRepository(Dio()..httpClientAdapter = StubAdapter(200, {'id': 7.0, 'username': 'lukas'}), wiring.session);
+    final auth = AuthRepository(
+      Dio()
+        ..httpClientAdapter = StubAdapter(200, {
+          'id': 7.0,
+          'username': 'lukas',
+        }),
+      wiring.session,
+    );
 
     final router = buildRouter(
       auth: auth,
@@ -856,7 +1101,7 @@ void main() {
 
     expect(find.byType(HomeScreen), findsOneWidget);
 
-    await tester.tap(find.text('Bibliothek'));
+    await tester.tap(find.byKey(const ValueKey('open-library')));
     await tester.pumpAndSettle();
 
     expect(find.byType(LibraryScreen), findsOneWidget);
@@ -865,7 +1110,12 @@ void main() {
     expect(find.text('Neutrone (Remix)'), findsOneWidget);
 
     // Every page with the sidebar leads on from every other one.
-    await tester.tap(find.text('Playlists'));
+    await tester.tap(
+      find.descendant(
+        of: find.byType(LibrarySidebar),
+        matching: find.text('Playlists'),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(find.byType(PlaylistsScreen), findsOneWidget);
 
@@ -887,14 +1137,22 @@ void main() {
 
   // The filter is read from the songs, so it can only offer what the list can show. A picked
   // value narrows the list at once and says how many songs are left.
-  testWidgets('the filter narrows the list and shows the hit count', (tester) async {
+  testWidgets('the filter narrows the list and shows the hit count', (
+    tester,
+  ) async {
     await openLibrary(tester);
     await openFilterPanel(tester);
 
-    expect(find.byKey(const ValueKey('filter-Interpret-Kraftwerk')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('filter-Interpret-Kraftwerk')),
+      findsOneWidget,
+    );
     expect(find.byKey(const ValueKey('filter-Album-Gemüse')), findsOneWidget);
     expect(find.byKey(const ValueKey('filter-Genre-Pop')), findsOneWidget);
-    expect(find.byKey(const ValueKey('filter-Erscheinungsjahr-2024')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('filter-Erscheinungsjahr-2024')),
+      findsOneWidget,
+    );
 
     await pickFilter(tester, 'Interpret', 'Kraftwerk');
 
@@ -907,33 +1165,38 @@ void main() {
   });
 
   // Two values of one category are an "or"; a second category is an "and" on top.
-  testWidgets('values of a category are combined with or, categories with and', (tester) async {
-    await openLibrary(tester);
-    await openFilterPanel(tester);
+  testWidgets(
+    'values of a category are combined with or, categories with and',
+    (tester) async {
+      await openLibrary(tester);
+      await openFilterPanel(tester);
 
-    await pickFilter(tester, 'Interpret', 'Kraftwerk');
-    await pickFilter(tester, 'Interpret', 'Anna');
+      await pickFilter(tester, 'Interpret', 'Kraftwerk');
+      await pickFilter(tester, 'Interpret', 'Anna');
 
-    expect(find.text('Neutrone (Remix)'), findsOneWidget);
-    expect(find.text('Bohne'), findsOneWidget);
-    expect(find.text('Alle Songs'), findsNothing);
-    expect(find.text('2 von 3 Songs passen zu den Filtern'), findsOneWidget);
+      expect(find.text('Neutrone (Remix)'), findsOneWidget);
+      expect(find.text('Bohne'), findsOneWidget);
+      expect(find.text('Alle Songs'), findsNothing);
+      expect(find.text('2 von 3 Songs passen zu den Filtern'), findsOneWidget);
 
-    // Kraftwerk's genre is Elektronik, Anna's is Pop, so the genre category is an "and" on
-    // top of the artist "or": only Anna's song has both her and Pop.
-    await pickFilter(tester, 'Genre', 'Pop');
-    expect(find.text('Bohne'), findsOneWidget);
-    expect(find.text('Neutrone (Remix)'), findsNothing);
+      // Kraftwerk's genre is Elektronik, Anna's is Pop, so the genre category is an "and" on
+      // top of the artist "or": only Anna's song has both her and Pop.
+      await pickFilter(tester, 'Genre', 'Pop');
+      expect(find.text('Bohne'), findsOneWidget);
+      expect(find.text('Neutrone (Remix)'), findsNothing);
 
-    // The second genre is the "or" that lets the other artist through again.
-    await pickFilter(tester, 'Genre', 'Elektronik');
-    expect(find.text('Neutrone (Remix)'), findsOneWidget);
-    expect(find.text('Bohne'), findsOneWidget);
-  });
+      // The second genre is the "or" that lets the other artist through again.
+      await pickFilter(tester, 'Genre', 'Elektronik');
+      expect(find.text('Neutrone (Remix)'), findsOneWidget);
+      expect(find.text('Bohne'), findsOneWidget);
+    },
+  );
 
   // A missing value is a value: a song without an album is not hidden from every album
   // filter, it is under "Unbekannt". A song on this device has no tags, so it is there too.
-  testWidgets('a song without metadata is filtered as Unbekannt', (tester) async {
+  testWidgets('a song without metadata is filtered as Unbekannt', (
+    tester,
+  ) async {
     final local = LocalLibrary()..add(name: 'Lokales Lied.mp3');
     await openLibrary(tester, localLibrary: local);
     await openFilterPanel(tester);
@@ -959,34 +1222,44 @@ void main() {
 
   // Search, filter and sort apply together: the filter decides which songs are in the list,
   // the search narrows that list, and the sort orders what is left.
-  testWidgets('search and filter apply together, and the reset brings the library back', (tester) async {
-    await openLibrary(tester);
-    await openFilterPanel(tester);
-    await pickFilter(tester, 'Interpret', 'Kraftwerk');
+  testWidgets(
+    'search and filter apply together, and the reset brings the library back',
+    (tester) async {
+      await openLibrary(tester);
+      await openFilterPanel(tester);
+      await pickFilter(tester, 'Interpret', 'Kraftwerk');
 
-    // Close the panel so the chip row is the only place with the reset button.
-    await tester.tap(find.text('Filter (1)'));
-    await tester.pumpAndSettle();
+      // Close the panel so the chip row is the only place with the reset button.
+      await tester.tap(find.text('Filter (1)'));
+      await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField), 'bohne');
-    await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'bohne');
+      await tester.pumpAndSettle();
 
-    expect(find.text('Keine Songs gefunden.'), findsOneWidget);
-    expect(find.text('0 von 3 Songs passen zu Suche und Filter'), findsOneWidget);
+      expect(find.text('Keine Songs gefunden.'), findsOneWidget);
+      expect(
+        find.text('0 von 3 Songs passen zu Suche und Filter'),
+        findsOneWidget,
+      );
 
-    // The empty state offers the reset, so the filter can be taken off without going back to
-    // the panel. The search stays, because it is not a filter.
-    await tester.tap(find.widgetWithText(TextButton, 'Filter zurücksetzen').last);
-    await tester.pumpAndSettle();
+      // The empty state offers the reset, so the filter can be taken off without going back to
+      // the panel. The search stays, because it is not a filter.
+      await tester.tap(
+        find.widgetWithText(TextButton, 'Filter zurücksetzen').last,
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.text('Bohne'), findsOneWidget);
-    expect(find.text('Neutrone (Remix)'), findsNothing);
-    expect(find.text('1 von 3 Songs passen zur Suche'), findsOneWidget);
-    expect(find.textContaining('Filter:'), findsNothing);
-  });
+      expect(find.text('Bohne'), findsOneWidget);
+      expect(find.text('Neutrone (Remix)'), findsNothing);
+      expect(find.text('1 von 3 Songs passen zur Suche'), findsOneWidget);
+      expect(find.textContaining('Filter:'), findsNothing);
+    },
+  );
 
   // One chip can be taken off on its own, and the last reset takes all of them off.
-  testWidgets('a chip removes one filter, the reset removes all', (tester) async {
+  testWidgets('a chip removes one filter, the reset removes all', (
+    tester,
+  ) async {
     await openLibrary(tester);
     await openFilterPanel(tester);
     await pickFilter(tester, 'Interpret', 'Kraftwerk');
@@ -1012,9 +1285,74 @@ void main() {
     expect(find.text('3 Songs'), findsOneWidget);
   });
 
+  // The chips are views, not another filter on the same page: Lokal keeps the device songs,
+  // and tapping it again brings the server songs back.
+  testWidgets('the Lokal chip shows only the songs on this device', (
+    tester,
+  ) async {
+    final local = LocalLibrary();
+    local.add(name: 'lokal.mp3', bytes: Uint8List.fromList([0x49, 0x44, 0x33]));
+
+    await openLibrary(tester, localLibrary: local);
+
+    // The sidebar has a Lokal chip too, so the page's chip is the last one.
+    await tester.tap(find.byKey(const ValueKey('view-local')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('lokal.mp3'), findsOneWidget);
+    expect(find.text('Neutrone (Remix)'), findsNothing);
+    expect(find.text('1 Songs'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('view-local')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('lokal.mp3'), findsOneWidget);
+    expect(find.text('Neutrone (Remix)'), findsOneWidget);
+  });
+
+  // Playlists is a chip of the library, not a separate page: it lists what the caller owns
+  // with its cover and count.
+  testWidgets('the Playlists chip lists the playlists', (tester) async {
+    await openLibrary(
+      tester,
+      playlists: StubAdapter(200, <Object>[playlistForLibrary]),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('view-playlists')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Favoriten'), findsWidgets);
+    expect(find.text('Playlist · 2 Songs'), findsWidgets);
+    expect(find.text('1 Playlists'), findsOneWidget);
+    expect(find.text('Neutrone (Remix)'), findsNothing);
+  });
+
+  // The grid is the same rows with another shape, so a song is still playable there.
+  testWidgets('the grid shows the songs as cards', (tester) async {
+    final audio = FakePlayer();
+    addTearDown(audio.dispose);
+    await openLibrary(
+      tester,
+      audio: audio,
+      queues: StubAdapter(200, queueFor(9, 'Bohne')),
+    );
+
+    await tester.tap(find.byTooltip('Raster'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Neutrone (Remix)'), findsOneWidget);
+    expect(find.text('Bohne'), findsOneWidget);
+
+    await tester.tap(find.text('Bohne'));
+    await tester.pumpAndSettle();
+    expect(audio.played, isNotEmpty);
+  });
+
   // A phone in landscape is wide enough for the inline panel by width, but not by height: the
   // header would overflow the page, so it gets the same overlay as a portrait phone.
-  testWidgets('a wide but short window gets the filter overlay', (tester) async {
+  testWidgets('a wide but short window gets the filter overlay', (
+    tester,
+  ) async {
     await openLibrary(tester, size: const Size(844, 390));
     await openFilterPanel(tester);
 
@@ -1025,12 +1363,15 @@ void main() {
   // A window that clears the panel's own height can still be too short: the player bar and the
   // header sit above it, and at 700 px the inline panel clipped its reset button. Such a window
   // gets the overlay too.
-  testWidgets('a wide window without room for the inline panel gets the overlay', (tester) async {
-    await openLibrary(tester, size: const Size(760, 700));
-    await openFilterPanel(tester);
+  testWidgets(
+    'a wide window without room for the inline panel gets the overlay',
+    (tester) async {
+      await openLibrary(tester, size: const Size(760, 700));
+      await openFilterPanel(tester);
 
-    expect(find.byType(BottomSheet), findsOneWidget);
-  });
+      expect(find.byType(BottomSheet), findsOneWidget);
+    },
+  );
 
   // A large text scale makes the panel and the chip row taller, so the window needs the same
   // room it would need at a larger size; otherwise the inline panel gets clipped.
@@ -1045,7 +1386,9 @@ void main() {
 
   // On a phone the filter is an overlay with an Apply button, because the list behind it is
   // not visible while the overlay is open.
-  testWidgets('on a phone the filter is applied from an overlay', (tester) async {
+  testWidgets('on a phone the filter is applied from an overlay', (
+    tester,
+  ) async {
     await openLibrary(tester, size: const Size(360, 740));
     await openFilterPanel(tester);
 
@@ -1063,7 +1406,9 @@ void main() {
   });
 
   // Closing the phone overlay without "Anwenden" must not apply the picks that were only a draft.
-  testWidgets('dismissing the phone filter without Apply keeps the library', (tester) async {
+  testWidgets('dismissing the phone filter without Apply keeps the library', (
+    tester,
+  ) async {
     await openLibrary(tester, size: const Size(360, 740));
     await openFilterPanel(tester);
 

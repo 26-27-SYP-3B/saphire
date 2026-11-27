@@ -25,7 +25,13 @@ const queueAnswer = [
     'duration_ms': 174000.0,
     'waveform': [0.0, 128.0, 255.0],
   },
-  {'position': 2.0, 'track_id': 4.0, 'title': 'lied.wav', 'artist': '', 'duration_ms': 0.0},
+  {
+    'position': 2.0,
+    'track_id': 4.0,
+    'title': 'lied.wav',
+    'artist': '',
+    'duration_ms': 0.0,
+  },
 ];
 
 /// Pumps the full player the way AppShell draws it on a phone, with a valid session. The view is
@@ -45,14 +51,20 @@ Future<Wiring> openPlayer(
   Size size = const Size(420, 900),
 }) async {
   // A phone-shaped window, below AppShell.wideAt, so the view is measured as a phone shows it.
-  tester.view..physicalSize = size..devicePixelRatio = 1.0;
+  tester.view
+    ..physicalSize = size
+    ..devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
 
   final store = session ?? loggedIn();
   // A test that does not look at the queue still needs the player to exist; the default answers an
   // empty queue, because a real Dio here would be a request to a server that is not there.
-  final wiring = Wiring(store, queueAdapter: StubAdapter(200, <Object>[]), audio: audio);
+  final wiring = Wiring(
+    store,
+    queueAdapter: StubAdapter(200, <Object>[]),
+    audio: audio,
+  );
   addTearDown(wiring.dispose);
 
   if (prep != null) await prep(wiring);
@@ -75,22 +87,31 @@ Future<Wiring> openPlayer(
 
 void main() {
   // Tapping the bar is what opens this view, so the bar has to say that to the frame.
-  testWidgets('tapping the bar asks the frame for the full player', (tester) async {
+  testWidgets('tapping the bar asks the frame for the full player', (
+    tester,
+  ) async {
     var opened = false;
-    final wiring = Wiring(loggedIn(), queueAdapter: StubAdapter(200, <Object>[]));
+    final wiring = Wiring(
+      loggedIn(),
+      queueAdapter: StubAdapter(200, <Object>[]),
+    );
     addTearDown(wiring.dispose);
 
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: PlayerBar(player: wiring.player, onPlayerOpen: () => opened = true),
+          body: PlayerBar(
+            player: wiring.player,
+            onPlayerOpen: () => opened = true,
+          ),
         ),
       ),
     );
     await tester.pumpAndSettle();
 
-    // The bar's own InkWell is the one around its text; the buttons inside it are InkWell too.
-    await tester.tap(find.ancestor(of: find.text('Nichts wird abgespielt'), matching: find.byType(InkWell)));
+    // The song's text is in the bar's own InkWell; the controls in the middle are buttons of
+    // their own, so the text is the part that opens the player.
+    await tester.tap(find.text('Nichts wird abgespielt'));
     await tester.pumpAndSettle();
 
     expect(opened, isTrue);
@@ -101,25 +122,41 @@ void main() {
   testWidgets('the bar shows the running time and the length', (tester) async {
     final audio = FakePlayer();
     addTearDown(audio.dispose);
-    final wiring = Wiring(loggedIn(), queueAdapter: StubAdapter(200, <Object>[]), audio: audio);
+    final wiring = Wiring(
+      loggedIn(),
+      queueAdapter: StubAdapter(200, <Object>[]),
+      audio: audio,
+    );
     addTearDown(wiring.dispose);
 
-    wiring.queue.fill([QueueEntry(position: 1, trackId: 8, title: 'Technogal.mp3', artist: 'Kraftwerk')]);
+    wiring.queue.fill([
+      QueueEntry(
+        position: 1,
+        trackId: 8,
+        title: 'Technogal.mp3',
+        artist: 'Kraftwerk',
+      ),
+    ]);
     await wiring.player.playCurrent();
     audio.length(const Duration(seconds: 30));
 
     await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: PlayerBar(player: wiring.player))),
+      MaterialApp(
+        home: Scaffold(body: PlayerBar(player: wiring.player)),
+      ),
     );
     await tester.pump();
 
+    // The desktop bar shows the two clocks on either side of the progress bar, the way
+    // Spotify does, instead of one combined label.
     audio.at(const Duration(seconds: 10));
     await tester.pumpAndSettle();
-    expect(find.text('0:10 / 0:30'), findsOneWidget);
+    expect(find.text('0:10'), findsOneWidget);
+    expect(find.text('0:30'), findsOneWidget);
 
     audio.at(const Duration(seconds: 11));
     await tester.pumpAndSettle();
-    expect(find.text('0:11 / 0:30'), findsOneWidget);
+    expect(find.text('0:11'), findsOneWidget);
   });
 
   // A 320 dp phone is the narrowest shape the transport has to fit. The queue button and the
@@ -133,7 +170,9 @@ void main() {
       audio: audio,
       size: const Size(320, 568),
       prep: (wiring) async {
-        wiring.queue.fill([QueueEntry(position: 1, trackId: 8, title: 'Technogal.mp3')]);
+        wiring.queue.fill([
+          QueueEntry(position: 1, trackId: 8, title: 'Technogal.mp3'),
+        ]);
         await wiring.player.playCurrent();
         audio.length(const Duration(seconds: 30));
       },
@@ -153,7 +192,9 @@ void main() {
       audio: audio,
       size: const Size(851, 393),
       prep: (wiring) async {
-        wiring.queue.fill([QueueEntry(position: 1, trackId: 8, title: 'Technogal.mp3')]);
+        wiring.queue.fill([
+          QueueEntry(position: 1, trackId: 8, title: 'Technogal.mp3'),
+        ]);
         await wiring.player.playCurrent();
         audio.length(const Duration(seconds: 30));
       },
@@ -163,87 +204,67 @@ void main() {
     expect(find.byTooltip('Warteschlange'), findsOneWidget);
   });
 
-  // The last song's length can still be known after the queue ended. The ten-second buttons
-  // must not use it to start the queue again from its first row.
-  testWidgets('the ten-second buttons are off when nothing is current', (tester) async {
-    final audio = FakePlayer();
-    addTearDown(audio.dispose);
+  // The ten-second jumps and the volume slider belong to the desktop bar, not to the phone
+  // player.
+  testWidgets('the phone player has no ten-second or volume controls', (
+    tester,
+  ) async {
+    await openPlayer(tester);
 
-    final wiring = await openPlayer(
-      tester,
-      audio: audio,
-      prep: (wiring) async {
-        wiring.queue.fill([QueueEntry(position: 1, trackId: 8, title: 'Technogal.mp3')]);
-        await wiring.player.playCurrent();
-        audio.length(const Duration(seconds: 30));
-        audio.at(const Duration(seconds: 25));
-      },
-    );
-
-    audio.complete();
-    await tester.pumpAndSettle();
-
-    expect(wiring.queue.current, isNull);
-    expect(tester.widget<IconButton>(find.widgetWithIcon(IconButton, Icons.replay_10)).onPressed, isNull);
-    expect(tester.widget<IconButton>(find.widgetWithIcon(IconButton, Icons.forward_10)).onPressed, isNull);
+    expect(find.byIcon(Icons.replay_10), findsNothing);
+    expect(find.byIcon(Icons.forward_10), findsNothing);
+    expect(find.byTooltip('Stumm'), findsNothing);
   });
 
-  testWidgets('the player shows the song it is at and its controls move the player', (tester) async {
-    final audio = FakePlayer();
-    addTearDown(audio.dispose);
+  testWidgets(
+    'the player shows the song it is at and its controls move the player',
+    (tester) async {
+      final audio = FakePlayer();
+      addTearDown(audio.dispose);
 
-    final wiring = await openPlayer(
-      tester,
-      audio: audio,
-      prep: (wiring) async {
-        wiring.queue.fill(queueAnswer.map((entry) => QueueEntry.fromJson(entry.cast<String, dynamic>())).toList());
-        await wiring.player.playCurrent();
-        // The jump buttons are only on for a song the player knows the length of.
-        audio.length(const Duration(seconds: 30));
-        audio.at(const Duration(seconds: 10));
-      },
-    );
+      final wiring = await openPlayer(
+        tester,
+        audio: audio,
+        prep: (wiring) async {
+          wiring.queue.fill(
+            queueAnswer
+                .map(
+                  (entry) => QueueEntry.fromJson(entry.cast<String, dynamic>()),
+                )
+                .toList(),
+          );
+          await wiring.player.playCurrent();
+          // The jump buttons are only on for a song the player knows the length of.
+          audio.length(const Duration(seconds: 30));
+          audio.at(const Duration(seconds: 10));
+        },
+      );
 
-    expect(find.text('Technogal.mp3'), findsOneWidget);
-    // The queue answer names the artist the file's tags named, so the player shows it under the
-    // title instead of the slot number.
-    expect(find.text('Kraftwerk'), findsOneWidget);
+      expect(find.text('Technogal.mp3'), findsOneWidget);
+      // The queue answer names the artist the file's tags named, so the player shows it under the
+      // title instead of the slot number.
+      expect(find.text('Kraftwerk'), findsOneWidget);
 
-    await tester.tap(find.byTooltip('Pause'));
-    await tester.pumpAndSettle();
-    expect(audio.playing, isFalse);
+      await tester.tap(find.byTooltip('Pause'));
+      await tester.pumpAndSettle();
+      expect(audio.playing, isFalse);
 
-    // The buttons move the same player the bar moves: away from the song and back to it.
-    await tester.tap(find.byTooltip('Nächstes Lied'));
-    await tester.pumpAndSettle();
-    expect(wiring.queue.current?.title, 'lied.wav');
+      // The buttons move the same player the bar moves: away from the song and back to it.
+      await tester.tap(find.byTooltip('Nächstes Lied'));
+      await tester.pumpAndSettle();
+      expect(wiring.queue.current?.title, 'lied.wav');
 
-    await tester.tap(find.byTooltip('Vorheriges Lied'));
-    await tester.pumpAndSettle();
-    expect(wiring.queue.current?.title, 'Technogal.mp3');
-
-    // The ten-second buttons jump from where the song is, not from its start.
-    audio.at(const Duration(seconds: 10));
-    await tester.tap(find.byTooltip('10 Sekunden vor'));
-    await tester.pumpAndSettle();
-    expect(audio.sought, [const Duration(seconds: 20)]);
-
-    await tester.tap(find.byTooltip('10 Sekunden zurück'));
-    await tester.pumpAndSettle();
-    expect(audio.sought.last, const Duration(seconds: 10));
-
-    // The second slider is the volume; the first is the progress bar. Dragging left from the
-    // middle of it is the only way to change a value that starts at its top.
-    await tester.drag(find.byType(Slider).last, const Offset(-100, 0));
-    await tester.pumpAndSettle();
-
-    expect(audio.volumes, isNotEmpty);
-    expect(audio.volumes.last, lessThan(1.0));
-  });
+      await tester.tap(find.byTooltip('Vorheriges Lied'));
+      await tester.pumpAndSettle();
+      expect(wiring.queue.current?.title, 'Technogal.mp3');
+    },
+  );
 
   // Swiping down leaves the view. Nothing here stops the audio, so the song keeps running and the
   // bar still names it.
-  testWidgets('swiping down closes the view without interrupting playback', (tester) async {
+  testWidgets('swiping down closes the view without interrupting playback', (
+    tester,
+  ) async {
     final audio = FakePlayer();
     addTearDown(audio.dispose);
 
@@ -253,7 +274,9 @@ void main() {
       audio: audio,
       onClose: () => closed = true,
       prep: (wiring) async {
-        wiring.queue.fill([QueueEntry(position: 1, trackId: 8, title: 'Technogal.mp3')]);
+        wiring.queue.fill([
+          QueueEntry(position: 1, trackId: 8, title: 'Technogal.mp3'),
+        ]);
         await wiring.player.playCurrent();
       },
     );
@@ -266,14 +289,16 @@ void main() {
     expect(audio.playing, isTrue);
   });
 
-  testWidgets('the queue button opens the queue inside the player', (tester) async {
+  testWidgets('the queue button opens the queue inside the player', (
+    tester,
+  ) async {
     var opened = false;
     await openPlayer(tester, onQueueOpen: () => opened = true);
 
     await tester.tap(find.byTooltip('Warteschlange'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Warteschlange'), findsOneWidget);
+    expect(find.text('Warteschlange'), findsWidgets);
     expect(find.text('0 Titel'), findsOneWidget);
 
     // The full panel is one tap away, but the song keeps playing in this view.
@@ -285,7 +310,9 @@ void main() {
 
   // The compact queue shows what a listener needs while the song runs: the order, the artist
   // and the length. A row starts its song.
-  testWidgets('the compact queue shows the order and plays a row', (tester) async {
+  testWidgets('the compact queue shows the order and plays a row', (
+    tester,
+  ) async {
     final audio = FakePlayer();
     addTearDown(audio.dispose);
 
@@ -293,7 +320,13 @@ void main() {
       tester,
       audio: audio,
       prep: (wiring) async {
-        wiring.queue.fill(queueAnswer.map((entry) => QueueEntry.fromJson(entry.cast<String, dynamic>())).toList());
+        wiring.queue.fill(
+          queueAnswer
+              .map(
+                (entry) => QueueEntry.fromJson(entry.cast<String, dynamic>()),
+              )
+              .toList(),
+        );
         await wiring.player.playCurrent();
       },
     );
@@ -345,7 +378,9 @@ void main() {
   });
 
   // The sheet sits over the cover, not over the seek bar, so a tap on the bar still seeks.
-  testWidgets('the seek bar works while the queue sheet is open', (tester) async {
+  testWidgets('the seek bar works while the queue sheet is open', (
+    tester,
+  ) async {
     final audio = FakePlayer();
     addTearDown(audio.dispose);
 
@@ -353,7 +388,9 @@ void main() {
       tester,
       audio: audio,
       prep: (wiring) async {
-        wiring.queue.fill([QueueEntry(position: 1, trackId: 8, title: 'Technogal.mp3')]);
+        wiring.queue.fill([
+          QueueEntry(position: 1, trackId: 8, title: 'Technogal.mp3'),
+        ]);
         await wiring.player.playCurrent();
         audio.length(const Duration(seconds: 30));
         audio.at(const Duration(seconds: 10));
@@ -384,13 +421,18 @@ void main() {
       'Wiedergeben',
       'Vorheriges Lied',
       'Nächstes Lied',
-      '10 Sekunden vor',
-      '10 Sekunden zurück',
       'Wiederholen',
       'Zufällige Wiedergabe',
     ]) {
       expect(
-        tester.widget<IconButton>(find.ancestor(of: find.byTooltip(tooltip), matching: find.byType(IconButton))).onPressed,
+        tester
+            .widget<IconButton>(
+              find.ancestor(
+                of: find.byTooltip(tooltip),
+                matching: find.byType(IconButton),
+              ),
+            )
+            .onPressed,
         isNull,
       );
     }
@@ -400,9 +442,9 @@ void main() {
     expect(audio.volumes, isEmpty);
   });
 
-  // The two ways a song does not simply move on, and the mute button, belong to the player the
-  // page shows: a control that only changed a local switch would not change what the next song is.
-  testWidgets('repeat, shuffle and mute reach the player', (tester) async {
+  // The two ways a song does not simply move on belong to the player the page shows: a control
+  // that only changed a local switch would not change what the next song is.
+  testWidgets('repeat and shuffle reach the player', (tester) async {
     final audio = FakePlayer();
     addTearDown(audio.dispose);
 
@@ -410,10 +452,14 @@ void main() {
       tester,
       audio: audio,
       prep: (wiring) async {
-        wiring.queue.fill(queueAnswer.map((entry) => QueueEntry.fromJson(entry.cast<String, dynamic>())).toList());
+        wiring.queue.fill(
+          queueAnswer
+              .map(
+                (entry) => QueueEntry.fromJson(entry.cast<String, dynamic>()),
+              )
+              .toList(),
+        );
         await wiring.player.playCurrent();
-        // A volume that is not the default, so a mute that always restores 1.0 cannot pass.
-        await wiring.player.setVolume(0.4);
         audio.length(const Duration(seconds: 30));
       },
     );
@@ -425,29 +471,13 @@ void main() {
     await tester.tap(find.byTooltip('Zufällige Wiedergabe'));
     await tester.pumpAndSettle();
     expect(wiring.player.shuffle, isTrue);
-
-    await tester.tap(find.byTooltip('Stumm'));
-    await tester.pumpAndSettle();
-    expect(audio.volumes.last, 0.0);
-    expect(find.byTooltip('Ton an'), findsOneWidget);
-
-    // Unmuting returns to the volume the listener had, not to full volume.
-    await tester.tap(find.byTooltip('Ton an'));
-    await tester.pumpAndSettle();
-    expect(audio.volumes.last, 0.4);
-
-    // The volume lives in the player, so a reopened page shows the same value instead of the
-    // slider's default.
-    await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: PlayerView(player: wiring.player))),
-    );
-    await tester.pumpAndSettle();
-    expect(tester.widget<Slider>(find.byType(Slider).last).value, 0.4);
   });
 
   // The progress bar is the other way to seek: a press on it moves the label to the target while
   // the finger is down, and the release is what tells the player where to go.
-  testWidgets('the progress bar moves the song to where it was tapped', (tester) async {
+  testWidgets('the progress bar moves the song to where it was tapped', (
+    tester,
+  ) async {
     final audio = FakePlayer();
     addTearDown(audio.dispose);
 
@@ -455,7 +485,13 @@ void main() {
       tester,
       audio: audio,
       prep: (wiring) async {
-        wiring.queue.fill(queueAnswer.map((entry) => QueueEntry.fromJson(entry.cast<String, dynamic>())).toList());
+        wiring.queue.fill(
+          queueAnswer
+              .map(
+                (entry) => QueueEntry.fromJson(entry.cast<String, dynamic>()),
+              )
+              .toList(),
+        );
         await wiring.player.playCurrent();
         audio.length(const Duration(seconds: 30));
         audio.at(const Duration(seconds: 10));

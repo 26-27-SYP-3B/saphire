@@ -125,6 +125,15 @@ Future<Wiring> openLocalPlaylists(WidgetTester tester, LocalLibrary local) async
   return wiring;
 }
 
+/// Opens the create sheet the header button shows and fills in a name.
+Future<void> createPlaylist(WidgetTester tester, String name) async {
+  await tester.tap(find.widgetWithText(FilledButton, 'Playlist erstellen'));
+  await tester.pumpAndSettle();
+  await tester.enterText(find.byType(TextField).first, name);
+  await tester.tap(find.widgetWithText(FilledButton, 'Anlegen'));
+  await tester.pumpAndSettle();
+}
+
 void main() {
   test('reads a playlist answer', () async {
     final repository = PlaylistRepository(Dio()..httpClientAdapter = StubAdapter(201, playlistAnswer), loggedIn());
@@ -222,13 +231,11 @@ void main() {
 
     await openPlaylists(tester, playlists: adapter);
 
-    await tester.enterText(find.byType(TextField).first, 'Favoriten');
-    await tester.tap(find.widgetWithText(FilledButton, 'Anlegen'));
-    await tester.pumpAndSettle();
+    await createPlaylist(tester, 'Favoriten');
 
     // The page says what it did, in the same words as the button.
     expect(find.textContaining('angelegt'), findsOneWidget);
-    expect(find.descendant(of: find.byType(ListTile), matching: find.text('Favoriten')), findsOneWidget);
+    expect(find.descendant(of: find.byType(ListTile), matching: find.text('Favoriten')), findsWidgets);
     expect(adapter.lastOptions?.uri.path, '/api/playlists');
   });
 
@@ -241,6 +248,8 @@ void main() {
 
     await openPlaylists(tester, playlists: adapter);
 
+    await tester.tap(find.widgetWithText(FilledButton, 'Playlist erstellen'));
+    await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).first, '   ');
     await tester.tap(find.widgetWithText(FilledButton, 'Anlegen'));
     await tester.pumpAndSettle();
@@ -266,7 +275,7 @@ void main() {
     ]);
 
     await openPlaylists(tester, playlists: adapter, library: library);
-    await tester.tap(find.text('Favoriten'));
+    await tester.tap(find.text('Favoriten').last);
     await tester.pumpAndSettle();
 
     await tester.tap(find.byType(DropdownButton<int>));
@@ -289,16 +298,15 @@ void main() {
     adapter.queue.addAll([(200, <Object>[playlistAnswer]), (200, detailAnswer), (204, {})]);
 
     await openPlaylists(tester, playlists: adapter);
-    await tester.tap(find.text('Favoriten'));
+    await tester.tap(find.text('Favoriten').last);
     await tester.pumpAndSettle();
 
     expect(find.text('1'), findsOneWidget);
     expect(find.text('2'), findsOneWidget);
 
-    await tester.tap(find.descendant(
-      of: find.widgetWithText(ListTile, 'Technogal.mp3'),
-      matching: find.byType(IconButton),
-    ));
+    await tester.tap(find.byTooltip('Aktionen für Technogal.mp3'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Entfernen'));
     await tester.pumpAndSettle();
 
     expect(adapter.lastOptions?.method, 'DELETE');
@@ -318,7 +326,7 @@ void main() {
     adapter.queue.addAll([(200, <Object>[playlistAnswer]), (200, detailAnswer)]);
 
     await openPlaylists(tester, playlists: adapter);
-    await tester.tap(find.text('Favoriten'));
+    await tester.tap(find.text('Favoriten').last);
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Hinzufügen'));
@@ -344,7 +352,7 @@ void main() {
     ]);
 
     await openPlaylists(tester, playlists: adapter, library: library);
-    await tester.tap(find.text('Favoriten'));
+    await tester.tap(find.text('Favoriten').last);
     await tester.pumpAndSettle();
 
     await tester.tap(find.byType(DropdownButton<int>));
@@ -357,10 +365,9 @@ void main() {
     // The list said 0 before; the page has one row, so the list says one too.
     expect(find.widgetWithText(ListTile, '1 Songs'), findsOneWidget);
 
-    await tester.tap(find.descendant(
-      of: find.widgetWithText(ListTile, 'Technogal.mp3'),
-      matching: find.byType(IconButton),
-    ));
+    await tester.tap(find.byTooltip('Aktionen für Technogal.mp3'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Entfernen'));
     await tester.pumpAndSettle();
 
     expect(find.widgetWithText(ListTile, '0 Songs'), findsOneWidget);
@@ -378,7 +385,7 @@ void main() {
     final queues = StubAdapter(200, <Object>[]);
 
     await openPlaylists(tester, playlists: adapter, queues: queues);
-    await tester.tap(find.text('Favoriten'));
+    await tester.tap(find.text('Favoriten').last);
     await tester.pumpAndSettle();
 
     await tester.tap(find.widgetWithText(FilledButton, 'Playlist starten'));
@@ -400,7 +407,7 @@ void main() {
 
     final queueAdapter = StubAdapter(404, {'error': 'playlist is not in your playlists'});
     await openPlaylists(tester, playlists: adapter, queues: queueAdapter);
-    await tester.tap(find.text('Favoriten'));
+    await tester.tap(find.text('Favoriten').last);
     await tester.pumpAndSettle();
 
     await tester.tap(find.widgetWithText(FilledButton, 'Playlist starten'));
@@ -409,9 +416,7 @@ void main() {
     expect(find.text('playlist is not in your playlists'), findsOneWidget);
 
     // A second action still sends a request, which it could not if the flag were still set.
-    await tester.enterText(find.byType(TextField).first, 'Neu');
-    await tester.tap(find.widgetWithText(FilledButton, 'Anlegen'));
-    await tester.pumpAndSettle();
+    await createPlaylist(tester, 'Neu');
     expect(adapter.requests.length, 3);
   });
 
@@ -427,7 +432,7 @@ void main() {
     final queueAdapter = StubAdapter(200, queueAnswer);
     final wiring = await openPlaylists(tester, playlists: playlistAdapter, queues: queueAdapter);
 
-    await tester.tap(find.text('Favoriten'));
+    await tester.tap(find.text('Favoriten').last);
     await tester.pumpAndSettle();
 
     await tester.tap(find.widgetWithText(FilledButton, 'Playlist starten'));
@@ -469,7 +474,7 @@ void main() {
 
     await openPlaylists(tester, playlists: adapter);
 
-    await tester.tap(find.text('Favoriten'));
+    await tester.tap(find.text('Favoriten').last);
     await tester.pumpAndSettle();
 
     expect(find.text('playlist is not in your playlists'), findsOneWidget);
@@ -484,14 +489,12 @@ void main() {
 
     final wiring = await openLocalPlaylists(tester, local);
 
-    await tester.enterText(find.byType(TextField).first, 'Favoriten');
-    await tester.tap(find.widgetWithText(FilledButton, 'Anlegen'));
-    await tester.pumpAndSettle();
+    await createPlaylist(tester, 'Favoriten');
 
     expect(find.textContaining('angelegt'), findsOneWidget);
     expect(local.playlists.single.name, 'Favoriten');
 
-    await tester.tap(find.widgetWithText(ListTile, 'Favoriten'));
+    await tester.tap(find.widgetWithText(ListTile, 'Favoriten').last);
     await tester.pumpAndSettle();
 
     await tester.tap(find.byType(DropdownButton<int>));
@@ -537,6 +540,8 @@ void main() {
       pickImage: () async => Uint8List.fromList([1, 2, 3, 4, 5, 6]),
     );
 
+    await tester.tap(find.widgetWithText(FilledButton, 'Playlist erstellen'));
+    await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Icons.add_photo_alternate_outlined));
     await tester.pumpAndSettle();
 
@@ -553,6 +558,8 @@ void main() {
 
     await openPlaylists(tester, playlists: adapter, covers: covers, pickImage: () async => _png);
 
+    await tester.tap(find.widgetWithText(FilledButton, 'Playlist erstellen'));
+    await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Icons.add_photo_alternate_outlined));
     await tester.pumpAndSettle();
 
@@ -572,7 +579,7 @@ void main() {
     adapter.queue.addAll([(200, <Object>[playlistAnswer]), (200, detailAnswer)]);
 
     await openPlaylists(tester, playlists: adapter, size: const Size(420, 900));
-    await tester.tap(find.text('Favoriten'));
+    await tester.tap(find.text('Favoriten').last);
     await tester.pumpAndSettle();
 
     expect(find.text('Technogal.mp3'), findsWidgets);

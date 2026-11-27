@@ -4,12 +4,18 @@ import 'dart:typed_data';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../../core/utils/audio_format.dart';
+import '../../../core/utils/local_metadata.dart';
 import '../domain/local_playlist.dart';
 import '../domain/local_track.dart';
 
 const _key = 'local_library';
 const _playlistsKey = 'local_playlists';
 const _queueKey = 'local_queue';
+
+/// A cover is stored with the song, in the same keychain entry as the library. It is cut off
+/// at this size so a folder of photos cannot fill the secure storage; the tags still name the
+/// title, artist and album of such a song.
+const _maxStoredCoverBytes = 128 * 1024;
 
 /// The songs the user added from their own device, plus the playlists and the queue made
 /// from them. Only title and path are stored; the file stays where it is, the app never
@@ -43,10 +49,14 @@ class LocalLibrary {
     final library = LocalLibrary(storage);
     try {
       library.tracks.addAll(_readTracks(await storage.read(key: _key)));
-      for (final entry in _decode(await storage.read(key: _playlistsKey)) as List) {
+      for (final entry
+          in _decode(await storage.read(key: _playlistsKey)) as List) {
         final data = entry as Map<String, dynamic>;
         library.playlists.add(
-          LocalPlaylist(name: data['name'] as String, songs: _tracks(data['songs'])),
+          LocalPlaylist(
+            name: data['name'] as String,
+            songs: _tracks(data['songs']),
+          ),
         );
       }
       library.queue.addAll(_readTracks(await storage.read(key: _queueKey)));
@@ -58,7 +68,33 @@ class LocalLibrary {
 
   /// Takes one picked file. Returns null when it was taken, the message when it was
   /// refused, so the page can show the answer on that file and not add it.
-  String? add({required String name, String? path, Uint8List? bytes}) {
+  ///
+  /// [metadata] is what the caller read from the file. The insertion itself stays synchronous;
+  /// the app reads the tags with [addAsync] so a file on disk never blocks the frame.
+  String? add({
+    required String name,
+    String? path,
+    Uint8List? bytes,
+    LocalAudioMetadata metadata = emptyLocalMetadata,
+  }) {
+    final refusal = _insert(
+      name: name,
+      path: path,
+      bytes: bytes,
+      metadata: metadata,
+    );
+    if (refusal == null) _write();
+    return refusal;
+  }
+
+  /// The validation and the row insertion without the storage write, so a whole folder can be
+  /// inserted first and written once instead of once per song.
+  String? _insert({
+    required String name,
+    String? path,
+    Uint8List? bytes,
+    LocalAudioMetadata metadata = emptyLocalMetadata,
+  }) {
     if (!isAudioFile(name)) {
       return 'nur Audiodateien werden übernommen';
     }
@@ -78,17 +114,75 @@ class LocalLibrary {
       return 'ist schon in der Bibliothek';
     }
 
+    // The tags are what the file says about itself. A file with none keeps its name as the
+    // title and the empty values; the pages show "Unbekannter Künstler" and a placeholder cover.
+    final tags = metadata;
+    final nameOnly = name.split(RegExp(r'[/\\]')).last;
+    final tagged = tags.title?.trim();
+
     // shortcut: the bytes of a browser pick stay in memory for the session. Upgrade:
     // store the file with the app's data, so a browser library survives a restart too.
-    tracks.add(LocalTrack(title: name.split(RegExp(r'[/\\]')).last, path: path, bytes: bytes));
-    _write();
+    tracks.add(
+      LocalTrack(
+        title: tagged == null || tagged.isEmpty ? nameOnly : tagged,
+        path: path,
+        bytes: bytes,
+        artist: tags.artist,
+        album: tags.album,
+        genre: tags.genre,
+        year: tags.year,
+        durationMs: tags.durationMs,
+        cover: tags.cover,
+      ),
+    );
     return null;
+  }
+
+  /// Reads one file's tags off the UI isolate and then adds it. The UI uses this for a single
+  /// pick; [addAllAsync] is the folder path and reads the whole batch in one isolate.
+  Future<String?> addAsync({
+    required String name,
+    String? path,
+    Uint8List? bytes,
+  }) async {
+    final tags = path == null
+        ? emptyLocalMetadata
+        : await readLocalMetadataAsync(path);
+    return add(name: name, path: path, bytes: bytes, metadata: tags);
+  }
+
+  /// Adds a whole pick in one go. The tags of every path are read in one background isolate
+  /// and then inserted in the picked order; the returned list has one answer per file.
+  Future<List<String?>> addAllAsync(
+    List<({String name, String? path, Uint8List? bytes})> files,
+  ) async {
+    final paths = [
+      for (final file in files)
+        if (file.path != null) file.path!,
+    ];
+    final tags = paths.isEmpty
+        ? const <LocalAudioMetadata>[]
+        : await readLocalMetadataBatch(paths);
+    var tagIndex = 0;
+    final answers = [
+      for (final file in files)
+        _insert(
+          name: file.name,
+          path: file.path,
+          bytes: file.bytes,
+          metadata: file.path == null ? emptyLocalMetadata : tags[tagIndex++],
+        ),
+    ];
+    if (answers.any((answer) => answer == null)) _write();
+    return answers;
   }
 
   /// An MP3 starts with an ID3 tag or with a frame header: eleven set bits.
   bool isMp3(Uint8List bytes) {
     if (bytes.length < 3) return false;
-    if (bytes[0] == 0x49 && bytes[1] == 0x44 && bytes[2] == 0x33) return true; // "ID3"
+    if (bytes[0] == 0x49 && bytes[1] == 0x44 && bytes[2] == 0x33) {
+      return true; // "ID3"
+    }
     return bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0;
   }
 
@@ -96,7 +190,9 @@ class LocalLibrary {
   /// so the page can ask for another one instead of inventing a number or a suffix.
   LocalPlaylist? createPlaylist(String name) {
     final clean = name.trim();
-    if (clean.isEmpty || playlists.any((playlist) => playlist.name == clean)) return null;
+    if (clean.isEmpty || playlists.any((playlist) => playlist.name == clean)) {
+      return null;
+    }
 
     final playlist = LocalPlaylist(name: clean);
     playlists.add(playlist);
@@ -141,7 +237,9 @@ class LocalLibrary {
   /// same way in both modes. A device queue has no slots the server knows, so the order only
   /// exists here.
   bool move(int from, int to) {
-    if (from < 1 || from > queue.length || to < 1 || to > queue.length) return false;
+    if (from < 1 || from > queue.length || to < 1 || to > queue.length) {
+      return false;
+    }
     if (from == to) return false;
 
     final row = queue.removeAt(from - 1);
@@ -170,7 +268,8 @@ class LocalLibrary {
         await storage.write(
           key: _playlistsKey,
           value: jsonEncode([
-            for (final playlist in playlists) {'name': playlist.name, 'songs': _json(playlist.songs)},
+            for (final playlist in playlists)
+              {'name': playlist.name, 'songs': _json(playlist.songs)},
           ]),
         );
         await storage.write(key: _queueKey, value: jsonEncode(_json(queue)));
@@ -182,13 +281,26 @@ class LocalLibrary {
 
   /// Only a path survives a restart. The bytes of a browser pick live in memory for one
   /// session, so storing its title alone would restore a song that can never be opened.
-  static List<Map<String, String?>> _json(List<LocalTrack> tracks) => [
-        for (final track in tracks)
-          if (track.path != null) {'title': track.title, 'path': track.path},
-      ];
+  static List<Map<String, Object?>> _json(List<LocalTrack> tracks) => [
+    for (final track in tracks)
+      if (track.path != null)
+        {
+          'title': track.title,
+          'path': track.path,
+          'artist': track.artist,
+          'album': track.album,
+          'genre': track.genre,
+          'year': track.year,
+          'duration_ms': track.durationMs,
+          if (track.cover != null &&
+              track.cover!.length <= _maxStoredCoverBytes)
+            'cover': base64Encode(track.cover!),
+        },
+  ];
 
   /// The stored value of a list, decoded. A missing list is an empty one.
-  static Object? _decode(String? saved) => saved == null ? const [] : jsonDecode(saved);
+  static Object? _decode(String? saved) =>
+      saved == null ? const [] : jsonDecode(saved);
 
   static List<LocalTrack> _readTracks(String? saved) => _tracks(_decode(saved));
 
@@ -200,7 +312,19 @@ class LocalLibrary {
       // A browser pick never survives a restart: an older version stored its title without
       // bytes, so such a row must not come back as a song that can never be opened.
       if (path == null || path.isEmpty) continue;
-      tracks.add(LocalTrack(title: row['title'] as String, path: path));
+      final cover = row['cover'] as String?;
+      tracks.add(
+        LocalTrack(
+          title: row['title'] as String,
+          path: path,
+          artist: row['artist'] as String? ?? '',
+          album: row['album'] as String? ?? '',
+          genre: row['genre'] as String? ?? '',
+          year: (row['year'] as num?)?.toInt() ?? 0,
+          durationMs: (row['duration_ms'] as num?)?.toInt() ?? 0,
+          cover: cover == null ? null : base64Decode(cover),
+        ),
+      );
     }
     return tracks;
   }

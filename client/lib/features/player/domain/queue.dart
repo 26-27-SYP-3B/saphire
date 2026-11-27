@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import '../../library/domain/local_track.dart';
 
 /// One song in a queue. It is either a reference to a library song, exactly as the queue
@@ -12,14 +14,27 @@ class QueueEntry {
     this.artist = '',
     this.durationMs = 0,
     this.waveform = const [],
+    this.cover,
     this.manual = false,
     this.local,
   });
 
   /// A row that is a file on this device. There is no server id for it, so `trackId` is -1
   /// and `local` is the whole row.
-  factory QueueEntry.fromLocal(int position, LocalTrack track, {bool manual = true}) =>
-      QueueEntry(position: position, trackId: -1, title: track.title, manual: manual, local: track);
+  factory QueueEntry.fromLocal(
+    int position,
+    LocalTrack track, {
+    bool manual = true,
+  }) => QueueEntry(
+    position: position,
+    trackId: -1,
+    title: track.title,
+    artist: track.artist,
+    durationMs: track.durationMs,
+    cover: track.cover,
+    manual: manual,
+    local: track,
+  );
 
   /// 1-based, as the server numbers the slots. The positions stay contiguous, so a row
   /// can be addressed without knowing what was removed before it.
@@ -40,6 +55,9 @@ class QueueEntry {
   /// The song's shape as 64 peaks from 0 to 255, empty when the server could not decode it.
   final List<int> waveform;
 
+  /// The cover the file's tags carry, when it has one.
+  final Uint8List? cover;
+
   /// How the row got into the queue: the person put it there themselves, or a list did. The
   /// queue answer names no source, so this is what the mirror keeps, and it is the only thing
   /// a refresh can carry over.
@@ -55,7 +73,8 @@ class QueueEntry {
     artist: json['artist'] as String? ?? '',
     durationMs: (json['duration_ms'] as num?)?.toInt() ?? 0,
     waveform: [
-      for (final peak in json['waveform'] as List<dynamic>? ?? const []) (peak as num).toInt(),
+      for (final peak in json['waveform'] as List<dynamic>? ?? const [])
+        (peak as num).toInt(),
     ],
   );
 
@@ -68,6 +87,7 @@ class QueueEntry {
     artist: artist,
     durationMs: durationMs,
     waveform: waveform,
+    cover: cover,
     manual: manual,
     local: local,
   );
@@ -79,6 +99,7 @@ class QueueEntry {
     artist: artist,
     durationMs: durationMs,
     waveform: waveform,
+    cover: cover,
     manual: true,
     local: local,
   );
@@ -102,14 +123,15 @@ class QueueSource {
   /// The body POST /api/queue expects. source_id is only part of it for a source that
   /// names something; sending it for the whole library is refused by the server, so it
   /// must not be sent there.
-  Map<String, Object> toJson() => needsId ? {'source': type, 'source_id': id} : {'source': type};
+  Map<String, Object> toJson() =>
+      needsId ? {'source': type, 'source_id': id} : {'source': type};
 
   /// What the source is, in the words a user understands.
   String describe() => switch (type) {
-        'playlist' => 'Playlist $id',
-        'library' => 'die ganze Bibliothek',
-        _ => 'Ein Lied ($id)',
-      };
+    'playlist' => 'Playlist $id',
+    'library' => 'die ganze Bibliothek',
+    _ => 'Ein Lied ($id)',
+  };
 }
 
 /// The player's view of a queue: the songs in order and which one is current. It is
@@ -120,7 +142,8 @@ class QueueSource {
 /// another device can change it. What a device is currently playing is not stored on the
 /// server — that is device state — so this index is the only thing the mirror owns.
 class PlaybackQueue {
-  PlaybackQueue([List<QueueEntry> entries = const []]) : _entries = List.of(entries);
+  PlaybackQueue([List<QueueEntry> entries = const []])
+    : _entries = List.of(entries);
 
   final List<QueueEntry> _entries;
 
@@ -141,7 +164,8 @@ class PlaybackQueue {
   int get length => _entries.length;
   bool get isEmpty => _entries.isEmpty;
 
-  QueueEntry? get current => (index >= 0 && index < _entries.length) ? _entries[index] : null;
+  QueueEntry? get current =>
+      (index >= 0 && index < _entries.length) ? _entries[index] : null;
 
   /// Replaces the queue, the way POST /api/queue does: starting a second playlist must
   /// not keep the songs of the first. Nothing becomes current by filling: a queue is an
@@ -174,14 +198,18 @@ class PlaybackQueue {
   /// on itself, because that is not a move. The current row is followed, so pointing at a
   /// row keeps pointing at the same song after the move.
   bool move(int from, int to) {
-    if (from < 1 || from > _entries.length || to < 1 || to > _entries.length) return false;
+    if (from < 1 || from > _entries.length || to < 1 || to > _entries.length) {
+      return false;
+    }
     if (from == to) return false;
 
     // The current row is named by its object, not by a number that would now be another
     // song's. The object is taken before the row moves, and the index before the renumbering,
     // because renumbering makes new objects. An index outside the mirror is not a row, so nothing
     // is followed and the move still works.
-    final current = (index >= 0 && index < _entries.length) ? _entries[index] : null;
+    final current = (index >= 0 && index < _entries.length)
+        ? _entries[index]
+        : null;
 
     final row = _entries.removeAt(from - 1);
     _entries.insert(to - 1, row);
