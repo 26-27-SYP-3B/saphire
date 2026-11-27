@@ -911,7 +911,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
           child: Text(
             key,
             style: theme.textTheme.labelSmall?.copyWith(
-              color: picked ? Colors.white : scheme.onSurfaceVariant,
+              color: picked ? scheme.onPrimary : scheme.onSurfaceVariant,
             ),
           ),
         ),

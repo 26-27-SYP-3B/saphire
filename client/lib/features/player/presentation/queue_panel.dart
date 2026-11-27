@@ -408,9 +408,22 @@ class _QueuePanelState extends State<QueuePanel> {
     // A row that is only in the history has no slot, so it is added back before it can be
     // taken out. The mirror changes before anything is written, because a row dismissed by a
     // swipe must be gone from the widget tree at once; a failed write then only shows as the note.
-    final row = _rowInList(entry) ?? await _rowFor(entry);
-    if (!mounted || row == null) return;
+    QueueEntry? found;
+    try {
+      found = _rowInList(entry) ?? await _rowFor(entry);
+    } on QueueException catch (error) {
+      if (mounted) {
+        _report(error.message, error.statusCode);
+        setState(() => _busy = false);
+      }
+      return;
+    }
+    if (!mounted || found == null) {
+      if (mounted) setState(() => _busy = false);
+      return;
+    }
 
+    final row = found;
     final wasPlaying = identical(row, widget.queue.current);
     widget.queue.removeAt(row.position);
 
@@ -418,7 +431,10 @@ class _QueuePanelState extends State<QueuePanel> {
     // position there would remove a different song, so it is taken out of the device queue
     // only.
     if (row.local != null && !widget.localMode) {
-      final at = _local.queue.indexOf(row.local!);
+      var at = _local.queue.indexOf(row.local!);
+      if (at < 0 && row.local!.path != null) {
+        at = _local.queue.indexWhere((track) => track.path == row.local!.path);
+      }
       if (at >= 0) _local.removeFromQueue(at);
       await widget.player.removeLocal(row.local!);
       if (!mounted) return;
@@ -521,7 +537,12 @@ class _QueuePanelState extends State<QueuePanel> {
         if (entry.local != null) {
           // A device row only exists in the mirror and the device queue; the server has no
           // slot to delete and would remove whichever server song now sits at that number.
-          final at = _local.queue.indexOf(entry.local!);
+          var at = _local.queue.indexOf(entry.local!);
+          if (at < 0 && entry.local!.path != null) {
+            at = _local.queue.indexWhere(
+              (track) => track.path == entry.local!.path,
+            );
+          }
           if (at >= 0) _local.removeFromQueue(at);
           widget.queue.removeAt(entry.position);
           continue;
@@ -594,8 +615,20 @@ class _QueuePanelState extends State<QueuePanel> {
 
     setState(() => _busy = true);
 
-    final row = await _rowFor(entry);
-    if (!mounted || row == null) return;
+    QueueEntry? row;
+    try {
+      row = await _rowFor(entry);
+    } on QueueException catch (error) {
+      if (mounted) {
+        _report(error.message, error.statusCode);
+        setState(() => _busy = false);
+      }
+      return;
+    }
+    if (!mounted || row == null) {
+      if (mounted) setState(() => _busy = false);
+      return;
+    }
 
     final current = widget.queue.index;
 
